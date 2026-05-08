@@ -1,3 +1,13 @@
 {
-	"item.super_lead.redstone_lead": "Redstone Lead"
+	"item.super_lead.redstone_lead": "Redstone Lead",
+	"item.super_lead.energy_lead": "Energy Lead",
+	"item.super_lead.item_lead": "Item Lead",
+	"item.super_lead.fluid_lead": "Fluid Lead",
+	"tooltip.super_lead.kind.normal": "Lead",
+	"tooltip.super_lead.kind.redstone": "Redstone Lead",
+	"tooltip.super_lead.kind.energy": "Energy Lead",
+	"tooltip.super_lead.kind.item": "Item Lead",
+	"tooltip.super_lead.kind.fluid": "Fluid Lead",
+	"tooltip.super_lead.tier": "Tier %s  %s",
+	"tooltip.super_lead.no_tier": "No upgrade"
 }

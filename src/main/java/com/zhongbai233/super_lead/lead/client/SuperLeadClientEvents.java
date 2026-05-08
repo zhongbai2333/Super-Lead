@@ -6,6 +6,7 @@ import com.zhongbai233.super_lead.lead.LeadConnection;
 import com.zhongbai233.super_lead.lead.LeadConnectionAction;
 import com.zhongbai233.super_lead.lead.LeadKind;
 import com.zhongbai233.super_lead.lead.SuperLeadNetwork;
+import com.zhongbai233.super_lead.lead.SuperLeadPayloads;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -34,6 +35,39 @@ public final class SuperLeadClientEvents {
     private static RopeSimulation previewSim;
     private static LeadAnchor previewAnchor;
     private static long lastRepelTick = Long.MIN_VALUE;
+    private static volatile LeadConnection HOVERED_CONNECTION;
+
+    public static LeadConnection hoveredConnection() {
+        return HOVERED_CONNECTION;
+    }
+
+    /**
+     * Send a server-bound UseConnectionAction packet for the currently hovered connection.
+     * Called on the client when the player right-clicks with an action item AND the client's
+     * own ghost-preview pick produced a target the action can act on.
+     */
+    public static boolean trySendUseConnectionAction(net.minecraft.world.InteractionHand hand,
+            LeadConnectionAction action) {
+        LeadConnection hovered = HOVERED_CONNECTION;
+        if (hovered == null || !action.canTarget(hovered)) {
+            return false;
+        }
+        net.neoforged.neoforge.client.network.ClientPacketDistributor.sendToServer(
+                new SuperLeadPayloads.UseConnectionAction(
+                        hovered.id(),
+                        action.ordinal(),
+                        hand == net.minecraft.world.InteractionHand.OFF_HAND));
+        return true;
+    }
+
+    private static LeadConnection findById(List<RenderEntry> entries, UUID id) {
+        for (RenderEntry entry : entries) {
+            if (entry.connection().id().equals(id)) {
+                return entry.connection();
+            }
+        }
+        return null;
+    }
 
     private SuperLeadClientEvents() {}
 
@@ -45,6 +79,7 @@ public final class SuperLeadClientEvents {
             SIMS.clear();
             previewSim = null;
             previewAnchor = null;
+            HOVERED_CONNECTION = null;
             return;
         }
 
@@ -77,6 +112,9 @@ public final class SuperLeadClientEvents {
                         renderEntries.get(i).sim().repelFrom(renderEntries.get(j).sim());
                     }
                 }
+                for (RenderEntry entry : renderEntries) {
+                    entry.sim().settleExternalForces(level);
+                }
             }
         }
 
@@ -93,15 +131,23 @@ public final class SuperLeadClientEvents {
             int blockB = level.getBrightness(LightLayer.BLOCK, lightB);
             int skyA = level.getBrightness(LightLayer.SKY, lightA);
             int skyB = level.getBrightness(LightLayer.SKY, lightB);
-                int highlightColor = highlight != null && entry.connection().id().equals(highlight.id())
+            int highlightColor = highlight != null && entry.connection().id().equals(highlight.id())
                     ? highlight.color()
                     : LeashBuilder.NO_HIGHLIGHT;
+            float[] pulses = computeItemPulses(entry.connection(), tick, partialTick);
+            int extractEnd = (entry.connection().kind() == LeadKind.ITEM || entry.connection().kind() == LeadKind.FLUID)
+                    ? entry.connection().extractAnchor()
+                    : 0;
             LeashBuilder.submit(event.getSubmitNodeCollector(), cameraPos, sim, partialTick,
                     blockA, blockB, skyA, skyB, highlightColor,
-                    entry.connection().kind(), entry.connection().powered());
-                spawnRedstoneParticles(level, sim, partialTick, entry.connection());
+                    entry.connection().kind(), entry.connection().powered(), entry.connection().tier(),
+                    pulses, extractEnd);
+            spawnRedstoneParticles(level, sim, partialTick, entry.connection());
+            spawnEnergyParticles(level, sim, partialTick, entry.connection());
         }
         SIMS.keySet().retainAll(active);
+
+        HOVERED_CONNECTION = highlight == null ? null : findById(renderEntries, highlight.id());
 
         Player player = minecraft.player;
         if (player != null) {
@@ -141,6 +187,25 @@ public final class SuperLeadClientEvents {
                 blockA, blockB, skyA, skyB, false, kind, false);
     }
 
+    private static float[] computeItemPulses(LeadConnection connection, long currentTick, float partialTick) {
+        if (connection.kind() != LeadKind.ITEM && connection.kind() != LeadKind.FLUID) {
+            return new float[0];
+        }
+        Iterable<SuperLeadPayloads.ItemPulse> active = ItemFlowAnimator.activePulses(connection.id(), currentTick, partialTick);
+        java.util.ArrayList<Float> list = new java.util.ArrayList<>();
+        for (SuperLeadPayloads.ItemPulse p : active) {
+            float age = (currentTick - p.startTick()) + partialTick;
+            float t = age / Math.max(1, p.durationTicks());
+            if (t < 0F || t > 1F) continue;
+            float pos = p.reverse() ? 1F - t : t;
+            list.add(pos);
+        }
+        if (list.isEmpty()) return new float[0];
+        float[] arr = new float[list.size()];
+        for (int i = 0; i < arr.length; i++) arr[i] = list.get(i);
+        return arr;
+    }
+
     private static void spawnRedstoneParticles(ClientLevel level, RopeSimulation sim, float partialTick, LeadConnection connection) {
         RandomSource random = level.getRandom();
         if (connection.kind() != LeadKind.REDSTONE || !connection.powered() || random.nextFloat() > 0.035F) {
@@ -155,6 +220,36 @@ public final class SuperLeadClientEvents {
         double jitter = 0.035D;
         level.addParticle(
                 DustParticleOptions.REDSTONE,
+                point.x + (random.nextDouble() - 0.5D) * jitter,
+                point.y + (random.nextDouble() - 0.5D) * jitter,
+                point.z + (random.nextDouble() - 0.5D) * jitter,
+                0.0D,
+                0.0D,
+                0.0D);
+    }
+
+    private static final DustParticleOptions ENERGY_DUST =
+            new DustParticleOptions(0xFFEE55, 1.0F);
+
+    private static void spawnEnergyParticles(ClientLevel level, RopeSimulation sim, float partialTick, LeadConnection connection) {
+        RandomSource random = level.getRandom();
+        if (connection.kind() != LeadKind.ENERGY || !connection.powered()) {
+            return;
+        }
+        // Higher tier = denser sparks.
+        float density = 0.04F + Math.min(0.18F, connection.tier() * 0.04F);
+        if (random.nextFloat() > density) {
+            return;
+        }
+
+        int segment = random.nextInt(Math.max(1, sim.nodeCount() - 1));
+        Vec3 a = sim.nodeAt(segment, partialTick);
+        Vec3 b = sim.nodeAt(segment + 1, partialTick);
+        double t = random.nextDouble();
+        Vec3 point = a.add(b.subtract(a).scale(t));
+        double jitter = 0.045D;
+        level.addParticle(
+                ENERGY_DUST,
                 point.x + (random.nextDouble() - 0.5D) * jitter,
                 point.y + (random.nextDouble() - 0.5D) * jitter,
                 point.z + (random.nextDouble() - 0.5D) * jitter,

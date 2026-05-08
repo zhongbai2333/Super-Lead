@@ -22,6 +22,11 @@ public final class LeashBuilder {
     private static final double HALF_THICKNESS = 1.0D / 32.0D;
     private static final double HIGHLIGHT_HALF_THICKNESS = HALF_THICKNESS * 2.45D;
     private static final double STRIPE_LENGTH = 0.25D;
+    private static final float[] EMPTY_PULSES = new float[0];
+    private static final double PULSE_SIGMA = 0.07D;
+    private static final double PULSE_AMPLITUDE = 1.6D;
+    private static final double FIRST_SEGMENT_AMPLITUDE = 0.9D;
+    private static final double FIRST_SEGMENT_LENGTH = 0.45D;
 
     private LeashBuilder() {}
 
@@ -34,7 +39,7 @@ public final class LeashBuilder {
             int skyA, int skyB,
             boolean highlighted) {
         submit(collector, cameraPos, sim, partialTick, blockA, blockB, skyA, skyB,
-                highlighted ? DEFAULT_HIGHLIGHT : NO_HIGHLIGHT, LeadKind.NORMAL, false);
+                highlighted ? DEFAULT_HIGHLIGHT : NO_HIGHLIGHT, LeadKind.NORMAL, false, 0);
     }
 
     public static void submit(
@@ -48,21 +53,40 @@ public final class LeashBuilder {
             LeadKind kind,
             boolean powered) {
             submit(collector, cameraPos, sim, partialTick, blockA, blockB, skyA, skyB,
-                highlighted ? DEFAULT_HIGHLIGHT : NO_HIGHLIGHT, kind, powered);
+                highlighted ? DEFAULT_HIGHLIGHT : NO_HIGHLIGHT, kind, powered, 0);
             }
 
             public static void submit(
-                SubmitNodeCollector collector,
-                Vec3 cameraPos,
-                RopeSimulation sim,
-                float partialTick,
-                int blockA, int blockB,
-                int skyA, int skyB,
-                int highlightColor,
-                LeadKind kind,
-                boolean powered) {
-        final int effectiveBlockA = kind == LeadKind.REDSTONE && powered ? 15 : blockA;
-        final int effectiveBlockB = kind == LeadKind.REDSTONE && powered ? 15 : blockB;
+            SubmitNodeCollector collector,
+            Vec3 cameraPos,
+            RopeSimulation sim,
+            float partialTick,
+            int blockA, int blockB,
+            int skyA, int skyB,
+            int highlightColor,
+            LeadKind kind,
+            boolean powered,
+            int tier) {
+        submit(collector, cameraPos, sim, partialTick, blockA, blockB, skyA, skyB,
+                highlightColor, kind, powered, tier, EMPTY_PULSES, 0);
+    }
+
+    public static void submit(
+            SubmitNodeCollector collector,
+            Vec3 cameraPos,
+            RopeSimulation sim,
+            float partialTick,
+            int blockA, int blockB,
+            int skyA, int skyB,
+            int highlightColor,
+            LeadKind kind,
+            boolean powered,
+            int tier,
+            float[] pulsePositions,
+            int extractEnd) {
+        boolean glow = powered && (kind == LeadKind.REDSTONE || kind == LeadKind.ENERGY);
+        final int effectiveBlockA = glow ? 15 : blockA;
+        final int effectiveBlockB = glow ? 15 : blockB;
 
         int nodeCount = sim.nodeCount();
         Vec3[] nodes = new Vec3[nodeCount];
@@ -72,6 +96,7 @@ public final class LeashBuilder {
             nodes[i] = sim.nodeAt(i, partialTick);
             lengths[i] = lengths[i - 1] + nodes[i].distanceTo(nodes[i - 1]);
         }
+        final double totalLength = Math.max(1.0e-6D, lengths[nodeCount - 1]);
         PoseStack pose = new PoseStack();
         collector.submitCustomGeometry(pose, RenderTypes.textBackground(), (poseState, buffer) -> {
             for (int i = 0; i < nodeCount - 1; i++) {
@@ -81,9 +106,9 @@ public final class LeashBuilder {
                 float t1 = (i + 1) / (float) (nodeCount - 1);
                 int light0 = LightCoordsUtil.pack((int) lerp(t0, effectiveBlockA, effectiveBlockB), (int) lerp(t0, skyA, skyB));
                 int light1 = LightCoordsUtil.pack((int) lerp(t1, effectiveBlockA, effectiveBlockB), (int) lerp(t1, skyA, skyB));
-                renderSegment(buffer, poseState, start, end, lengths[i], lengths[i + 1], light0, light1, NO_HIGHLIGHT, kind, powered);
+                renderSegment(buffer, poseState, start, end, lengths[i], lengths[i + 1], totalLength, light0, light1, NO_HIGHLIGHT, kind, powered, tier, pulsePositions, extractEnd);
                 if (highlightColor != NO_HIGHLIGHT) {
-                    renderSegment(buffer, poseState, start, end, lengths[i], lengths[i + 1], light0, light1, highlightColor, kind, powered);
+                    renderSegment(buffer, poseState, start, end, lengths[i], lengths[i + 1], totalLength, light0, light1, highlightColor, kind, powered, tier, pulsePositions, extractEnd);
                 }
             }
         });
@@ -100,11 +125,15 @@ public final class LeashBuilder {
             Vec3 end,
             double lengthStart,
             double lengthEnd,
+            double totalLength,
             int light0,
             int light1,
             int highlightColor,
             LeadKind kind,
-            boolean powered) {
+            boolean powered,
+            int tier,
+            float[] pulsePositions,
+            int extractEnd) {
         Vec3 dir = end.subtract(start);
         double length = dir.length();
         if (length < 1.0e-6D) {
@@ -116,9 +145,9 @@ public final class LeashBuilder {
         if (side.lengthSqr() < 1.0e-8D) {
             side = dir.cross(new Vec3(1, 0, 0));
         }
-        double thickness = highlightColor != NO_HIGHLIGHT ? HIGHLIGHT_HALF_THICKNESS : HALF_THICKNESS;
-        side = side.normalize().scale(thickness);
-        Vec3 up = side.cross(dir).normalize().scale(thickness);
+        double baseThickness = highlightColor != NO_HIGHLIGHT ? HIGHLIGHT_HALF_THICKNESS : HALF_THICKNESS;
+        side = side.normalize();
+        Vec3 up = side.cross(dir).normalize();
 
         double cursor = lengthStart;
         while (cursor < lengthEnd - 1.0e-6D) {
@@ -131,9 +160,33 @@ public final class LeashBuilder {
             int stripe = (int) Math.floor((cursor + next) * 0.5D / STRIPE_LENGTH);
             int subLight0 = interpolateLight(light0, light1, localStart);
             int subLight1 = interpolateLight(light0, light1, localEnd);
-            renderSubSegment(buffer, pose, subStart, subEnd, side, up, stripe, subLight0, subLight1, highlightColor, kind, powered);
+            double midNorm = ((cursor + next) * 0.5D) / totalLength;
+            double mult = thicknessMultiplier(midNorm, pulsePositions, extractEnd);
+            double t = baseThickness * mult;
+            Vec3 sideScaled = side.scale(t);
+            Vec3 upScaled = up.scale(t);
+            renderSubSegment(buffer, pose, subStart, subEnd, sideScaled, upScaled, stripe, subLight0, subLight1, highlightColor, kind, powered, tier);
             cursor = next;
         }
+    }
+
+    private static double thicknessMultiplier(double normalizedPos, float[] pulsePositions, int extractEnd) {
+        double bonus = 0.0D;
+        if (pulsePositions != null) {
+            for (float p : pulsePositions) {
+                double d = (normalizedPos - p) / PULSE_SIGMA;
+                bonus += PULSE_AMPLITUDE * Math.exp(-d * d);
+            }
+        }
+        // extractEnd: 1 = `from` end (start of rope), 2 = `to` end (end of rope), 0 = none.
+        if (extractEnd == 1 && normalizedPos < FIRST_SEGMENT_LENGTH) {
+            double f = 1.0D - (normalizedPos / FIRST_SEGMENT_LENGTH);
+            bonus += FIRST_SEGMENT_AMPLITUDE * f * f;
+        } else if (extractEnd == 2 && normalizedPos > 1.0D - FIRST_SEGMENT_LENGTH) {
+            double f = (normalizedPos - (1.0D - FIRST_SEGMENT_LENGTH)) / FIRST_SEGMENT_LENGTH;
+            bonus += FIRST_SEGMENT_AMPLITUDE * f * f;
+        }
+        return 1.0D + bonus;
     }
 
     private static Vec3 interpolate(Vec3 a, Vec3 b, double t) {
@@ -160,7 +213,8 @@ public final class LeashBuilder {
             int light1,
             int highlightColor,
             LeadKind kind,
-            boolean powered) {
+            boolean powered,
+            int tier) {
         Vec3 a = start.add(side).add(up);
         Vec3 b = start.add(side).subtract(up);
         Vec3 c = start.subtract(side).subtract(up);
@@ -170,10 +224,10 @@ public final class LeashBuilder {
         Vec3 g = end.subtract(side).subtract(up);
         Vec3 h = end.subtract(side).add(up);
 
-        quad(buffer, pose, a, e, f, b, stripe, light0, light1, 0, highlightColor, kind, powered);
-        quad(buffer, pose, b, f, g, c, stripe, light0, light1, 1, highlightColor, kind, powered);
-        quad(buffer, pose, c, g, h, d, stripe, light0, light1, 2, highlightColor, kind, powered);
-        quad(buffer, pose, d, h, e, a, stripe, light0, light1, 3, highlightColor, kind, powered);
+        quad(buffer, pose, a, e, f, b, stripe, light0, light1, 0, highlightColor, kind, powered, tier);
+        quad(buffer, pose, b, f, g, c, stripe, light0, light1, 1, highlightColor, kind, powered, tier);
+        quad(buffer, pose, c, g, h, d, stripe, light0, light1, 2, highlightColor, kind, powered, tier);
+        quad(buffer, pose, d, h, e, a, stripe, light0, light1, 3, highlightColor, kind, powered, tier);
     }
 
     private static void quad(
@@ -189,8 +243,9 @@ public final class LeashBuilder {
             int face,
             int highlightColor,
             LeadKind kind,
-            boolean powered) {
-        int color = highlightColor != NO_HIGHLIGHT ? highlightOverlayColor(face, highlightColor) : ropeColor(stripe, face, kind, powered);
+            boolean powered,
+            int tier) {
+        int color = highlightColor != NO_HIGHLIGHT ? highlightOverlayColor(face, highlightColor) : ropeColor(stripe, face, kind, powered, tier);
         vertex(buffer, pose, p0, color, light0);
         vertex(buffer, pose, p1, color, light1);
         vertex(buffer, pose, p2, color, light1);
@@ -204,7 +259,7 @@ public final class LeashBuilder {
         vertex(buffer, pose, p0, color, light0);
     }
 
-    private static int ropeColor(int stripe, int face, LeadKind kind, boolean powered) {
+    private static int ropeColor(int stripe, int face, LeadKind kind, boolean powered, int tier) {
         boolean bright = (stripe & 1) == 0;
         double shade = switch (face) {
             case 0 -> 1.0D;
@@ -218,9 +273,43 @@ public final class LeashBuilder {
             int b = (int) ((bright ? (powered ? 58 : 20) : (powered ? 12 : 0)) * shade);
             return 0xFF000000 | (r << 16) | (g << 8) | b;
         }
+        if (kind == LeadKind.ENERGY) {
+            // Tier accent: every (tier+1)-th stripe is golden — higher tier = denser gold bands.
+            boolean goldBand = tier > 0 && (stripe % Math.max(2, 4 - Math.min(3, tier))) == 0 && bright;
+            int rBase, gBase, bBase;
+            if (powered) {
+                rBase = bright ? 255 : 200;
+                gBase = bright ? 220 : 150;
+                bBase = bright ? 80 : 40;
+            } else {
+                rBase = bright ? 228 : 128;
+                gBase = bright ? 158 : 84;
+                bBase = bright ? 54 : 22;
+            }
+            if (goldBand) {
+                rBase = 255;
+                gBase = powered ? 240 : 210;
+                bBase = powered ? 120 : 60;
+            }
+            int r = (int) (rBase * shade);
+            int g = (int) (gBase * shade);
+            int b = (int) (bBase * shade);
+            return 0xFF000000 | (r << 16) | (g << 8) | b;
+        }
         int r = (int) ((bright ? 142 : 86) * shade);
         int g = (int) ((bright ? 101 : 59) * shade);
         int b = (int) ((bright ? 57 : 34) * shade);
+        if (kind == LeadKind.ITEM) {
+            // Cool steel-blue palette to read as "item conduit"; keep stripe contrast.
+            r = (int) ((bright ? 175 : 110) * shade);
+            g = (int) ((bright ? 200 : 130) * shade);
+            b = (int) ((bright ? 230 : 165) * shade);
+        } else if (kind == LeadKind.FLUID) {
+            // Cyan/teal palette to read as "fluid conduit".
+            r = (int) ((bright ? 90 : 50) * shade);
+            g = (int) ((bright ? 220 : 145) * shade);
+            b = (int) ((bright ? 220 : 150) * shade);
+        }
         return 0xFF000000 | (r << 16) | (g << 8) | b;
     }
 

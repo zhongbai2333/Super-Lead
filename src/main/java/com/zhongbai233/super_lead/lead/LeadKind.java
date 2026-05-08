@@ -4,7 +4,10 @@ import com.mojang.serialization.Codec;
 
 public enum LeadKind {
     NORMAL("normal"),
-    REDSTONE("redstone");
+    REDSTONE("redstone"),
+    ENERGY("energy"),
+    ITEM("item"),
+    FLUID("fluid");
 
     public static final Codec<LeadKind> CODEC = Codec.STRING.xmap(LeadKind::byName, LeadKind::serializedName);
 

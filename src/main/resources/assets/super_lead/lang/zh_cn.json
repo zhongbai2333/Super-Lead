@@ -1,3 +1,13 @@
 {
-  "item.super_lead.redstone_lead": "红石拴绳"
+  "item.super_lead.redstone_lead": "红石拴绳",
+  "item.super_lead.energy_lead": "能量拴绳",
+  "item.super_lead.item_lead": "物品拴绳",
+  "item.super_lead.fluid_lead": "流体拴绳",
+  "tooltip.super_lead.kind.normal": "拴绳",
+  "tooltip.super_lead.kind.redstone": "红石拴绳",
+  "tooltip.super_lead.kind.energy": "能量拴绳",
+  "tooltip.super_lead.kind.item": "物品拴绳",
+  "tooltip.super_lead.kind.fluid": "流体拴绳",
+  "tooltip.super_lead.tier": "等级 %s  %s",
+  "tooltip.super_lead.no_tier": "未升级"
 }

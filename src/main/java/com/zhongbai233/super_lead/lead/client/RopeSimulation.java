@@ -12,9 +12,9 @@ import net.minecraft.world.phys.shapes.VoxelShape;
 /**
  * 客户端 Verlet 绳：多段，重力 + 阻尼 + 距离约束 + 带半径的方块 AABB 碰撞。
  *
- * <p>碰撞核心不是单点采样：绳子中心线有一个小半径，方块碰撞会先 inflate(radius)，
+ * 碰撞核心不是单点采样：绳子中心线有一个小半径，方块碰撞会先 inflate(radius)，
  * 然后分别做节点点位推出与线段-vs-inflated-AABB 求交。这样角、方块边缘、两个方块
- * 连接处都会有"厚度"，不会因为线段恰好从格子边缘穿过而漏检。</p>
+ * 连接处都会有"厚度"，不会因为线段恰好从格子边缘穿过而漏检。
  */
 public final class RopeSimulation {
     private static final double TARGET_SEGMENT_LENGTH = 0.30D;
@@ -30,6 +30,12 @@ public final class RopeSimulation {
     private static final double ROPE_REPEL_DISTANCE = 0.13D;
     private static final double LAYER_CAPTURE_HEIGHT = ROPE_RADIUS * 0.75D;
     private static final double COLLISION_EPS = 0.015D;
+    private static final double SEGMENT_CORNER_PUSH_EPS = ROPE_RADIUS * 0.65D;
+    private static final double SEGMENT_TOP_SUPPORT_EPS = ROPE_RADIUS * 1.8D;
+    private static final double SEGMENT_PUSH_MAX_SCALE = 3.0D;
+    private static final double CONTACT_FREEZE_SPEED_SQR = 0.08D * 0.08D;
+    private static final double CONTACT_VELOCITY_KEEP = 0.18D;
+    private static final double TOP_SUPPORT_SCAN_EPS = COLLISION_EPS * 3.0D;
     private static final long UNINIT = Long.MIN_VALUE;
     private static final AABB[] EMPTY_BOXES = new AABB[0];
 
@@ -44,9 +50,12 @@ public final class RopeSimulation {
     private final double[] rx;
     private final double[] ry;
     private final double[] rz;
+    private final boolean[] contactNodes;
+    private final boolean[] supportNodes;
 
     private final Vec3 separationAxis;
     private final Vec3 collisionAxis;
+    private final double layerPriority;
     private final double maxSlackFactor;
     private final HashMap<Long, AABB[]> collisionCache = new HashMap<>();
     private final double[] candDelta = new double[6];
@@ -55,6 +64,11 @@ public final class RopeSimulation {
 
     private long lastSteppedTick = UNINIT;
     private long lastTouchTick = UNINIT;
+    private long lastBlockHash;
+    private boolean blockHashInit;
+    private int settledTicks;
+    private static final int SETTLE_THRESHOLD_TICKS = 4;
+    private static final double SETTLE_MOTION_SQR = 1.0e-5D;
 
     public RopeSimulation(Vec3 a, Vec3 b) {
         this(a, b, 0L, false);
@@ -72,6 +86,8 @@ public final class RopeSimulation {
         this.rx = new double[nodes];
         this.ry = new double[nodes];
         this.rz = new double[nodes];
+        this.contactNodes = new boolean[nodes];
+        this.supportNodes = new boolean[nodes];
         this.maxSlackFactor = tight ? TIGHT_SLACK_FACTOR : LOOSE_SLACK_FACTOR;
         Vec3 dir = b.subtract(a);
         Vec3 dirNorm = dir.lengthSqr() < 1e-6 ? new Vec3(0, 1, 0) : dir.normalize();
@@ -93,6 +109,7 @@ public final class RopeSimulation {
         double angle = ((seed ^ (seed >>> 32)) & 0xFFFFL) / 65535.0D * Math.PI * 2.0D;
         this.separationAxis = side.scale(Math.cos(angle)).add(up.scale(Math.sin(angle))).normalize();
         this.collisionAxis = stableCollisionAxis(seed);
+        this.layerPriority = stableLayerPriority(seed);
 
         for (int i = 0; i < nodes; i++) {
             double t = i / (double) segments;
@@ -191,18 +208,95 @@ public final class RopeSimulation {
         if (delta > 2) {
             delta = 2;
         }
+
+        // Cache: skip simulation while rope is settled and surrounding blocks are unchanged.
+        long blockHash = computeBlockHash(level);
+        if (!blockHashInit) {
+            lastBlockHash = blockHash;
+            blockHashInit = true;
+        } else if (blockHash != lastBlockHash) {
+            lastBlockHash = blockHash;
+            settledTicks = 0;
+        }
+        if (settledTicks >= SETTLE_THRESHOLD_TICKS) {
+            // Freeze: keep render positions stable. Reset previous-position to current to kill velocity.
+            for (int i = 0; i < nodes; i++) {
+                rx[i] = x[i];
+                ry[i] = y[i];
+                rz[i] = z[i];
+                px[i] = x[i];
+                py[i] = y[i];
+                pz[i] = z[i];
+            }
+            lastSteppedTick = currentTick;
+            return false;
+        }
+
         for (int i = 0; i < delta; i++) {
             step(level, a, b);
         }
+        // Measure motion since previous tick (rx/ry/rz hold pre-step positions).
+        double maxMotionSqr = 0.0D;
+        for (int i = 1; i < nodes - 1; i++) {
+            double dx = x[i] - rx[i];
+            double dy = y[i] - ry[i];
+            double dz = z[i] - rz[i];
+            double m = dx * dx + dy * dy + dz * dz;
+            if (m > maxMotionSqr) maxMotionSqr = m;
+        }
+        if (maxMotionSqr < SETTLE_MOTION_SQR) {
+            settledTicks++;
+        } else {
+            settledTicks = 0;
+        }
         lastSteppedTick = currentTick;
         return true;
+    }
+
+    private long computeBlockHash(Level level) {
+        // Hash all block-state identities in the rope's bounding region (inflated by ROPE_RADIUS+1).
+        // BlockState references are interned; hashCode() is identity-stable.
+        double minX = x[0], maxX = x[0], minY = y[0], maxY = y[0], minZ = z[0], maxZ = z[0];
+        for (int i = 1; i < nodes; i++) {
+            if (x[i] < minX) minX = x[i]; else if (x[i] > maxX) maxX = x[i];
+            if (y[i] < minY) minY = y[i]; else if (y[i] > maxY) maxY = y[i];
+            if (z[i] < minZ) minZ = z[i]; else if (z[i] > maxZ) maxZ = z[i];
+        }
+        int bx0 = (int) Math.floor(minX - ROPE_RADIUS) - 1;
+        int bx1 = (int) Math.floor(maxX + ROPE_RADIUS) + 1;
+        int by0 = (int) Math.floor(minY - ROPE_RADIUS) - 1;
+        int by1 = (int) Math.floor(maxY + ROPE_RADIUS) + 1;
+        int bz0 = (int) Math.floor(minZ - ROPE_RADIUS) - 1;
+        int bz1 = (int) Math.floor(maxZ + ROPE_RADIUS) + 1;
+        long hash = 1469598103934665603L;
+        BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
+        for (int by = by0; by <= by1; by++) {
+            for (int bz = bz0; bz <= bz1; bz++) {
+                for (int bx = bx0; bx <= bx1; bx++) {
+                    cursor.set(bx, by, bz);
+                    BlockState state = level.getBlockState(cursor);
+                    hash = (hash ^ System.identityHashCode(state)) * 1099511628211L;
+                    hash ^= cursor.asLong();
+                }
+            }
+        }
+        return hash;
     }
 
     public long lastTouchTick() {
         return lastTouchTick;
     }
 
+    public boolean isSettled() {
+        return settledTicks >= SETTLE_THRESHOLD_TICKS;
+    }
+
     public void repelFrom(RopeSimulation other) {
+        // 两根都已冻结时，每 tick 的微小互推会让"冻结的位置"再被位移一点，
+        // 视觉上就是低概率抖动。互相都 settled 直接跳过。
+        if (this.isSettled() && other.isSettled()) {
+            return;
+        }
         if (!boundsOverlap(other, ROPE_REPEL_DISTANCE)) {
             return;
         }
@@ -240,6 +334,14 @@ public final class RopeSimulation {
         }
     }
 
+    public void settleExternalForces(Level level) {
+        collisionCache.clear();
+        clearContactState();
+        resolveCollisions(level);
+        stabilizeContactVelocities();
+        refreshSupportNodes(level);
+    }
+
     private double endpointFade(int segment, double t) {
         double ropeT = (segment + t) / segments;
         return Math.min(1.0D, Math.min(ropeT, 1.0D - ropeT) / 0.08D);
@@ -274,8 +376,8 @@ public final class RopeSimulation {
         }
 
         // 整绳稳定优先级：同一对绳子，无论段如何旋转，谁在上始终一致。
-        // 仅靠每绳启动时确定的 collisionAxis.y 作裁决，避免逐段几何带来的层级翻转抖动。
-        double tie = this.collisionAxis.y - other.collisionAxis.y;
+        // 仅靠每绳启动时确定的 layerPriority 作裁决，避免逐段几何带来的层级翻转抖动。
+        double tie = this.layerPriority - other.layerPriority;
         int preference;
         if (Math.abs(tie) < 1.0e-6D) {
             // 极罕见的完全平局：用引用身份做最终稳定 fallback。
@@ -298,6 +400,11 @@ public final class RopeSimulation {
         long hash = seed * 0x9E3779B97F4A7C15L + 0xBF58476D1CE4E5B9L;
         double angle = ((hash ^ (hash >>> 33)) & 0xFFFFL) / 65535.0D * Math.PI * 2.0D;
         return new Vec3(Math.cos(angle), 0.35D, Math.sin(angle)).normalize();
+    }
+
+    private static double stableLayerPriority(long seed) {
+        long hash = seed * 0x94D049BB133111EBL + 0x9E3779B97F4A7C15L;
+        return ((hash ^ (hash >>> 33)) & 0xFFFFL) / 65535.0D;
     }
 
     private Vec3 stableRepelNormal(RopeSimulation other) {
@@ -378,7 +485,9 @@ public final class RopeSimulation {
         if (node <= 0 || node >= nodes - 1 || weight <= 1.0e-4D) {
             return;
         }
-        moveNodePreservingVelocity(node, dx * weight, dy * weight, dz * weight);
+        // Terrain support wins over rope layering; otherwise grounded nodes can bounce after collision resolution.
+        double my = supportNodes[node] ? 0.0D : dy * weight;
+        moveNodePreservingVelocity(node, dx * weight, my, dz * weight);
     }
 
     private static double dot(double ax, double ay, double az, double bx, double by, double bz) {
@@ -405,6 +514,7 @@ public final class RopeSimulation {
             ry[i] = y[i];
             rz[i] = z[i];
         }
+        clearContactState();
 
         for (int i = 1; i < nodes - 1; i++) {
             double vx = (x[i] - px[i]) * DAMPING;
@@ -430,6 +540,37 @@ public final class RopeSimulation {
             pinEndpoints(a, b);
             resolveCollisions(level);
             pinEndpoints(a, b);
+        }
+        stabilizeContactVelocities();
+        refreshSupportNodes(level);
+    }
+
+    private void clearContactState() {
+        for (int i = 0; i < nodes; i++) {
+            contactNodes[i] = false;
+            supportNodes[i] = false;
+        }
+    }
+
+    private void stabilizeContactVelocities() {
+        for (int i = 1; i < nodes - 1; i++) {
+            if (!contactNodes[i]) {
+                continue;
+            }
+
+            double vx = x[i] - px[i];
+            double vy = y[i] - py[i];
+            double vz = z[i] - pz[i];
+            double speedSqr = vx * vx + vy * vy + vz * vz;
+            if (speedSqr <= CONTACT_FREEZE_SPEED_SQR) {
+                px[i] = x[i];
+                py[i] = y[i];
+                pz[i] = z[i];
+            } else {
+                px[i] = x[i] - vx * CONTACT_VELOCITY_KEEP;
+                py[i] = y[i] - vy * CONTACT_VELOCITY_KEEP;
+                pz[i] = z[i] - vz * CONTACT_VELOCITY_KEEP;
+            }
         }
     }
 
@@ -471,6 +612,44 @@ public final class RopeSimulation {
         }
     }
 
+    private void refreshSupportNodes(Level level) {
+        for (int i = 1; i < nodes - 1; i++) {
+            if (supportNodes[i] || isNearTopSupport(level, x[i], y[i], z[i])) {
+                supportNodes[i] = true;
+            }
+        }
+    }
+
+    private boolean isNearTopSupport(Level level, double wx, double wy, double wz) {
+        int minX = (int) Math.floor(wx - ROPE_RADIUS) - 1;
+        int maxX = (int) Math.floor(wx + ROPE_RADIUS) + 1;
+        int minY = (int) Math.floor(wy - ROPE_RADIUS) - 1;
+        int maxY = (int) Math.floor(wy + ROPE_RADIUS) + 1;
+        int minZ = (int) Math.floor(wz - ROPE_RADIUS) - 1;
+        int maxZ = (int) Math.floor(wz + ROPE_RADIUS) + 1;
+        BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
+        double xzMargin = ROPE_RADIUS + COLLISION_EPS;
+        double maxAboveTop = ROPE_RADIUS + TOP_SUPPORT_SCAN_EPS;
+        for (int bx = minX; bx <= maxX; bx++) {
+            for (int by = minY; by <= maxY; by++) {
+                for (int bz = minZ; bz <= maxZ; bz++) {
+                    cursor.set(bx, by, bz);
+                    for (AABB box : collisionBoxes(level, cursor)) {
+                        double dy = wy - box.maxY;
+                        if (dy < -COLLISION_EPS || dy > maxAboveTop) {
+                            continue;
+                        }
+                        if (wx >= box.minX - xzMargin && wx <= box.maxX + xzMargin
+                                && wz >= box.minZ - xzMargin && wz <= box.maxZ + xzMargin) {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
     private void resolveNodeCollision(Level level, int node) {
         // 多跑两次：节点被一个盒子推出后可能正好进入另一个相邻盒子的 inflated 区域。
         for (int pass = 0; pass < 2; pass++) {
@@ -495,7 +674,10 @@ public final class RopeSimulation {
                             if (!containsInclusive(inflated, x[node], y[node], z[node])) {
                                 continue;
                             }
-                            Push push = choosePointPush(level, inflated, x[node], y[node], z[node]);
+                            Push push = chooseTopSupportPush(inflated, node);
+                            if (push == null) {
+                                push = choosePointPush(level, inflated, x[node], y[node], z[node]);
+                            }
                             if (push != null) {
                                 applyPush(node, push);
                                 moved = true;
@@ -547,13 +729,60 @@ public final class RopeSimulation {
             return;
         }
 
-        // 线段从 a 走向 b，命中后把"进入碰撞盒之后"的 b 端拉回命中面外。
-        // 如果 b 是锚死节点，则反过来推 a。
-        int target = b == nodes - 1 ? a : b;
-        if (target == 0 || target == nodes - 1) {
+        // 线段碰撞点通常不正好落在绳子节点上。只推某一端会让距离约束下一轮再拉回，
+        // 在方块边角处尤其容易产生硬折角；这里优先把整段按最小分离向量平移出碰撞盒。
+        applySegmentCollisionPush(a, b, best);
+    }
+
+    private void applySegmentCollisionPush(int a, int b, SegmentHit hit) {
+        double wa = 1.0D - hit.t;
+        double wb = hit.t;
+        boolean moveA = a > 0 && a < nodes - 1;
+        boolean moveB = b > 0 && b < nodes - 1;
+        if (moveA && moveB) {
+            // 线段不是关节时，把相邻两个节点整体平移出碰撞盒，避免单点推出造成尖锐折角。
+            moveCollisionNode(a, 1.0D, hit.x(), hit.y(), hit.z());
+            moveCollisionNode(b, 1.0D, hit.x(), hit.y(), hit.z());
             return;
         }
-        applyPush(target, best.pushForNode(x[target], y[target], z[target]));
+
+        if (moveA) {
+            moveCollisionNode(a, Math.min(SEGMENT_PUSH_MAX_SCALE, 1.0D / Math.max(wa, 1.0e-6D)), hit.x(), hit.y(), hit.z());
+        } else if (moveB) {
+            moveCollisionNode(b, Math.min(SEGMENT_PUSH_MAX_SCALE, 1.0D / Math.max(wb, 1.0e-6D)), hit.x(), hit.y(), hit.z());
+        }
+    }
+
+    private void moveCollisionNode(int node, double scale, double dx, double dy, double dz) {
+        contactNodes[node] = true;
+        double mx = dx * scale;
+        double my = dy * scale;
+        double mz = dz * scale;
+        if (my > 0.0D) {
+            supportNodes[node] = true;
+        }
+        x[node] += mx;
+        y[node] += my;
+        z[node] += mz;
+        if (Math.abs(mx) > 1.0e-9D) {
+            px[node] = x[node];
+        }
+        if (Math.abs(my) > 1.0e-9D) {
+            py[node] = y[node];
+        }
+        if (Math.abs(mz) > 1.0e-9D) {
+            pz[node] = z[node];
+        }
+    }
+
+    private Push chooseTopSupportPush(AABB box, int node) {
+        double pushUp = box.maxY + COLLISION_EPS - y[node];
+        if (pushUp > 0.0D
+                && y[node] <= box.maxY + COLLISION_EPS
+                && py[node] >= box.maxY - SEGMENT_TOP_SUPPORT_EPS) {
+            return new Push(0, pushUp, 0);
+        }
+        return null;
     }
 
     private Push choosePointPush(Level level, AABB box, double px, double py, double pz) {
@@ -604,6 +833,10 @@ public final class RopeSimulation {
     }
 
     private void applyPush(int node, Push push) {
+        contactNodes[node] = true;
+        if (push.y > 0.0D) {
+            supportNodes[node] = true;
+        }
         x[node] += push.x;
         y[node] += push.y;
         z[node] += push.z;
@@ -662,63 +895,76 @@ public final class RopeSimulation {
         double dx = to.x - from.x;
         double dy = to.y - from.y;
         double dz = to.z - from.z;
-        double tMin = 0.0D;
-        double tMax = 1.0D;
-        int axis = -1;
-        int sign = 0;
-        double plane = 0.0D;
 
-        // X axis
-        double entry, exit, axisPlane;
-        int axisSign;
+        double xEntry, xExit;
         if (Math.abs(dx) < 1e-9) {
             if (from.x < box.minX || from.x > box.maxX) return null;
-            entry = 0.0D; exit = 1.0D; axisSign = 0; axisPlane = from.x;
+            xEntry = 0.0D; xExit = 1.0D;
         } else {
             double t1 = (box.minX - from.x) / dx;
             double t2 = (box.maxX - from.x) / dx;
-            axisSign = dx > 0 ? -1 : 1;
-            axisPlane = dx > 0 ? box.minX : box.maxX;
             if (t1 > t2) { double tmp = t1; t1 = t2; t2 = tmp; }
-            entry = t1; exit = t2;
+            xEntry = t1; xExit = t2;
         }
-        if (entry > tMin) { tMin = entry; axis = 0; sign = axisSign; plane = axisPlane; }
-        if (exit < tMax) tMax = exit;
-        if (tMin > tMax) return null;
 
-        // Y axis
+        double yEntry, yExit;
         if (Math.abs(dy) < 1e-9) {
             if (from.y < box.minY || from.y > box.maxY) return null;
-            entry = 0.0D; exit = 1.0D; axisSign = 0; axisPlane = from.y;
+            yEntry = 0.0D; yExit = 1.0D;
         } else {
             double t1 = (box.minY - from.y) / dy;
             double t2 = (box.maxY - from.y) / dy;
-            axisSign = dy > 0 ? -1 : 1;
-            axisPlane = dy > 0 ? box.minY : box.maxY;
             if (t1 > t2) { double tmp = t1; t1 = t2; t2 = tmp; }
-            entry = t1; exit = t2;
+            yEntry = t1; yExit = t2;
         }
-        if (entry > tMin) { tMin = entry; axis = 1; sign = axisSign; plane = axisPlane; }
-        if (exit < tMax) tMax = exit;
-        if (tMin > tMax) return null;
 
-        // Z axis
+        double zEntry, zExit;
         if (Math.abs(dz) < 1e-9) {
             if (from.z < box.minZ || from.z > box.maxZ) return null;
-            entry = 0.0D; exit = 1.0D; axisSign = 0; axisPlane = from.z;
+            zEntry = 0.0D; zExit = 1.0D;
         } else {
             double t1 = (box.minZ - from.z) / dz;
             double t2 = (box.maxZ - from.z) / dz;
-            axisSign = dz > 0 ? -1 : 1;
-            axisPlane = dz > 0 ? box.minZ : box.maxZ;
             if (t1 > t2) { double tmp = t1; t1 = t2; t2 = tmp; }
-            entry = t1; exit = t2;
+            zEntry = t1; zExit = t2;
         }
-        if (entry > tMin) { tMin = entry; axis = 2; sign = axisSign; plane = axisPlane; }
-        if (exit < tMax) tMax = exit;
-        if (tMin > tMax || tMax < 0.0D || tMin > 1.0D || axis < 0) return null;
 
-        return new SegmentHit(Math.max(0.0D, tMin), axis, sign, plane);
+        double tMin = Math.max(0.0D, Math.max(xEntry, Math.max(yEntry, zEntry)));
+        double tMax = Math.min(1.0D, Math.min(xExit, Math.min(yExit, zExit)));
+        if (tMin > tMax || tMax < 0.0D || tMin > 1.0D) return null;
+
+        double sxMin = Math.min(from.x, to.x);
+        double sxMax = Math.max(from.x, to.x);
+        double syMin = Math.min(from.y, to.y);
+        double syMax = Math.max(from.y, to.y);
+        double szMin = Math.min(from.z, to.z);
+        double szMax = Math.max(from.z, to.z);
+
+        double pushX = separationPush(sxMin, sxMax, box.minX, box.maxX);
+        double pushY = separationPush(syMin, syMax, box.minY, box.maxY);
+        double pushZ = separationPush(szMin, szMax, box.minZ, box.maxZ);
+        double ax = Math.abs(pushX);
+        double ay = Math.abs(pushY);
+        double az = Math.abs(pushZ);
+        double min = Math.min(ax, Math.min(ay, az));
+
+        if (pushY > 0.0D && ay <= min + SEGMENT_TOP_SUPPORT_EPS) {
+            double t = (tMin + tMax) * 0.5D;
+            return new SegmentHit(t, 0.0D, pushY, 0.0D);
+        }
+
+        // 边/角附近多个轴的分离距离接近时，合成斜向推出，避免本帧选 X、下帧选 Z 的抖动。
+        double outX = ax <= min + SEGMENT_CORNER_PUSH_EPS ? pushX : 0.0D;
+        double outY = ay <= min + SEGMENT_CORNER_PUSH_EPS ? pushY : 0.0D;
+        double outZ = az <= min + SEGMENT_CORNER_PUSH_EPS ? pushZ : 0.0D;
+        double t = (tMin + tMax) * 0.5D;
+        return new SegmentHit(t, outX, outY, outZ);
+    }
+
+    private static double separationPush(double minA, double maxA, double minB, double maxB) {
+        double toMin = minB - maxA - COLLISION_EPS;
+        double toMax = maxB - minA + COLLISION_EPS;
+        return Math.abs(toMin) < Math.abs(toMax) ? toMin : toMax;
     }
 
     private static boolean containsInclusive(AABB box, double x, double y, double z) {
@@ -859,15 +1105,7 @@ public final class RopeSimulation {
     private record Push(double x, double y, double z) {
     }
 
-    private record SegmentHit(double t, int axis, int sign, double plane) {
-        Push pushForNode(double x, double y, double z) {
-            double target = plane + sign * COLLISION_EPS;
-            return switch (axis) {
-                case 0 -> new Push(target - x, 0, 0);
-                case 1 -> new Push(0, target - y, 0);
-                default -> new Push(0, 0, target - z);
-            };
-        }
+    private record SegmentHit(double t, double x, double y, double z) {
     }
 
     private record SegmentPair(double s, double t, double dx, double dy, double dz, double distanceSqr) {

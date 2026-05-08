@@ -7,6 +7,7 @@ import java.util.Map;
 import java.util.UUID;
 import net.minecraft.core.Direction;
 import net.minecraft.core.component.DataComponents;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
@@ -25,7 +26,6 @@ import net.neoforged.neoforge.event.tick.LevelTickEvent;
 @EventBusSubscriber(modid = Super_lead.MODID)
 public final class SuperLeadEvents {
     private static final int LOGIN_SYNC_DELAY_TICKS = 10;
-    private static final double CONNECTION_USE_RADIUS = 0.75D;
     private static final Map<UUID, Integer> DELAYED_SYNCS = new HashMap<>();
 
     private SuperLeadEvents() {}
@@ -33,6 +33,15 @@ public final class SuperLeadEvents {
     @SubscribeEvent
     public static void onRightClickBlock(PlayerInteractEvent.RightClickBlock event) {
         ItemStack stack = event.getItemStack();
+
+        // Hopper on a block that already has an ITEM rope attached: toggle that anchor as extract source.
+        if (stack.is(Items.HOPPER) && tryToggleItemExtract(event)) {
+            return;
+        }
+        // Cauldron on a block that already has a FLUID rope attached: toggle that anchor as extract source.
+        if (stack.is(Items.CAULDRON) && tryToggleFluidExtract(event)) {
+            return;
+        }
 
         if (tryUseConnectionAction(event)) {
             return;
@@ -55,31 +64,75 @@ public final class SuperLeadEvents {
         event.setCancellationResult(result);
     }
 
-    private static boolean tryUseConnectionAction(PlayerInteractEvent.RightClickBlock event) {
-        ItemStack stack = event.getItemStack();
-        LeadConnectionAction action = LeadConnectionAction.fromStack(stack).orElse(null);
-        if (action == null) {
+    private static boolean tryToggleItemExtract(PlayerInteractEvent.RightClickBlock event) {
+        Level level = event.getLevel();
+        if (!SuperLeadNetwork.hasItemConnectionAt(level, event.getPos())) {
             return false;
         }
-
-        var point = event.getHitVec().getLocation();
-        boolean handled = event.getLevel().isClientSide()
-                ? action.hasTargetNear(event.getLevel(), point, CONNECTION_USE_RADIUS)
-                : action.apply(event.getLevel(), point, event.getEntity());
-        if (!handled) {
-            return false;
-        }
-
-        if (!event.getLevel().isClientSide()) {
-            action.consumeSuccessfulUse(stack, event.getEntity(), event.getHand());
+        if (!level.isClientSide()) {
+            SuperLeadNetwork.toggleItemExtractAt(level, event.getPos());
         }
         event.setCanceled(true);
         event.setCancellationResult(InteractionResult.SUCCESS);
         return true;
     }
 
+    private static boolean tryToggleFluidExtract(PlayerInteractEvent.RightClickBlock event) {
+        Level level = event.getLevel();
+        if (!SuperLeadNetwork.hasFluidConnectionAt(level, event.getPos())) {
+            return false;
+        }
+        if (!level.isClientSide()) {
+            SuperLeadNetwork.toggleFluidExtractAt(level, event.getPos());
+        }
+        event.setCanceled(true);
+        event.setCancellationResult(InteractionResult.SUCCESS);
+        return true;
+    }
+
+    private static boolean tryUseConnectionAction(PlayerInteractEvent.RightClickBlock event) {
+        ItemStack stack = event.getItemStack();
+        LeadConnectionAction action = LeadConnectionAction.fromStack(stack).orElse(null);
+        if (action == null) {
+            return false;
+        }
+        if (!event.getLevel().isClientSide()) {
+            // Server-side handling is driven exclusively by the client-confirmed packet
+            // (UseConnectionAction). Avoid running the server's own view-pick here so that
+            // straight-line ray + larger radius cannot upgrade a rope the client never highlighted.
+            return false;
+        }
+        if (!sendClientUseAction(event.getEntity(), event.getHand(), action)) {
+            return false;
+        }
+        event.setCanceled(true);
+        event.setCancellationResult(InteractionResult.SUCCESS);
+        return true;
+    }
+
+    /**
+     * Client-side: if the player is currently hovering a connection that this action can target,
+     * send the use packet to the server. Returns true when a packet was sent (caller should cancel
+     * the interaction event so the vanilla use packet is suppressed).
+     */
+    private static boolean sendClientUseAction(Player player, InteractionHand hand, LeadConnectionAction action) {
+        return com.zhongbai233.super_lead.lead.client.SuperLeadClientEvents
+                .trySendUseConnectionAction(hand, action);
+    }
+
     @SubscribeEvent
     public static void onRightClickItem(PlayerInteractEvent.RightClickItem event) {
+        ItemStack stack = event.getItemStack();
+        LeadConnectionAction action = LeadConnectionAction.fromStack(stack).orElse(null);
+        if (action != null && event.getLevel().isClientSide()) {
+            // Mirror tryUseConnectionAction: client-only confirmation, server runs via packet.
+            if (sendClientUseAction(event.getEntity(), event.getHand(), action)) {
+                event.setCanceled(true);
+                event.setCancellationResult(InteractionResult.SUCCESS);
+                return;
+            }
+        }
+
         if (tryUpgradeHeldLead(event.getEntity(), event.getHand())) {
             event.setCanceled(true);
             event.setCancellationResult(InteractionResult.SUCCESS);
@@ -161,8 +214,12 @@ public final class SuperLeadEvents {
             SuperLeadNetwork.pruneInvalid(event.getLevel());
         }
         if (!event.getLevel().isClientSide()) {
-            if (event.getLevel() instanceof net.minecraft.server.level.ServerLevel serverLevel) {
+            if (event.getLevel() instanceof ServerLevel serverLevel) {
+                SuperLeadNetwork.tickStuckBreaks(serverLevel);
                 SuperLeadNetwork.tickRedstone(serverLevel);
+                SuperLeadNetwork.tickEnergy(serverLevel);
+                SuperLeadNetwork.tickItem(serverLevel);
+                SuperLeadNetwork.tickFluid(serverLevel);
             }
             flushDelayedSyncs();
         }
@@ -219,27 +276,46 @@ public final class SuperLeadEvents {
         InteractionHand otherHand = usedHand == InteractionHand.MAIN_HAND ? InteractionHand.OFF_HAND : InteractionHand.MAIN_HAND;
         ItemStack other = player.getItemInHand(otherHand);
 
-        if (used.is(Items.REDSTONE_BLOCK) && other.is(Items.LEAD) && !SuperLeadItemData.isRedstoneLead(other)) {
-            upgradeOneLead(player, otherHand, other, used);
+        LeadKind usedMaterialKind = upgradeKindFromMaterial(used);
+        if (usedMaterialKind != null && other.is(Items.LEAD) && SuperLeadItemData.kind(other) != usedMaterialKind) {
+            upgradeOneLead(player, otherHand, other, used, usedMaterialKind);
             return true;
         }
-        if (used.is(Items.LEAD) && !SuperLeadItemData.isRedstoneLead(used) && other.is(Items.REDSTONE_BLOCK)) {
-            upgradeOneLead(player, usedHand, used, other);
+
+        LeadKind otherMaterialKind = upgradeKindFromMaterial(other);
+        if (used.is(Items.LEAD) && otherMaterialKind != null && SuperLeadItemData.kind(used) != otherMaterialKind) {
+            upgradeOneLead(player, usedHand, used, other, otherMaterialKind);
             return true;
         }
         return false;
     }
 
-    private static void upgradeOneLead(Player player, InteractionHand leadHand, ItemStack leadStack, ItemStack redstoneBlockStack) {
+    private static LeadKind upgradeKindFromMaterial(ItemStack stack) {
+        if (stack.is(Items.REDSTONE_BLOCK)) {
+            return LeadKind.REDSTONE;
+        }
+        if (stack.is(Items.IRON_BLOCK)) {
+            return LeadKind.ENERGY;
+        }
+        if (stack.is(Items.HOPPER)) {
+            return LeadKind.ITEM;
+        }
+        if (stack.is(Items.CAULDRON)) {
+            return LeadKind.FLUID;
+        }
+        return null;
+    }
+
+    private static void upgradeOneLead(Player player, InteractionHand leadHand, ItemStack leadStack, ItemStack materialStack, LeadKind kind) {
         if (player.level().isClientSide()) {
             return;
         }
 
         ItemStack upgraded = new ItemStack(Items.LEAD);
-        SuperLeadItemData.setKind(upgraded, LeadKind.REDSTONE);
+        SuperLeadItemData.setKind(upgraded, kind);
         if (!player.isCreative()) {
             leadStack.shrink(1);
-            redstoneBlockStack.shrink(1);
+            materialStack.shrink(1);
         }
 
         if (leadStack.isEmpty()) {

@@ -39,6 +39,12 @@ public final class SuperLeadItemData {
         CustomData.update(DataComponents.CUSTOM_DATA, stack, tag -> tag.putString(KIND_KEY, kind.serializedName()));
         if (kind == LeadKind.REDSTONE) {
             stack.set(DataComponents.ITEM_NAME, Component.translatable("item.super_lead.redstone_lead"));
+        } else if (kind == LeadKind.ENERGY) {
+            stack.set(DataComponents.ITEM_NAME, Component.translatable("item.super_lead.energy_lead"));
+        } else if (kind == LeadKind.ITEM) {
+            stack.set(DataComponents.ITEM_NAME, Component.translatable("item.super_lead.item_lead"));
+        } else if (kind == LeadKind.FLUID) {
+            stack.set(DataComponents.ITEM_NAME, Component.translatable("item.super_lead.fluid_lead"));
         }
     }
 }
