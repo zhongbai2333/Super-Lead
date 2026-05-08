@@ -4,8 +4,10 @@
   "package": "com.zhongbai233.super_lead.mixin",
   "compatibilityLevel": "JAVA_25",
   "mixins": [
+    "SignalGetterMixin"
   ],
   "client": [
+    "EntityRendererMixin"
   ],
   "injectors": {
     "defaultRequire": 1
