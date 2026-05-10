@@ -17,6 +17,11 @@ public enum LeadConnectionAction {
         }
 
         @Override
+        public net.minecraft.world.item.Item iconItem() {
+            return Items.SHEARS;
+        }
+
+        @Override
         public boolean canTarget(LeadConnection connection) {
             return true;
         }
@@ -45,20 +50,25 @@ public enum LeadConnectionAction {
         }
 
         @Override
+        public net.minecraft.world.item.Item iconItem() {
+            return Items.REDSTONE_BLOCK;
+        }
+
+        @Override
         public boolean canTarget(LeadConnection connection) {
             if (connection.kind() == LeadKind.NORMAL) {
                 return true;
             }
             // Energy lead: tier upgrade allowed up to config cap.
             if (connection.kind() == LeadKind.ENERGY) {
-                return connection.tier() < com.zhongbai233.super_lead.Config.energyTierMaxLevel();
+                return connection.tier() < Config.energyTierMaxLevel();
             }
             return false;
         }
 
         @Override
         public boolean apply(Level level, Player player, double radius) {
-            // Try energy tier upgrade first (energy lead in view); else NORMAL → REDSTONE.
+            // Try an energy tier upgrade first; otherwise upgrade normal lead to redstone.
             if (SuperLeadNetwork.canUpgradeNearestEnergyTierInView(level, player, radius)) {
                 return SuperLeadNetwork.upgradeNearestEnergyTierInView(level, player, radius);
             }
@@ -88,6 +98,11 @@ public enum LeadConnectionAction {
         }
 
         @Override
+        public net.minecraft.world.item.Item iconItem() {
+            return Items.IRON_BLOCK;
+        }
+
+        @Override
         public boolean canTarget(LeadConnection connection) {
             return connection.kind() != LeadKind.ENERGY;
         }
@@ -113,6 +128,11 @@ public enum LeadConnectionAction {
         @Override
         public boolean matches(ItemStack stack) {
             return stack.is(Items.HOPPER);
+        }
+
+        @Override
+        public net.minecraft.world.item.Item iconItem() {
+            return Items.HOPPER;
         }
 
         @Override
@@ -149,8 +169,13 @@ public enum LeadConnectionAction {
         }
 
         @Override
+        public net.minecraft.world.item.Item iconItem() {
+            return Items.CHEST;
+        }
+
+        @Override
         public boolean canTarget(LeadConnection connection) {
-            return connection.kind() == LeadKind.ITEM && connection.tier() < SuperLeadNetwork.ITEM_TIER_MAX;
+            return connection.kind() == LeadKind.ITEM && connection.tier() < SuperLeadNetwork.itemTierMax();
         }
 
         @Override
@@ -162,7 +187,7 @@ public enum LeadConnectionAction {
         public boolean applyTo(ServerLevel level, Player player, LeadConnection connection) {
             if (connection.kind() != LeadKind.ITEM) return false;
             return SuperLeadNetwork.upgradeConnectionTier(level, player, connection,
-                    SuperLeadNetwork.ITEM_TIER_MAX, Items.CHEST);
+                    SuperLeadNetwork.itemTierMax(), Items.CHEST);
         }
 
         @Override
@@ -176,6 +201,11 @@ public enum LeadConnectionAction {
         @Override
         public boolean matches(ItemStack stack) {
             return stack.is(Items.CAULDRON);
+        }
+
+        @Override
+        public net.minecraft.world.item.Item iconItem() {
+            return Items.CAULDRON;
         }
 
         @Override
@@ -210,8 +240,13 @@ public enum LeadConnectionAction {
         }
 
         @Override
+        public net.minecraft.world.item.Item iconItem() {
+            return Items.BUCKET;
+        }
+
+        @Override
         public boolean canTarget(LeadConnection connection) {
-            return connection.kind() == LeadKind.FLUID && connection.tier() < SuperLeadNetwork.FLUID_TIER_MAX;
+            return connection.kind() == LeadKind.FLUID && connection.tier() < SuperLeadNetwork.fluidTierMax();
         }
 
         @Override
@@ -223,7 +258,7 @@ public enum LeadConnectionAction {
         public boolean applyTo(ServerLevel level, Player player, LeadConnection connection) {
             if (connection.kind() != LeadKind.FLUID) return false;
             return SuperLeadNetwork.upgradeConnectionTier(level, player, connection,
-                    SuperLeadNetwork.FLUID_TIER_MAX, Items.BUCKET);
+                    SuperLeadNetwork.fluidTierMax(), Items.BUCKET);
         }
 
         @Override
@@ -245,6 +280,9 @@ public enum LeadConnectionAction {
     }
 
     public abstract boolean matches(ItemStack stack);
+
+    /** Item used to perform this action; rendered as an icon in the rope tooltip. */
+    public abstract net.minecraft.world.item.Item iconItem();
 
     public abstract boolean canTarget(LeadConnection connection);
 

@@ -34,17 +34,42 @@ public final class SuperLeadEvents {
     public static void onRightClickBlock(PlayerInteractEvent.RightClickBlock event) {
         ItemStack stack = event.getItemStack();
 
-        // Hopper on a block that already has an ITEM rope attached: toggle that anchor as extract source.
-        if (stack.is(Items.HOPPER) && tryToggleItemExtract(event)) {
-            return;
-        }
-        // Cauldron on a block that already has a FLUID rope attached: toggle that anchor as extract source.
-        if (stack.is(Items.CAULDRON) && tryToggleFluidExtract(event)) {
-            return;
-        }
-
-        if (tryUseConnectionAction(event)) {
-            return;
+        // Sneak-gated rope-targeting actions: cut, upgrade, extract toggle, remove attachment.
+        if (event.getEntity().isShiftKeyDown()) {
+            if (event.getLevel().isClientSide()
+                    && stack.is(Items.SHEARS)
+                    && com.zhongbai233.super_lead.preset.client.ZoneSelectionClient
+                            .tryHandleBlockClick(event.getEntity(), event.getHand(), event.getPos())) {
+                event.setCanceled(true);
+                event.setCancellationResult(InteractionResult.SUCCESS);
+                return;
+            }
+            if (stack.is(Items.SHEARS) && tryUseConnectionAction(event)) {
+                return;
+            }
+            if (stack.is(Items.HOPPER) && tryToggleItemExtract(event)) {
+                return;
+            }
+            if (stack.is(Items.CAULDRON) && tryToggleFluidExtract(event)) {
+                return;
+            }
+            if (tryUseConnectionAction(event)) {
+                return;
+            }
+            if (stack.isEmpty() && tryRemoveRopeAttachment(event.getLevel())) {
+                event.setCanceled(true);
+                event.setCancellationResult(InteractionResult.SUCCESS);
+                return;
+            }
+        } else {
+            // Non-sneak: attach decoration to upgraded ropes. Kept separate from the upgrade
+            // path so a player carrying e.g. redstone dust can both upgrade (sneak) and decorate
+            // (no sneak) without conflict.
+            if (tryAddRopeAttachment(event.getEntity(), event.getHand(), event.getLevel())) {
+                event.setCanceled(true);
+                event.setCancellationResult(InteractionResult.SUCCESS);
+                return;
+            }
         }
 
         if (tryUpgradeHeldLead(event.getEntity(), event.getHand())) {
@@ -53,7 +78,7 @@ public final class SuperLeadEvents {
             return;
         }
 
-        if (!stack.is(Items.LEAD) || event.getLevel().getBlockState(event.getPos()).isAir()) {
+        if (!SuperLeadItems.isSuperLead(stack) || event.getLevel().getBlockState(event.getPos()).isAir()) {
             return;
         }
 
@@ -100,6 +125,16 @@ public final class SuperLeadEvents {
             // Server-side handling is driven exclusively by the client-confirmed packet
             // (UseConnectionAction). Avoid running the server's own view-pick here so that
             // straight-line ray + larger radius cannot upgrade a rope the client never highlighted.
+            // Still consume the vanilla block interaction when the server can confirm a compatible
+            // rope in view; otherwise block items like chests can be placed after the custom
+            // upgrade packet succeeds.
+            if (event.getLevel() instanceof ServerLevel serverLevel
+                    && SuperLeadNetwork.hasClientPickCompatibleConnectionInView(
+                            serverLevel, event.getEntity(), action::canTarget)) {
+                event.setCanceled(true);
+                event.setCancellationResult(InteractionResult.SUCCESS);
+                return true;
+            }
             return false;
         }
         if (!sendClientUseAction(event.getEntity(), event.getHand(), action)) {
@@ -123,9 +158,12 @@ public final class SuperLeadEvents {
     @SubscribeEvent
     public static void onRightClickItem(PlayerInteractEvent.RightClickItem event) {
         ItemStack stack = event.getItemStack();
+        boolean shift = event.getEntity().isShiftKeyDown();
+
+        // Connection actions (shears, redstone, energy, item, fluid) all require sneak now so
+        // they don't conflict with attachment placement.
         LeadConnectionAction action = LeadConnectionAction.fromStack(stack).orElse(null);
-        if (action != null && event.getLevel().isClientSide()) {
-            // Mirror tryUseConnectionAction: client-only confirmation, server runs via packet.
+        if (action != null && shift && event.getLevel().isClientSide()) {
             if (sendClientUseAction(event.getEntity(), event.getHand(), action)) {
                 event.setCanceled(true);
                 event.setCancellationResult(InteractionResult.SUCCESS);
@@ -136,7 +174,64 @@ public final class SuperLeadEvents {
         if (tryUpgradeHeldLead(event.getEntity(), event.getHand())) {
             event.setCanceled(true);
             event.setCancellationResult(InteractionResult.SUCCESS);
+            return;
         }
+
+        if (!shift && tryAddRopeAttachment(event.getEntity(), event.getHand(), event.getLevel())) {
+            event.setCanceled(true);
+            event.setCancellationResult(InteractionResult.SUCCESS);
+        }
+    }
+
+    @SubscribeEvent
+    public static void onRightClickEmpty(PlayerInteractEvent.RightClickEmpty event) {
+        if (!event.getLevel().isClientSide()) return;
+        ItemStack stack = event.getItemStack();
+        boolean shift = event.getEntity().isShiftKeyDown();
+        if (shift) {
+            if (stack.isEmpty()) {
+                tryRemoveRopeAttachment(event.getLevel());
+            }
+            return;
+        }
+        if (com.zhongbai233.super_lead.lead.RopeAttachmentItems.isAttachable(stack)) {
+            tryAddRopeAttachment(event.getEntity(), event.getHand(), event.getLevel());
+        }
+    }
+
+    @SubscribeEvent
+    public static void onLeftClickEmpty(PlayerInteractEvent.LeftClickEmpty event) {
+        if (!event.getLevel().isClientSide()) return;
+        // Plain left-click on a rope attachment with both block- and item-display forms
+        com.zhongbai233.super_lead.lead.client.SuperLeadClientEvents.trySendToggleRopeAttachmentForm();
+    }
+
+    @SubscribeEvent
+    public static void onLeftClickBlock(PlayerInteractEvent.LeftClickBlock event) {
+        if (!event.getLevel().isClientSide()) return;
+        // LeftClickEmpty only fires when vanilla finds no hit. If the player is looking at a
+        // rope attachment that happens to overlap a block behind it, vanilla picks the block
+        // and the empty event never fires; intercept here too.
+        if (com.zhongbai233.super_lead.lead.client.SuperLeadClientEvents.trySendToggleRopeAttachmentForm()) {
+            event.setCanceled(true);
+        }
+    }
+
+    /** Attempt to add the held attachable item to a rope under the player's crosshair.
+     *  Client-only entry point; server is driven by the resulting packet. */
+    private static boolean tryAddRopeAttachment(Player player, InteractionHand hand, Level level) {
+        if (!level.isClientSide()) return false;
+        ItemStack stack = player.getItemInHand(hand);
+        if (!com.zhongbai233.super_lead.lead.RopeAttachmentItems.isAttachable(stack)) return false;
+        return com.zhongbai233.super_lead.lead.client.SuperLeadClientEvents
+                .trySendAddRopeAttachment(hand);
+    }
+
+    /** Attempt to remove the attachment under the player's crosshair. Client-only entry point. */
+    private static boolean tryRemoveRopeAttachment(Level level) {
+        if (!level.isClientSide()) return false;
+        return com.zhongbai233.super_lead.lead.client.SuperLeadClientEvents
+                .trySendRemoveRopeAttachment();
     }
 
     @SubscribeEvent
@@ -146,7 +241,7 @@ public final class SuperLeadEvents {
         }
 
         ItemStack stack = event.getItemStack();
-        if (stack.is(Items.LEAD)) {
+        if (SuperLeadItems.isSuperLead(stack)) {
             InteractionResult result = handleLeadUse(event.getLevel(), event.getEntity(), stack, new LeadAnchor(knot.getPos(), Direction.UP));
             event.setCanceled(true);
             event.setCancellationResult(result);
@@ -180,7 +275,7 @@ public final class SuperLeadEvents {
             if (first.equals(anchor)) {
                 SuperLeadNetwork.clearPendingAnchor(player);
                 clearLeashingState(stack);
-            } else if (first.attachmentPoint(level).distanceTo(anchor.attachmentPoint(level)) > SuperLeadNetwork.MAX_LEASH_DISTANCE) {
+            } else if (first.attachmentPoint(level).distanceTo(anchor.attachmentPoint(level)) > SuperLeadNetwork.maxLeashDistance()) {
                 SuperLeadNetwork.clearPendingAnchor(player);
                 clearLeashingState(stack);
                 result = InteractionResult.FAIL;
@@ -203,7 +298,7 @@ public final class SuperLeadEvents {
     public static void onLevelTick(LevelTickEvent.Post event) {
         for (Player player : event.getLevel().players()) {
             SuperLeadNetwork.pendingAnchor(player).ifPresent(anchor -> {
-                if (anchor.attachmentPoint(event.getLevel()).distanceTo(player.getRopeHoldPosition(1.0F)) > SuperLeadNetwork.MAX_LEASH_DISTANCE) {
+                if (anchor.attachmentPoint(event.getLevel()).distanceTo(player.getRopeHoldPosition(1.0F)) > SuperLeadNetwork.maxLeashDistance()) {
                     SuperLeadNetwork.clearPendingAnchor(player);
                     clearLeashingState(player.getMainHandItem());
                     clearLeashingState(player.getOffhandItem());
@@ -220,6 +315,7 @@ public final class SuperLeadEvents {
                 SuperLeadNetwork.tickEnergy(serverLevel);
                 SuperLeadNetwork.tickItem(serverLevel);
                 SuperLeadNetwork.tickFluid(serverLevel);
+                RopeContactTracker.tickRopeContacts(serverLevel);
             }
             flushDelayedSyncs();
         }
@@ -277,13 +373,13 @@ public final class SuperLeadEvents {
         ItemStack other = player.getItemInHand(otherHand);
 
         LeadKind usedMaterialKind = upgradeKindFromMaterial(used);
-        if (usedMaterialKind != null && other.is(Items.LEAD) && SuperLeadItemData.kind(other) != usedMaterialKind) {
+        if (usedMaterialKind != null && SuperLeadItems.isSuperLead(other) && SuperLeadItemData.kind(other) != usedMaterialKind) {
             upgradeOneLead(player, otherHand, other, used, usedMaterialKind);
             return true;
         }
 
         LeadKind otherMaterialKind = upgradeKindFromMaterial(other);
-        if (used.is(Items.LEAD) && otherMaterialKind != null && SuperLeadItemData.kind(used) != otherMaterialKind) {
+        if (SuperLeadItems.isSuperLead(used) && otherMaterialKind != null && SuperLeadItemData.kind(used) != otherMaterialKind) {
             upgradeOneLead(player, usedHand, used, other, otherMaterialKind);
             return true;
         }
@@ -311,8 +407,7 @@ public final class SuperLeadEvents {
             return;
         }
 
-        ItemStack upgraded = new ItemStack(Items.LEAD);
-        SuperLeadItemData.setKind(upgraded, kind);
+        ItemStack upgraded = SuperLeadItems.stack(kind);
         if (!player.isCreative()) {
             leadStack.shrink(1);
             materialStack.shrink(1);

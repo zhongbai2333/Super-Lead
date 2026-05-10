@@ -13,7 +13,6 @@ import java.util.function.IntSupplier;
 import java.util.function.Predicate;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
-import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.SignalGetter;
 import net.minecraft.world.entity.Leashable;
@@ -37,8 +36,16 @@ import net.neoforged.neoforge.transfer.resource.Resource;
 import net.neoforged.neoforge.transfer.transaction.Transaction;
 
 public final class SuperLeadNetwork {
-    public static final double MAX_LEASH_DISTANCE = 12.0D;
+    public static double maxLeashDistance() { return Config.maxLeashDistance(); }
+    public static int itemTierMax() { return Config.itemTierMax(); }
+    public static int fluidTierMax() { return Config.fluidTierMax(); }
+    private static double serverConfirmedPickReach() { return Config.maxLeashDistance() + 1.5D; }
+    private static final double SERVER_CONFIRMED_PICK_RADIUS = 0.95D;
+    private static final int SERVER_CONFIRMED_CURVE_SAMPLES = 12;
+    private static final double SERVER_CONFIRMED_CURVE_SAG_PER_BLOCK = 0.065D;
+    private static final double SERVER_CONFIRMED_CURVE_MAX_SAG = 0.70D;
     private static final Map<NetworkKey, List<LeadConnection>> CONNECTIONS = new HashMap<>();
+    private static final Map<NetworkKey, Map<BlockPos, Integer>> REDSTONE_SIGNAL_INDEX = new HashMap<>();
     private static final Map<PlayerKey, PendingLead> PENDING_LEADS = new HashMap<>();
     private static final Map<UUID, Long> INTERIOR_BLOCKED_SINCE = new HashMap<>();
     // Sticky "recently active" deadline per ENERGY connection (gameTime tick at which power expires).
@@ -50,15 +57,10 @@ public final class SuperLeadNetwork {
     private static final Map<BlockPos, Integer> ITEM_RR_CURSOR = new HashMap<>();
     private static final Map<BlockPos, Integer> FLUID_RR_CURSOR = new HashMap<>();
     private static final int ITEM_PULSE_DURATION_TICKS = 10;
-    private static final int ITEM_TRANSFER_INTERVAL_TICKS = 4;
-    private static final long STUCK_BREAK_TICKS = 100L;
+    private static final long STUCK_CHECK_INTERVAL_TICKS = 5L;
     private static final double STUCK_SAMPLE_STEP = 0.20D;
     private static final double STUCK_ENDPOINT_IGNORE_DISTANCE = 0.35D;
     private static final double STUCK_INSIDE_EPS = 1.0e-4D;
-    public static final int ITEM_TIER_MAX = 6;
-    public static final int FLUID_TIER_MAX = 4;
-    /** Per-rope batch unit for fluid transfers (1 bucket = 1000 mB). */
-    private static final int FLUID_BUCKET_AMOUNT = 1000;
     private static final ThreadLocal<Boolean> SUPPRESS_LEAD_SIGNALS = ThreadLocal.withInitial(() -> false);
 
     private SuperLeadNetwork() {}
@@ -93,14 +95,16 @@ public final class SuperLeadNetwork {
 
     public static LeadConnection connect(Level level, LeadAnchor from, LeadAnchor to, LeadKind kind) {
         LeadConnection connection = LeadConnection.create(from, to, kind);
-        if (!level.isClientSide() && level instanceof ServerLevel serverLevel) {
+        // Server-authoritative: only the logical server records the connection. The client
+        // mirror is populated by SyncConnections / SyncConnectionChanges. Writing on the
+        // client too would create a phantom entry with a different UUID (in single-player
+        // both sides share this static call path), which the server cannot cut.
+        if (level instanceof ServerLevel serverLevel && !level.isClientSide()) {
             ensureFenceKnot(serverLevel, from);
             ensureFenceKnot(serverLevel, to);
             SuperLeadSavedData.get(serverLevel).add(connection);
             notifyRedstoneChange(serverLevel, connection);
             SuperLeadPayloads.sendToDimension(serverLevel);
-        } else {
-            CONNECTIONS.computeIfAbsent(NetworkKey.of(level), key -> new ArrayList<>()).add(connection);
         }
         return connection;
     }
@@ -114,6 +118,44 @@ public final class SuperLeadNetwork {
 
     public static void replaceConnections(Level level, List<LeadConnection> connections) {
         CONNECTIONS.put(NetworkKey.of(level), new ArrayList<>(connections));
+        invalidateRedstoneIndex(level);
+        if (level.isClientSide()) {
+            com.zhongbai233.super_lead.lead.client.chunk.StaticRopeChunkRegistry.get()
+                    .onConnectionsReplaced(level, connections);
+        }
+    }
+
+    public static void applyConnectionChanges(Level level, List<UUID> removed, List<LeadConnection> upserts) {
+        ArrayList<LeadConnection> connections = new ArrayList<>(connections(level));
+        if (!removed.isEmpty()) {
+            Set<UUID> removedSet = new HashSet<>(removed);
+            connections.removeIf(connection -> removedSet.contains(connection.id()));
+        }
+        for (LeadConnection upsert : upserts) {
+            boolean replaced = false;
+            for (int i = 0; i < connections.size(); i++) {
+                if (connections.get(i).id().equals(upsert.id())) {
+                    connections.set(i, upsert);
+                    replaced = true;
+                    break;
+                }
+            }
+            if (!replaced) {
+                connections.add(upsert);
+            }
+        }
+        CONNECTIONS.put(NetworkKey.of(level), connections);
+        invalidateRedstoneIndex(level);
+        if (level.isClientSide()) {
+            com.zhongbai233.super_lead.lead.client.chunk.StaticRopeChunkRegistry.get()
+                    .onConnectionsReplaced(level, connections);
+        }
+    }
+
+    public static void invalidateRedstoneIndex(Level level) {
+        if (level != null) {
+            REDSTONE_SIGNAL_INDEX.remove(NetworkKey.of(level));
+        }
     }
 
     public static void pruneInvalid(Level level) {
@@ -131,17 +173,24 @@ public final class SuperLeadNetwork {
             return;
         }
 
-        connections.removeIf(connection -> invalid(level, connection));
+        boolean removed = connections.removeIf(connection -> invalid(level, connection));
+        if (removed) {
+            invalidateRedstoneIndex(level);
+        }
     }
 
     private static boolean invalid(Level level, LeadConnection connection) {
         return level.getBlockState(connection.from().pos()).isAir()
                 || level.getBlockState(connection.to().pos()).isAir()
-                || connection.from().attachmentPoint(level).distanceTo(connection.to().attachmentPoint(level)) > MAX_LEASH_DISTANCE;
+                || connection.from().attachmentPoint(level).distanceTo(connection.to().attachmentPoint(level)) > maxLeashDistance();
     }
 
     public static void tickStuckBreaks(ServerLevel level) {
         long now = level.getGameTime();
+        if (now % STUCK_CHECK_INTERVAL_TICKS != 0L) {
+            return;
+        }
+
         List<LeadConnection> connections = SuperLeadSavedData.get(level).connections();
         Set<UUID> liveIds = new HashSet<>();
         List<LeadConnection> broken = new ArrayList<>();
@@ -153,7 +202,7 @@ public final class SuperLeadNetwork {
             }
 
             long since = INTERIOR_BLOCKED_SINCE.computeIfAbsent(connection.id(), id -> now);
-            if (now - since >= STUCK_BREAK_TICKS) {
+            if (now - since >= Config.stuckBreakTicks()) {
                 broken.add(connection);
             }
         }
@@ -329,21 +378,104 @@ public final class SuperLeadNetwork {
     }
 
     public static boolean upgradeNearestItemTierInView(Level level, Player player, double radius) {
-        return upgradeNearestKindTierInView(level, player, radius, LeadKind.ITEM, ITEM_TIER_MAX, Items.CHEST);
+        return upgradeNearestKindTierInView(level, player, radius, LeadKind.ITEM, itemTierMax(), Items.CHEST);
     }
 
     public static boolean upgradeNearestFluidTierInView(Level level, Player player, double radius) {
-        return upgradeNearestKindTierInView(level, player, radius, LeadKind.FLUID, FLUID_TIER_MAX, Items.BUCKET);
+        return upgradeNearestKindTierInView(level, player, radius, LeadKind.FLUID, fluidTierMax(), Items.BUCKET);
     }
 
     /** Find a known connection by id in the given level (server or client). */
     public static Optional<LeadConnection> findConnectionById(Level level, UUID id) {
+        if (!level.isClientSide() && level instanceof ServerLevel serverLevel) {
+            return SuperLeadSavedData.get(serverLevel).find(id);
+        }
         for (LeadConnection connection : connections(level)) {
             if (connection.id().equals(id)) {
                 return Optional.of(connection);
             }
         }
         return Optional.empty();
+    }
+
+    /**
+     * Server-side validation for a client-confirmed rope target.
+     *
+     * The client picks against the rendered rope simulation, which can sag or be pushed by blocks.
+     * The server only has the two anchors, so this intentionally checks a wider envelope around the
+     * straight anchor segment plus a conservative sagged curve. This keeps the packet tied to the
+     * exact client-highlighted connection without going back to server-side "nearest rope" picking.
+     */
+    public static boolean canUseClientPickedConnection(ServerLevel level, Player player, LeadConnection connection) {
+        Vec3 origin = player.getEyePosition(1.0F);
+        Vec3 direction = player.getViewVector(1.0F).normalize();
+        Vec3 a = connection.from().attachmentPoint(level);
+        Vec3 b = connection.to().attachmentPoint(level);
+        double radiusSqr = SERVER_CONFIRMED_PICK_RADIUS * SERVER_CONFIRMED_PICK_RADIUS;
+
+        // Clamp pick reach to whatever block the player is actually aiming at, so a rope that lies
+        // along the view direction past a closer block does not get treated as targeted.
+        double reach = serverConfirmedPickReach();
+        Vec3 reachEnd = origin.add(direction.scale(reach));
+        net.minecraft.world.level.ClipContext clip = new net.minecraft.world.level.ClipContext(
+                origin, reachEnd,
+                net.minecraft.world.level.ClipContext.Block.OUTLINE,
+                net.minecraft.world.level.ClipContext.Fluid.NONE,
+                player);
+        net.minecraft.world.phys.BlockHitResult blockHit = level.clip(clip);
+        if (blockHit.getType() != net.minecraft.world.phys.HitResult.Type.MISS) {
+            reach = Math.min(reach,
+                    blockHit.getLocation().distanceTo(origin) + SERVER_CONFIRMED_PICK_RADIUS);
+        }
+
+        ConnectionPick straightPick = pickSegment(connection, a, b, origin, direction, reach);
+        if (straightPick != null && straightPick.distanceSqr() <= radiusSqr) {
+            return true;
+        }
+
+        return pickApproximateSaggedCurve(connection, a, b, origin, direction, reach)
+                .map(ConnectionPick::distanceSqr)
+                .orElse(Double.POSITIVE_INFINITY) <= radiusSqr;
+    }
+
+    /** Looser variant of {@link #canUseClientPickedConnection} for attachment placement /
+     *  removal / form-toggle. The client physics rope can sag noticeably below the chord
+     *  while the server's straight-line + half-sine approximation cannot (server's max sag
+     *  ~0.7 blocks, client up to several blocks for long, mostly-horizontal ropes). The
+     *  precise hit position {@code t} is computed by the client picker on the actual
+     *  simulated polyline, so the server only needs a coarse "ray points at the rope's
+     *  bounding envelope within reach" anti-cheese gate. We therefore intersect the player's
+     *  view ray with an AABB that contains the chord plus the worst-case sagged shape. */
+    public static boolean canTouchConnectionForAttachment(ServerLevel level, Player player, LeadConnection connection) {
+        Vec3 origin = player.getEyePosition(1.0F);
+        Vec3 direction = player.getViewVector(1.0F).normalize();
+        Vec3 a = connection.from().attachmentPoint(level);
+        Vec3 b = connection.to().attachmentPoint(level);
+        double chord = a.distanceTo(b);
+        // Worst-case sag depth of a free-hanging chain of length L between equal-height
+        // anchors is L/2; clamp to half the chord plus a generous floor so short ropes also
+        // pass even when the slack-driven catenary depth is smaller than the radius.
+        double sagDown = Math.max(SERVER_CONFIRMED_CURVE_MAX_SAG + SERVER_CONFIRMED_PICK_RADIUS,
+                chord * 0.5D + SERVER_CONFIRMED_PICK_RADIUS);
+        net.minecraft.world.phys.AABB envelope = new net.minecraft.world.phys.AABB(
+                Math.min(a.x, b.x) - SERVER_CONFIRMED_PICK_RADIUS,
+                Math.min(a.y, b.y) - sagDown,
+                Math.min(a.z, b.z) - SERVER_CONFIRMED_PICK_RADIUS,
+                Math.max(a.x, b.x) + SERVER_CONFIRMED_PICK_RADIUS,
+                Math.max(a.y, b.y) + SERVER_CONFIRMED_PICK_RADIUS,
+                Math.max(a.z, b.z) + SERVER_CONFIRMED_PICK_RADIUS);
+        Vec3 reachEnd = origin.add(direction.scale(serverConfirmedPickReach()));
+        return envelope.clip(origin, reachEnd).isPresent();
+    }
+
+    public static boolean hasClientPickCompatibleConnectionInView(ServerLevel level, Player player,
+            Predicate<LeadConnection> predicate) {
+        for (LeadConnection connection : connections(level)) {
+            if (predicate.test(connection) && canUseClientPickedConnection(level, player, connection)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** Per-connection: change kind. */
@@ -376,10 +508,67 @@ public final class SuperLeadNetwork {
         Vec3 midpoint = connection.from().attachmentPoint(level)
                 .add(connection.to().attachmentPoint(level)).scale(0.5D);
         dropLeads(level, midpoint, player, 1);
+        // Drop any attached items along with the rope.
+        for (RopeAttachment attachment : connection.attachments()) {
+            net.minecraft.world.entity.item.ItemEntity drop = new net.minecraft.world.entity.item.ItemEntity(
+                    level, midpoint.x, midpoint.y, midpoint.z, attachment.stack().copy());
+            drop.setDefaultPickUpDelay();
+            level.addFreshEntity(drop);
+        }
         cleanupFenceKnot(level, connection.from());
         cleanupFenceKnot(level, connection.to());
         SuperLeadPayloads.sendToDimension(level);
         return true;
+    }
+
+    /** Adds a new attachment to {@code connection}. The caller is responsible for shrinking the
+     *  player's held stack on success. */
+    public static boolean addAttachment(ServerLevel level, LeadConnection connection, double t, net.minecraft.world.item.ItemStack stack) {
+        if (stack.isEmpty()) return false;
+        RopeAttachment attachment = RopeAttachment.create(t, stack);
+        boolean ok = SuperLeadSavedData.get(level).update(connection.id(),
+                c -> c.addAttachment(attachment), true);
+        if (ok) {
+            SuperLeadPayloads.sendToDimension(level);
+        }
+        return ok;
+    }
+
+    /** Removes attachment {@code attachmentId} from {@code connection}. The removed item is
+     *  given to {@code player} (or dropped at their feet if their inventory is full). */
+    public static boolean removeAttachment(ServerLevel level, LeadConnection connection, java.util.UUID attachmentId, Player player) {
+        RopeAttachment removed = null;
+        for (RopeAttachment a : connection.attachments()) {
+            if (a.id().equals(attachmentId)) { removed = a; break; }
+        }
+        if (removed == null) return false;
+        final RopeAttachment removedFinal = removed;
+        boolean ok = SuperLeadSavedData.get(level).update(connection.id(),
+                c -> c.removeAttachment(attachmentId), true);
+        if (!ok) return false;
+        net.minecraft.world.item.ItemStack drop = removedFinal.stack().copy();
+        if (player != null && !player.getInventory().add(drop)) {
+            player.drop(drop, false);
+        } else if (player == null) {
+            Vec3 mid = connection.from().attachmentPoint(level)
+                    .add(connection.to().attachmentPoint(level)).scale(0.5D);
+            net.minecraft.world.entity.item.ItemEntity entity = new net.minecraft.world.entity.item.ItemEntity(level, mid.x, mid.y, mid.z, drop);
+            entity.setDefaultPickUpDelay();
+            level.addFreshEntity(entity);
+        }
+        SuperLeadPayloads.sendToDimension(level);
+        return true;
+    }
+
+    /** Toggle a single attachment between block-shaped and item-shaped rendering. Only
+     *  meaningful for BlockItem stacks; non-block items are silently ignored. */
+    public static boolean toggleAttachmentForm(ServerLevel level, LeadConnection connection, java.util.UUID attachmentId) {
+        boolean ok = SuperLeadSavedData.get(level).update(connection.id(),
+                c -> c.toggleAttachmentForm(attachmentId), true);
+        if (ok) {
+            SuperLeadPayloads.sendToDimension(level);
+        }
+        return ok;
     }
 
     private static boolean upgradeNearestKindTierInView(Level level, Player player, double radius,
@@ -509,9 +698,13 @@ public final class SuperLeadNetwork {
                 redstoneConnections.add(connection);
             }
         }
+        if (redstoneConnections.isEmpty()) {
+            return;
+        }
 
         boolean changed = false;
         boolean[] visited = new boolean[redstoneConnections.size()];
+        Map<LeadAnchor, List<Integer>> connectionsByAnchor = indexConnectionsByAnchor(redstoneConnections);
         for (int i = 0; i < redstoneConnections.size(); i++) {
             if (visited[i]) {
                 continue;
@@ -527,12 +720,7 @@ public final class SuperLeadNetwork {
                 power = Math.max(power, externalSignalAt(level, current.from()));
                 power = Math.max(power, externalSignalAt(level, current.to()));
 
-                for (int j = 0; j < redstoneConnections.size(); j++) {
-                    if (!visited[j] && sharesAnchor(current, redstoneConnections.get(j))) {
-                        visited[j] = true;
-                        component.add(j);
-                    }
-                }
+                addUnvisitedNeighbors(current, connectionsByAnchor, visited, component);
             }
 
             final int componentPower = power;
@@ -566,6 +754,7 @@ public final class SuperLeadNetwork {
         long now = level.getGameTime();
         Set<UUID> transferredIds = new HashSet<>();
         boolean[] visited = new boolean[energyConnections.size()];
+        Map<LeadAnchor, List<Integer>> connectionsByAnchor = indexConnectionsByAnchor(energyConnections);
         for (int i = 0; i < energyConnections.size(); i++) {
             if (visited[i]) {
                 continue;
@@ -577,12 +766,7 @@ public final class SuperLeadNetwork {
 
             for (int cursor = 0; cursor < component.size(); cursor++) {
                 LeadConnection current = energyConnections.get(component.get(cursor));
-                for (int j = 0; j < energyConnections.size(); j++) {
-                    if (!visited[j] && sharesAnchor(current, energyConnections.get(j))) {
-                        visited[j] = true;
-                        component.add(j);
-                    }
-                }
+                addUnvisitedNeighbors(current, connectionsByAnchor, visited, component);
             }
 
             transferEnergyComponent(level, component, energyConnections, transferredIds);
@@ -700,19 +884,19 @@ public final class SuperLeadNetwork {
     }
 
     public static void tickItem(ServerLevel level) {
-        if (level.getGameTime() % ITEM_TRANSFER_INTERVAL_TICKS != 0L) {
+        if (level.getGameTime() % Config.itemTransferIntervalTicks() != 0L) {
             return;
         }
         tickTransfer(level, LeadKind.ITEM, Capabilities.Item.BLOCK, ITEM_RR_CURSOR,
-                rope -> Math.min(64, 1 << Math.min(ITEM_TIER_MAX, rope.tier())));
+                rope -> Math.min(64, 1 << Math.min(itemTierMax(), rope.tier())));
     }
 
     public static void tickFluid(ServerLevel level) {
-        if (level.getGameTime() % ITEM_TRANSFER_INTERVAL_TICKS != 0L) {
+        if (level.getGameTime() % Config.itemTransferIntervalTicks() != 0L) {
             return;
         }
         tickTransfer(level, LeadKind.FLUID, Capabilities.Fluid.BLOCK, FLUID_RR_CURSOR,
-                rope -> FLUID_BUCKET_AMOUNT * (1 << Math.min(FLUID_TIER_MAX, rope.tier())));
+                rope -> Config.fluidBucketAmount() * (1 << Math.min(fluidTierMax(), rope.tier())));
     }
 
     private static <R extends Resource> void tickTransfer(
@@ -726,19 +910,22 @@ public final class SuperLeadNetwork {
         // Index every rope of this kind by both endpoint positions so we can walk through
         // fence-knot junctions where multiple ropes share a BlockPos.
         Map<BlockPos, List<LeadConnection>> ropesAt = new HashMap<>();
+        Map<BlockPos, List<LeadConnection>> startsBySource = new HashMap<>();
         for (LeadConnection c : data.connections()) {
-            if (c.kind() != kind) continue;
+            if (c.kind() != kind) {
+                continue;
+            }
+
             BlockPos a = c.from().pos().immutable();
             BlockPos b = c.to().pos().immutable();
             ropesAt.computeIfAbsent(a, k -> new ArrayList<>()).add(c);
             if (!a.equals(b)) {
                 ropesAt.computeIfAbsent(b, k -> new ArrayList<>()).add(c);
             }
-        }
 
-        Map<BlockPos, List<LeadConnection>> startsBySource = new HashMap<>();
-        for (LeadConnection c : data.connections()) {
-            if (c.kind() != kind || c.extractAnchor() == 0) continue;
+            if (c.extractAnchor() == 0) {
+                continue;
+            }
             LeadAnchor src = c.extractSource();
             if (src == null) continue;
             startsBySource.computeIfAbsent(src.pos().immutable(), k -> new ArrayList<>()).add(c);
@@ -776,7 +963,7 @@ public final class SuperLeadNetwork {
                         PathStep s = path.get(i);
                         long startTick = now + (long) i * ITEM_PULSE_DURATION_TICKS;
                         SuperLeadPayloads.sendItemPulse(level,
-                                new SuperLeadPayloads.ItemPulse(s.rope.id(), s.reverse, startTick, ITEM_PULSE_DURATION_TICKS));
+                                new ItemPulse(s.rope.id(), s.reverse, startTick, ITEM_PULSE_DURATION_TICKS));
                     }
                     rrCursor.put(sourcePos, (idx + 1) % n);
                     for (RrChoice rc : rrChoices) {
@@ -787,10 +974,6 @@ public final class SuperLeadNetwork {
             }
         }
     }
-
-    private record PathStep(LeadConnection rope, boolean reverse) {}
-
-    private record RrChoice(BlockPos knot, int idx, int n) {}
 
     /**
      * DFS through the rope graph starting at {@code current}. If {@code current} hosts a handler,
@@ -884,31 +1067,77 @@ public final class SuperLeadNetwork {
         return false;
     }
 
-    private static boolean sharesAnchor(LeadConnection a, LeadConnection b) {
-        return a.from().equals(b.from())
-                || a.from().equals(b.to())
-                || a.to().equals(b.from())
-                || a.to().equals(b.to());
+    private static Map<LeadAnchor, List<Integer>> indexConnectionsByAnchor(List<LeadConnection> connections) {
+        Map<LeadAnchor, List<Integer>> byAnchor = new HashMap<>();
+        for (int i = 0; i < connections.size(); i++) {
+            LeadConnection connection = connections.get(i);
+            addAnchorIndex(byAnchor, connection.from(), i);
+            if (!connection.to().equals(connection.from())) {
+                addAnchorIndex(byAnchor, connection.to(), i);
+            }
+        }
+        return byAnchor;
+    }
+
+    private static void addAnchorIndex(Map<LeadAnchor, List<Integer>> byAnchor, LeadAnchor anchor, int index) {
+        byAnchor.computeIfAbsent(anchor, key -> new ArrayList<>()).add(index);
+    }
+
+    private static void addUnvisitedNeighbors(LeadConnection connection, Map<LeadAnchor, List<Integer>> byAnchor,
+            boolean[] visited, List<Integer> component) {
+        addUnvisitedNeighbors(connection.from(), byAnchor, visited, component);
+        if (!connection.to().equals(connection.from())) {
+            addUnvisitedNeighbors(connection.to(), byAnchor, visited, component);
+        }
+    }
+
+    private static void addUnvisitedNeighbors(LeadAnchor anchor, Map<LeadAnchor, List<Integer>> byAnchor,
+            boolean[] visited, List<Integer> component) {
+        List<Integer> neighbors = byAnchor.get(anchor);
+        if (neighbors == null) {
+            return;
+        }
+
+        for (int index : neighbors) {
+            if (visited[index]) {
+                continue;
+            }
+            visited[index] = true;
+            component.add(index);
+        }
     }
 
     public static int leadSignal(SignalGetter getter, BlockPos pos, Direction direction) {
         if (SUPPRESS_LEAD_SIGNALS.get() || !(getter instanceof Level level)) {
             return 0;
         }
+        return redstoneSignalIndex(level).getOrDefault(pos, 0);
+    }
 
-        int signal = 0;
+    private static Map<BlockPos, Integer> redstoneSignalIndex(Level level) {
+        return REDSTONE_SIGNAL_INDEX.computeIfAbsent(NetworkKey.of(level),
+                ignored -> buildRedstoneSignalIndex(level));
+    }
+
+    private static Map<BlockPos, Integer> buildRedstoneSignalIndex(Level level) {
+        Map<BlockPos, Integer> signals = new HashMap<>();
         for (LeadConnection connection : connections(level)) {
             if (connection.kind() != LeadKind.REDSTONE || connection.power() <= 0) {
                 continue;
             }
-            if (isRedstoneOutputPosition(connection.from(), pos) || isRedstoneOutputPosition(connection.to(), pos)) {
-                signal = Math.max(signal, connection.power());
-                if (signal >= 15) {
-                    return 15;
-                }
-            }
+            addRedstoneSignal(signals, connection.from(), connection.power());
+            addRedstoneSignal(signals, connection.to(), connection.power());
         }
-        return signal;
+        return signals.isEmpty() ? Map.of() : Map.copyOf(signals);
+    }
+
+    private static void addRedstoneSignal(Map<BlockPos, Integer> signals, LeadAnchor anchor, int power) {
+        addRedstoneSignal(signals, anchor.pos().immutable(), power);
+        addRedstoneSignal(signals, anchor.pos().relative(anchor.face()).immutable(), power);
+    }
+
+    private static void addRedstoneSignal(Map<BlockPos, Integer> signals, BlockPos pos, int power) {
+        signals.merge(pos, Math.min(15, power), Math::max);
     }
 
     private static Optional<LeadConnection> nearestConnection(Level level, Vec3 point, double maxDistance, Predicate<LeadConnection> predicate) {
@@ -930,7 +1159,7 @@ public final class SuperLeadNetwork {
     private static Optional<ConnectionPick> nearestConnectionInView(Level level, Player player, double radius, Predicate<LeadConnection> predicate) {
         Vec3 origin = player.getEyePosition(1.0F);
         Vec3 direction = player.getViewVector(1.0F).normalize();
-        double maxDistance = MAX_LEASH_DISTANCE;
+        double maxDistance = maxLeashDistance();
         double radiusSqr = radius * radius;
         ConnectionPick best = null;
 
@@ -950,6 +1179,30 @@ public final class SuperLeadNetwork {
                     || (Math.abs(pick.distanceSqr() - best.distanceSqr()) < 1.0e-6D && pick.along() < best.along())) {
                 best = pick;
             }
+        }
+        return Optional.ofNullable(best);
+    }
+
+    private static Optional<ConnectionPick> pickApproximateSaggedCurve(LeadConnection connection, Vec3 a, Vec3 b,
+            Vec3 origin, Vec3 direction, double maxDistance) {
+        double sag = Math.min(SERVER_CONFIRMED_CURVE_MAX_SAG,
+                a.distanceTo(b) * SERVER_CONFIRMED_CURVE_SAG_PER_BLOCK);
+        if (sag <= 1.0e-6D) {
+            return Optional.empty();
+        }
+
+        ConnectionPick best = null;
+        Vec3 previous = a;
+        for (int i = 1; i <= SERVER_CONFIRMED_CURVE_SAMPLES; i++) {
+            double t = i / (double) SERVER_CONFIRMED_CURVE_SAMPLES;
+            Vec3 current = a.lerp(b, t).add(0.0D, -Math.sin(Math.PI * t) * sag, 0.0D);
+            ConnectionPick pick = pickSegment(connection, previous, current, origin, direction, maxDistance);
+            if (pick != null && (best == null
+                    || pick.distanceSqr() < best.distanceSqr()
+                    || (Math.abs(pick.distanceSqr() - best.distanceSqr()) < 1.0e-6D && pick.along() < best.along()))) {
+                best = pick;
+            }
+            previous = current;
         }
         return Optional.ofNullable(best);
     }
@@ -976,7 +1229,6 @@ public final class SuperLeadNetwork {
         double along = segment.scale(s).add(w).dot(direction);
         along = Math.max(0.0D, Math.min(maxDistance, along));
 
-        // 重新用裁剪后的射线参数回算一次 segment 参数，保证端点/近距离情况下也稳定。
         s = direction.scale(along).subtract(w).dot(segment) / segLenSqr;
         s = Math.max(0.0D, Math.min(1.0D, s));
         Vec3 ropePoint = a.add(segment.scale(s));
@@ -1013,6 +1265,7 @@ public final class SuperLeadNetwork {
         if (connection.kind() != LeadKind.REDSTONE) {
             return;
         }
+        invalidateRedstoneIndex(level);
         notifyRedstoneAnchor(level, connection.from());
         notifyRedstoneAnchor(level, connection.to());
     }
@@ -1161,27 +1414,7 @@ public final class SuperLeadNetwork {
         if ((player != null && player.isCreative()) || count <= 0) {
             return;
         }
-        level.addFreshEntity(new ItemEntity(level, point.x, point.y, point.z, new ItemStack(Items.LEAD, count)));
+        level.addFreshEntity(new ItemEntity(level, point.x, point.y, point.z, new ItemStack(SuperLeadItems.SUPER_LEAD.asItem(), count)));
     }
 
-    private record NetworkKey(ResourceKey<Level> dimension, boolean clientSide) {
-        static NetworkKey of(Level level) {
-            return new NetworkKey(level.dimension(), level.isClientSide());
-        }
-    }
-
-    private record PlayerKey(UUID playerId, boolean clientSide) {
-        static PlayerKey of(Player player) {
-            return new PlayerKey(player.getUUID(), player.level().isClientSide());
-        }
-    }
-
-    private record ConnectionPick(LeadConnection connection, Vec3 point, double distanceSqr, double along) {
-    }
-
-    private record EnergyEndpoint(LeadAnchor anchor, EnergyHandler handler) {
-    }
-
-    private record PendingLead(LeadAnchor anchor, LeadKind kind) {
-    }
 }

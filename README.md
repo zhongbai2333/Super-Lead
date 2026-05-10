@@ -6,9 +6,10 @@
 
 > Have you ever wondered whether a lead could do more than just leash pigs?
 
-This mod expands the vanilla lead into a visual, lightweight, no-pipe connection
-tool. Redstone signaling, FE energy transfer, item transport, and fluid transfer
-all live on a single familiar object: a rope.
+This mod adds a dedicated Super Lead item as a visual, lightweight, no-pipe
+connection tool. It reuses the vanilla lead look without hijacking the vanilla
+lead globally. Redstone signaling, FE energy transfer, item transport, and fluid
+transfer all live on a single familiar object: a rope.
 
 Simple interactions, readable visuals, and that classic vanilla sagging line —
 because connection does not have to be complicated.
@@ -20,7 +21,7 @@ connection. Instead of pipe blocks or invisible wireless links, the lead becomes
 a small engineering language for connecting blocks, machines, signals, and
 inventories directly in the world.
 
-- The vanilla `Lead` item is the only base item.
+- The `Super Lead` item is the only base item; craft it from a vanilla `Lead`.
 - Anchors snap to block faces, not just mobs and fence knots.
 - Familiar hanging rope curve, rendered with a thin square geometry.
 - Connections are stored with the world and synced to all clients.
@@ -81,7 +82,7 @@ materials only apply to ropes of the matching kind.
 
 ### Block-to-block leads
 
-Right-click a block face with a vanilla lead to set the first anchor; right-click
+Right-click a block face with a Super Lead to set the first anchor; right-click
 another block to create the connection. Anchors are computed from the block
 shape and clicked face so ropes land naturally on full blocks, partial blocks,
 machines, fences, and decorative blocks.
@@ -110,7 +111,7 @@ confirmed (with a reach check). This means:
 
 ### Cutting connections
 
-Use shears on any rope to cut it; the corresponding lead item drops in the
+Use shears on any rope to cut it; the corresponding Super Lead item drops in the
 world. Shears on a fence knot cut every rope attached to it.
 
 ### Tooltips

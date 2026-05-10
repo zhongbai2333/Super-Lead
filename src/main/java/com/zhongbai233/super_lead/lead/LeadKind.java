@@ -22,11 +22,12 @@ public enum LeadKind {
     }
 
     public static LeadKind byName(String name) {
-        for (LeadKind kind : values()) {
-            if (kind.serializedName.equals(name)) {
-                return kind;
-            }
-        }
-        return NORMAL;
+        return switch (name) {
+            case "redstone" -> REDSTONE;
+            case "energy" -> ENERGY;
+            case "item" -> ITEM;
+            case "fluid" -> FLUID;
+            default -> NORMAL;
+        };
     }
 }

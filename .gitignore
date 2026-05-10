@@ -9,6 +9,9 @@ build
 
 # Eclipse/IDE compiled output
 bin
+*.class
+.eclipse
+.vscode
 
 # IntelliJ
 out/
@@ -22,3 +25,9 @@ hs_err_pid*
 
 # Common working directory
 run
+
+# Generated data/resources
+src/generated/resources/
+
+# Local Maven publishing output
+repo/

@@ -1,6 +1,8 @@
 pluginManagement {
     repositories {
-        mavenLocal()
+        if (providers.gradleProperty('useMavenLocal').map { it.toBoolean() }.orElse(false).get()) {
+            mavenLocal()
+        }
         gradlePluginPortal()
         maven { url = 'https://maven.neoforged.net/releases' }
     }

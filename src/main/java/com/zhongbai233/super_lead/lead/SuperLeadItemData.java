@@ -5,7 +5,6 @@ import net.minecraft.core.component.DataComponents;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.item.Items;
 import net.minecraft.world.item.component.CustomData;
 
 public final class SuperLeadItemData {
@@ -14,7 +13,7 @@ public final class SuperLeadItemData {
     private SuperLeadItemData() {}
 
     public static LeadKind kind(ItemStack stack) {
-        if (!stack.is(Items.LEAD)) {
+        if (!SuperLeadItems.isSuperLead(stack)) {
             return LeadKind.NORMAL;
         }
 
@@ -32,7 +31,7 @@ public final class SuperLeadItemData {
     }
 
     public static void setKind(ItemStack stack, LeadKind kind) {
-        if (!stack.is(Items.LEAD)) {
+        if (!SuperLeadItems.isSuperLead(stack)) {
             return;
         }
 

@@ -16,7 +16,6 @@ public record LeadAnchor(BlockPos pos, Direction face) {
                     Direction.CODEC.fieldOf("face").forGetter(LeadAnchor::face))
             .apply(instance, LeadAnchor::new));
 
-    /** 沿 face 法线把锚点向外推一点，避免端点落在方块内部导致光照变黑。 */
     private static final double EXTRUDE = 0.06D;
 
     public Vec3 attachmentPoint(Level level) {

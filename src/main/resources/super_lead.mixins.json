@@ -6,9 +6,6 @@
   "mixins": [
     "SignalGetterMixin"
   ],
-  "client": [
-    "EntityRendererMixin"
-  ],
   "injectors": {
     "defaultRequire": 1
   },
