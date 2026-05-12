@@ -213,7 +213,7 @@ public final class RopeAttachmentRenderer {
             pose.translate(-0.5D, -0.5D, -0.5D);
             collector.submitMovingBlock(pose, mb);
             return true;
-        } catch (Throwable ignored) {
+        } catch (RuntimeException ignored) {
             return false;
         }
     }

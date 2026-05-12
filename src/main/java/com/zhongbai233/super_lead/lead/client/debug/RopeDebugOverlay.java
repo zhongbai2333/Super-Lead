@@ -4,6 +4,7 @@ import com.zhongbai233.super_lead.Super_lead;
 import com.zhongbai233.super_lead.preset.client.PhysicsZonesClient;
 import com.zhongbai233.super_lead.tuning.ClientTuning;
 import java.util.List;
+import java.util.Locale;
 import net.minecraft.client.gui.components.debug.DebugScreenDisplayer;
 import net.minecraft.client.gui.components.debug.DebugScreenEntry;
 import net.minecraft.client.gui.components.debug.DebugScreenEntryStatus;
@@ -41,20 +42,33 @@ public final class RopeDebugOverlay implements DebugScreenEntry {
                         + " sim=" + RopeDebugStats.simEntries
                         + " render=" + RopeDebugStats.renderEntries,
                 "[SuperLead] dyn=" + RopeDebugStats.dynamicJobs
-                        + " mesh=" + RopeDebugStats.chunkMeshClaimed
-                        + " bake " + RopeDebugStats.bakeCacheHits + "h/"
-                        + RopeDebugStats.bakeCacheMisses + "m",
+                    + " claimed=" + RopeDebugStats.chunkMeshClaimed
+                    + " elig=" + RopeDebugStats.chunkMeshEligible
+                    + " wait=" + RopeDebugStats.chunkMeshWaitingQuiet,
+                "[SuperLead] mesh src sim=" + RopeDebugStats.chunkMeshClaimedFromSim
+                    + " anchor=" + RopeDebugStats.chunkMeshClaimedAnchorBake
+                    + " ready " + RopeDebugStats.chunkMeshReadyFromSim + "/"
+                    + RopeDebugStats.chunkMeshReadyAnchorBake
+                    + " miss=" + RopeDebugStats.chunkMeshMissingAnchors,
+                "[SuperLead] bake " + RopeDebugStats.bakeCacheHits + "h/"
+                    + RopeDebugStats.bakeCacheMisses + "m"
+                    + " inelig=" + RopeDebugStats.chunkMeshIneligible
+                    + " atts=" + RopeDebugStats.attachmentsTotal
+                    + " sims=" + RopeDebugStats.simCount,
                 "[SuperLead] nodes=" + RopeDebugStats.totalRenderNodes
                         + " (dyn=" + RopeDebugStats.dynamicNodesTotal
                         + " mesh=" + RopeDebugStats.chunkMeshNodesTotal + ")"
                         + " verts=" + RopeDebugStats.verticesEmitted,
                 "[SuperLead] meshSec=" + RopeDebugStats.chunkMeshSections
-                        + " snap=" + RopeDebugStats.chunkMeshSnapshots
-                        + " atts=" + RopeDebugStats.attachmentsTotal
-                        + " sims=" + RopeDebugStats.simCount,
+                    + " snap=" + RopeDebugStats.chunkMeshSnapshots,
                 "[SuperLead] zones=" + PhysicsZonesClient.zones().size()
                         + " overrides=" + zoneOverrideCount()
                         + " zoneEpoch=" + PhysicsZonesClient.epoch(),
+                String.format(Locale.ROOT, "[SuperLead] push dV=%.3f dir=(%.2f, %.2f) contacts=%d",
+                        RopeDebugStats.pushMagnitude,
+                        pushDirX(),
+                        pushDirZ(),
+                        RopeDebugStats.pushContacts),
                 "[SuperLead] mode phys=" + bool(ClientTuning.MODE_PHYSICS.get())
                         + " 3d=" + bool(ClientTuning.MODE_RENDER3D.get())
                         + " chunkMesh=" + bool(ClientTuning.MODE_CHUNK_MESH_STATIC_ROPES.get())));
@@ -65,11 +79,23 @@ public final class RopeDebugOverlay implements DebugScreenEntry {
         return true;
     }
 
-    private static String bool(Boolean b) { return b != null && b ? "on" : "off"; }
+    private static String bool(Boolean b) {
+        return b != null && b ? "on" : "off";
+    }
 
-        private static int zoneOverrideCount() {
-                int n = 0;
-                for (var zone : PhysicsZonesClient.zones()) n += zone.overrides().size();
-                return n;
+    private static int zoneOverrideCount() {
+        int count = 0;
+        for (var zone : PhysicsZonesClient.zones()) {
+            count += zone.overrides().size();
         }
+        return count;
+    }
+
+    private static float pushDirX() {
+        return RopeDebugStats.pushMagnitude <= 1.0e-5F ? 0.0F : RopeDebugStats.pushX / RopeDebugStats.pushMagnitude;
+    }
+
+    private static float pushDirZ() {
+        return RopeDebugStats.pushMagnitude <= 1.0e-5F ? 0.0F : RopeDebugStats.pushZ / RopeDebugStats.pushMagnitude;
+    }
 }

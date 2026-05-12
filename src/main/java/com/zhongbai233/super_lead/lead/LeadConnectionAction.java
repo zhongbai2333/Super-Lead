@@ -175,7 +175,7 @@ public enum LeadConnectionAction {
 
         @Override
         public boolean canTarget(LeadConnection connection) {
-            return connection.kind() == LeadKind.ITEM && connection.tier() < SuperLeadNetwork.itemTierMax();
+            return connection.kind() == LeadKind.ITEM && connection.tier() < Config.itemTierMax();
         }
 
         @Override
@@ -187,7 +187,7 @@ public enum LeadConnectionAction {
         public boolean applyTo(ServerLevel level, Player player, LeadConnection connection) {
             if (connection.kind() != LeadKind.ITEM) return false;
             return SuperLeadNetwork.upgradeConnectionTier(level, player, connection,
-                    SuperLeadNetwork.itemTierMax(), Items.CHEST);
+                    Config.itemTierMax(), Items.CHEST);
         }
 
         @Override
@@ -246,7 +246,7 @@ public enum LeadConnectionAction {
 
         @Override
         public boolean canTarget(LeadConnection connection) {
-            return connection.kind() == LeadKind.FLUID && connection.tier() < SuperLeadNetwork.fluidTierMax();
+            return connection.kind() == LeadKind.FLUID && connection.tier() < Config.fluidTierMax();
         }
 
         @Override
@@ -258,7 +258,7 @@ public enum LeadConnectionAction {
         public boolean applyTo(ServerLevel level, Player player, LeadConnection connection) {
             if (connection.kind() != LeadKind.FLUID) return false;
             return SuperLeadNetwork.upgradeConnectionTier(level, player, connection,
-                    SuperLeadNetwork.fluidTierMax(), Items.BUCKET);
+                    Config.fluidTierMax(), Items.BUCKET);
         }
 
         @Override

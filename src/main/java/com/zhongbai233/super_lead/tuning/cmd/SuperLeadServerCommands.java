@@ -125,7 +125,7 @@ public final class SuperLeadServerCommands {
         ModConfigSpec.ConfigValue cv = (ModConfigSpec.ConfigValue) entry.value();
         try {
             cv.set(parsed);
-        } catch (Exception e) {
+        } catch (RuntimeException e) {
             ctx.getSource().sendFailure(Component.literal(
                     "Value out of range " + entry.range() + ": " + raw));
             return 0;

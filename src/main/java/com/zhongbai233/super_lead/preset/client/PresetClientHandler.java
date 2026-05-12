@@ -77,13 +77,25 @@ public final class PresetClientHandler {
             String raw = map.get(key.id);
             if (raw == null) {
                 key.clearPreset();
-            } else if (!key.setPresetFromString(raw)) {
+            } else if (!setPresetValue(key, raw)) {
                 failures.add(key.id + "='" + raw + "'");
             }
         }
         if (!failures.isEmpty()) {
             LOG.warn("[super_lead] preset apply: {} keys failed to parse: {}", failures.size(), failures);
         }
+    }
+
+    private static boolean setPresetValue(TuningKey<?> key, String raw) {
+        if (acceptsUncheckedFiniteDouble(key)) {
+            return key.setPresetUncheckedFromString(raw);
+        }
+        return key.setPresetFromString(raw);
+    }
+
+    private static boolean acceptsUncheckedFiniteDouble(TuningKey<?> key) {
+        return key.id.equals(ClientTuning.SLACK_LOOSE.id)
+                || key.id.equals(ClientTuning.SLACK_TIGHT.id);
     }
 
     public static void clearAllPresets() {

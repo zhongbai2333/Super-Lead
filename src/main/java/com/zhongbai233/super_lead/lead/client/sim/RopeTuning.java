@@ -1,5 +1,6 @@
 package com.zhongbai233.super_lead.lead.client.sim;
 
+import com.zhongbai233.super_lead.lead.LeadConnection;
 import com.zhongbai233.super_lead.preset.client.PhysicsZonesClient;
 import com.zhongbai233.super_lead.tuning.ClientTuning;
 import com.zhongbai233.super_lead.tuning.TuningKey;
@@ -9,9 +10,8 @@ import net.minecraft.world.phys.Vec3;
 /**
  * Immutable snapshot of the tuning values a single rope should use.
  * <p>
- * Values are resolved from the synced physics zone containing the rope midpoint. Keys absent
- * from the zone preset fall back to the player's local/default tuning, deliberately ignoring
- * the player-position preset overlay so zone presets do not leak onto ropes outside the zone.
+ * Values are resolved from the preset name stamped on each rope by the server. Keys absent from
+ * that preset fall back to the player's local/default tuning.
  */
 public record RopeTuning(
         double slackLoose,
@@ -29,6 +29,11 @@ public record RopeTuning(
     public static RopeTuning forMidpoint(Vec3 a, Vec3 b) {
         ClientTuning.loadOnce();
         return fromOverrides(PhysicsZonesClient.overridesForRope(a, b));
+    }
+
+    public static RopeTuning forConnection(LeadConnection connection) {
+        ClientTuning.loadOnce();
+        return fromOverrides(PhysicsZonesClient.overridesForPreset(connection.physicsPreset()));
     }
 
     public static RopeTuning at(double x, double y, double z) {
@@ -61,10 +66,18 @@ public record RopeTuning(
         if (raw != null) {
             try {
                 T parsed = key.type.parse(raw);
-                if (key.type.validate(parsed)) return parsed;
-            } catch (Exception ignored) {
+                if (key.type.validate(parsed) || acceptsUncheckedFiniteDouble(key, parsed)) return parsed;
+            } catch (RuntimeException ignored) {
             }
         }
         return key.getLocalOrDefault();
+    }
+
+    private static <T> boolean acceptsUncheckedFiniteDouble(TuningKey<T> key, T parsed) {
+        if (!key.id.equals(ClientTuning.SLACK_LOOSE.id)
+                && !key.id.equals(ClientTuning.SLACK_TIGHT.id)) {
+            return false;
+        }
+        return parsed instanceof Double d && Double.isFinite(d);
     }
 }

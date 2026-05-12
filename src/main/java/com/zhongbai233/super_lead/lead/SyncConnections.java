@@ -50,6 +50,7 @@ public record SyncConnections(List<LeadConnection> connections) implements Custo
         buffer.writeVarInt(connection.power());
         buffer.writeVarInt(connection.tier());
         buffer.writeVarInt(connection.extractAnchor());
+        buffer.writeUtf(connection.physicsPreset(), 64);
         buffer.writeVarInt(connection.attachments().size());
         for (RopeAttachment attachment : connection.attachments()) {
             RopeAttachment.STREAM_CODEC.encode(buffer, attachment);
@@ -64,12 +65,13 @@ public record SyncConnections(List<LeadConnection> connections) implements Custo
         int power = buffer.readVarInt();
         int tier = buffer.readVarInt();
         int extract = buffer.readVarInt();
+        String physicsPreset = buffer.readUtf(64);
         int attachCount = buffer.readVarInt();
         ArrayList<RopeAttachment> attachments = new ArrayList<>(attachCount);
         for (int j = 0; j < attachCount; j++) {
             attachments.add(RopeAttachment.STREAM_CODEC.decode(buffer));
         }
-        return new LeadConnection(id, from, to, kind, power, tier, extract, attachments);
+        return new LeadConnection(id, from, to, kind, power, tier, extract, attachments, physicsPreset);
     }
 
     private static void writeAnchor(RegistryFriendlyByteBuf buffer, LeadAnchor anchor) {

@@ -2,43 +2,49 @@ package com.zhongbai233.super_lead.preset;
 
 import com.mojang.logging.LogUtils;
 import com.zhongbai233.super_lead.Config;
-import java.util.HashMap;
-import java.util.HashSet;
+import com.zhongbai233.super_lead.lead.LeadConnection;
+import com.zhongbai233.super_lead.lead.SuperLeadPayloads;
+import com.zhongbai233.super_lead.lead.SuperLeadSavedData;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
-import java.util.UUID;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.permissions.Permission;
 import net.minecraft.server.permissions.PermissionLevel;
 import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.Vec3;
 import net.neoforged.neoforge.network.PacketDistributor;
 import org.slf4j.Logger;
 
 /**
- * Server-side coordinator for {@link RopePreset} application.
- * <p>
- * Presets are no longer attached to individual players. Instead OPs define a
- * {@link PhysicsZone} per dimension; when a player's position falls inside a zone, the
- * zone's preset is applied to that player. On leaving every zone, the preset is cleared.
- * The per-tick scan is cheap (small zone count, simple AABB tests).
+ * Server-side coordinator for physics presets and OP-defined zones.
+ *
+ * <p>Zone AABBs stay server-private for normal players. The server stamps each rope with the
+ * preset name resolved from the authoritative zone table, then syncs only the dimension's preset
+ * packages plus chunk-scoped rope data. The full zone list is sent only through OP-only preview
+ * requests.
  */
 public final class PresetServerManager {
     private static final Logger LOG = LogUtils.getLogger();
-    /** How often (in server ticks) the player→zone tracker re-evaluates. 4 = 5 Hz, plenty. */
-    private static final long ZONE_TICK_INTERVAL = 4L;
-
-    /** In-memory state: which preset (if any) is currently applied to a given player. Lives only
-     *  for the session; on rejoin it's recomputed from position. */
-    private static final Map<UUID, String> CURRENT_PRESET = new HashMap<>();
+    private static final Permission.HasCommandLevel OP =
+            new Permission.HasCommandLevel(PermissionLevel.GAMEMASTERS);
 
     private PresetServerManager() {}
 
     public static RopePresetLibrary library(MinecraftServer server) {
         return RopePresetLibrary.forServer(server);
+    }
+
+    public static boolean canManage(ServerPlayer player) {
+        return player != null
+                && Config.allowOpVisualPresets()
+                && player.permissions().hasPermission(OP);
     }
 
     // =============================================================================================
@@ -53,17 +59,14 @@ public final class PresetServerManager {
         if (library(server).load(presetName).isEmpty()) return false;
         PhysicsZoneSavedData data = PhysicsZoneSavedData.get(level);
         data.put(new PhysicsZone(name, presetName, area));
-        broadcastZones(level);
-        retickAllPlayers(server);
+        refreshZoneUsage(level);
         return true;
     }
 
     public static boolean removeZone(ServerLevel level, String name) {
         PhysicsZoneSavedData data = PhysicsZoneSavedData.get(level);
         if (!data.remove(name)) return false;
-        broadcastZones(level);
-        MinecraftServer server = level.getServer();
-        if (server != null) retickAllPlayers(server);
+        refreshZoneUsage(level);
         return true;
     }
 
@@ -71,17 +74,21 @@ public final class PresetServerManager {
         return PhysicsZoneSavedData.get(level).zones();
     }
 
-    private static void broadcastZones(ServerLevel level) {
-        PacketDistributor.sendToPlayersInDimension(level, new SyncPhysicsZones(zoneEntries(level)));
+    /** OP-only zone preview response. This is intentionally not sent to normal clients. */
+    public static void sendZones(ServerPlayer player, ServerLevel level) {
+        if (!canManage(player)) return;
+        PacketDistributor.sendToPlayer(player, new SyncPhysicsZones(zoneEntries(level)));
     }
 
-    public static void sendZones(ServerPlayer player, ServerLevel level) {
-        PacketDistributor.sendToPlayer(player, new SyncPhysicsZones(zoneEntries(level)));
+    private static void sendZonesToOps(ServerLevel level) {
+        for (ServerPlayer player : level.players()) {
+            sendZones(player, level);
+        }
     }
 
     private static List<SyncPhysicsZones.Entry> zoneEntries(ServerLevel level) {
         List<PhysicsZone> zones = PhysicsZoneSavedData.get(level).zones();
-        List<SyncPhysicsZones.Entry> entries = new java.util.ArrayList<>(zones.size());
+        List<SyncPhysicsZones.Entry> entries = new ArrayList<>(zones.size());
         RopePresetLibrary lib = library(level.getServer());
         for (PhysicsZone z : zones) {
             Map<String, String> overrides = lib.load(z.presetName())
@@ -92,95 +99,157 @@ public final class PresetServerManager {
         return entries;
     }
 
-    /** Force every online player through the zone evaluator (e.g. after a CRUD operation). */
-    private static void retickAllPlayers(MinecraftServer server) {
-        for (ServerPlayer p : server.getPlayerList().getPlayers()) {
-            evaluatePlayer(p);
+    private static void refreshZoneUsage(ServerLevel level) {
+        boolean changed = refreshRopePresets(level);
+        syncDimensionPresets(level);
+        if (changed) {
+            SuperLeadPayloads.sendToDimension(level);
         }
+        sendZonesToOps(level);
     }
 
     // =============================================================================================
-    // Per-tick player tracking
+    // Rope preset stamping and dimension preset cache
     // =============================================================================================
-    /** Called from a LevelTickEvent every server tick; cheap when there are no zones. */
-    public static void tickPlayerZones(MinecraftServer server) {
-        if (!Config.allowOpVisualPresets()) return;
-        if ((server.getTickCount() % ZONE_TICK_INTERVAL) != 0L) return;
-        for (ServerPlayer p : server.getPlayerList().getPlayers()) {
-            evaluatePlayer(p);
-        }
+    public static String resolvePresetForConnection(ServerLevel level, LeadConnection connection) {
+        if (!Config.allowOpVisualPresets()) return LeadConnection.NO_PHYSICS_PRESET;
+        Vec3 a = connection.from().attachmentPoint(level);
+        Vec3 b = connection.to().attachmentPoint(level);
+        if (a == null || b == null) return LeadConnection.NO_PHYSICS_PRESET;
+        PhysicsZone zone = findZoneForRope(PhysicsZoneSavedData.get(level).zones(), a, b);
+        if (zone == null) return LeadConnection.NO_PHYSICS_PRESET;
+        return library(level.getServer()).load(zone.presetName()).isPresent()
+                ? zone.presetName()
+                : LeadConnection.NO_PHYSICS_PRESET;
     }
 
-    /** Decide which preset (if any) the player should currently have, and only send a
-     *  packet when it differs from what's already applied. Called per-tick, on login, and on
-     *  dimension change. */
-    public static void evaluatePlayer(ServerPlayer player) {
-        if (!Config.allowOpVisualPresets()) return;
-        if (!(player.level() instanceof ServerLevel level)) return;
-        Optional<PhysicsZone> zone = PhysicsZoneSavedData.get(level)
-                .findContaining(player.getX(), player.getY(), player.getZ());
-        UUID id = player.getUUID();
-        String currentApplied = CURRENT_PRESET.get(id);
+    public static boolean refreshRopePresets(ServerLevel level) {
+        SuperLeadSavedData data = SuperLeadSavedData.get(level);
+        boolean changed = false;
+        for (LeadConnection connection : new ArrayList<>(data.connections())) {
+            String resolved = resolvePresetForConnection(level, connection);
+            if (resolved.equals(connection.physicsPreset())) {
+                continue;
+            }
+            changed |= data.update(connection.id(), c -> c.withPhysicsPreset(resolved), true);
+        }
+        return changed;
+    }
 
-        if (zone.isEmpty()) {
-            if (currentApplied != null) {
-                CURRENT_PRESET.remove(id);
-                sendZones(player, level);
-                PacketDistributor.sendToPlayer(player, PresetClearOverrides.INSTANCE);
-            }
-            return;
+    public static void syncDimensionPresets(ServerLevel level) {
+        PacketDistributor.sendToPlayersInDimension(level,
+                new SyncDimensionPresets(dimensionPresetOverrides(level)));
+    }
+
+    public static void syncDimensionPresets(ServerPlayer player, ServerLevel level) {
+        PacketDistributor.sendToPlayer(player, new SyncDimensionPresets(dimensionPresetOverrides(level)));
+    }
+
+    private static Map<String, Map<String, String>> dimensionPresetOverrides(ServerLevel level) {
+        if (!Config.allowOpVisualPresets()) return Map.of();
+
+        Set<String> names = new LinkedHashSet<>();
+        for (PhysicsZone zone : PhysicsZoneSavedData.get(level).zones()) {
+            names.add(zone.presetName());
         }
-        String presetName = zone.get().presetName();
-        if (presetName.equals(currentApplied)) return;
-        Optional<RopePreset> preset = library(level.getServer()).load(presetName);
-        if (preset.isEmpty()) {
-            // Zone references a missing preset; treat as no-zone.
-            if (currentApplied != null) {
-                CURRENT_PRESET.remove(id);
-                PacketDistributor.sendToPlayer(player, PresetClearOverrides.INSTANCE);
+        for (LeadConnection connection : SuperLeadSavedData.get(level).connections()) {
+            if (!connection.physicsPreset().isBlank()) {
+                names.add(connection.physicsPreset());
             }
-            return;
         }
-        CURRENT_PRESET.put(id, presetName);
-        sendZones(player, level);
-        PacketDistributor.sendToPlayer(player, new PresetApplyOverrides(presetName, preset.get().overrides()));
+
+        RopePresetLibrary lib = library(level.getServer());
+        Map<String, Map<String, String>> out = new LinkedHashMap<>();
+        for (String name : names) {
+            lib.load(name).ifPresent(preset -> out.put(name, preset.overrides()));
+        }
+        return out;
+    }
+
+    private static PhysicsZone findZoneForRope(List<PhysicsZone> zones, Vec3 a, Vec3 b) {
+        Vec3 mid = a.add(b).scale(0.5D);
+        for (PhysicsZone zone : zones) {
+            if (zone.contains(mid.x, mid.y, mid.z)) return zone;
+        }
+        for (PhysicsZone zone : zones) {
+            if (segmentIntersects(zone.area(), a, b)) return zone;
+        }
+        return null;
+    }
+
+    private static boolean segmentIntersects(AABB box, Vec3 a, Vec3 b) {
+        if (contains(box, a) || contains(box, b)) return true;
+        double t0 = 0.0D;
+        double t1 = 1.0D;
+        double[] lo = {box.minX, box.minY, box.minZ};
+        double[] hi = {box.maxX, box.maxY, box.maxZ};
+        double[] p = {a.x, a.y, a.z};
+        double[] d = {b.x - a.x, b.y - a.y, b.z - a.z};
+        for (int axis = 0; axis < 3; axis++) {
+            if (Math.abs(d[axis]) < 1.0e-9D) {
+                if (p[axis] < lo[axis] || p[axis] >= hi[axis]) return false;
+                continue;
+            }
+            double inv = 1.0D / d[axis];
+            double ta = (lo[axis] - p[axis]) * inv;
+            double tb = (hi[axis] - p[axis]) * inv;
+            if (ta > tb) { double tmp = ta; ta = tb; tb = tmp; }
+            if (ta > t0) t0 = ta;
+            if (tb < t1) t1 = tb;
+            if (t0 > t1) return false;
+        }
+        return t1 >= 0.0D && t0 <= 1.0D;
+    }
+
+    private static boolean contains(AABB box, Vec3 point) {
+        return point.x >= box.minX && point.x < box.maxX
+                && point.y >= box.minY && point.y < box.maxY
+                && point.z >= box.minZ && point.z < box.maxZ;
     }
 
     // =============================================================================================
     // Lifecycle hooks
     // =============================================================================================
-    /** Called on player login: send the dimension's zone list, then evaluate zone membership. */
+    public static void tickPlayerZones(MinecraftServer server) {
+        // Normal clients no longer receive player-position zone application. Ropes carry their
+        // own preset names, and players receive only dimension preset packages.
+    }
+
     public static void onLogin(ServerPlayer player) {
-        if (!Config.allowOpVisualPresets()) return;
         if (player.level() instanceof ServerLevel level) {
+            boolean changed = refreshRopePresets(level);
+            syncDimensionPresets(player, level);
+            if (changed) {
+                SuperLeadPayloads.sendToDimension(level);
+            }
             sendZones(player, level);
         }
-        evaluatePlayer(player);
     }
 
     public static void onChangedDimension(ServerPlayer player) {
-        // Remove the cache entry so the next evaluation always re-applies (the override semantics
-        // depend on dimension-local zone data which the client must also refresh).
-        CURRENT_PRESET.remove(player.getUUID());
         if (player.level() instanceof ServerLevel level) {
+            boolean changed = refreshRopePresets(level);
+            syncDimensionPresets(player, level);
+            if (changed) {
+                SuperLeadPayloads.sendToDimension(level);
+            }
             sendZones(player, level);
         }
-        evaluatePlayer(player);
     }
 
     public static void onLogout(ServerPlayer player) {
-        CURRENT_PRESET.remove(player.getUUID());
+        // No per-player preset state is retained.
     }
 
     // =============================================================================================
-    // Preset library mutation (still OP-driven, unchanged user-facing flow)
+    // Preset library mutation
     // =============================================================================================
     public static boolean editKey(MinecraftServer server, PresetEditKey edit) {
         if (!Config.allowOpVisualPresets()) return false;
         if (!RopePresetLibrary.isValidName(edit.presetName())) return false;
         RopePresetLibrary lib = library(server);
         RopePreset preset = lib.load(edit.presetName())
-                .orElse(new RopePreset(edit.presetName(), java.util.Map.of()));
+                .orElse(new RopePreset(edit.presetName(), Map.of()));
         RopePreset updated = edit.clear()
                 ? preset.withoutOverride(edit.keyId())
                 : preset.withOverride(edit.keyId(), edit.value());
@@ -190,51 +259,39 @@ public final class PresetServerManager {
         return true;
     }
 
-    /** Re-broadcast zone metadata and currently-applied player overrides after a preset is saved. */
+    /** Re-sync preset package caches and re-stamp ropes after a preset is saved. */
     public static void refreshPresetUsage(MinecraftServer server, String presetName) {
         if (!Config.allowOpVisualPresets()) return;
         if (!RopePresetLibrary.isValidName(presetName)) return;
-        Optional<RopePreset> updated = library(server).load(presetName);
+        refreshAllLoadedDimensions(server);
+    }
 
-        // Keep every observer's zone→preset cache fresh, including players outside the zone who
-        // can still see ropes inside it.
+    private static void refreshAllLoadedDimensions(MinecraftServer server) {
         for (ServerLevel level : server.getAllLevels()) {
-            boolean usesPreset = false;
-            for (PhysicsZone z : PhysicsZoneSavedData.get(level).zones()) {
-                if (z.presetName().equals(presetName)) { usesPreset = true; break; }
+            boolean changed = refreshRopePresets(level);
+            syncDimensionPresets(level);
+            if (changed) {
+                SuperLeadPayloads.sendToDimension(level);
             }
-            if (usesPreset) broadcastZones(level);
-        }
-
-        // Re-push the updated overrides to every player currently inside a zone bound to this preset.
-        Set<UUID> targets = new HashSet<>();
-        for (Map.Entry<UUID, String> e : CURRENT_PRESET.entrySet()) {
-            if (e.getValue().equals(presetName)) targets.add(e.getKey());
-        }
-        for (ServerPlayer p : server.getPlayerList().getPlayers()) {
-            if (targets.contains(p.getUUID()) && updated.isPresent()) {
-                PacketDistributor.sendToPlayer(p, new PresetApplyOverrides(updated.get().name(), updated.get().overrides()));
-            }
+            sendZonesToOps(level);
         }
     }
 
     public static void handleListRequest(ServerPlayer player) {
-        Permission.HasCommandLevel op = new Permission.HasCommandLevel(PermissionLevel.GAMEMASTERS);
-        if (!player.permissions().hasPermission(op)) return;
+        if (!canManage(player)) return;
         MinecraftServer server = player.level().getServer();
         if (server == null) return;
         PacketDistributor.sendToPlayer(player, new PresetListResponse(library(server).list()));
     }
 
     public static void handleDetailsRequest(ServerPlayer player, String name) {
-        Permission.HasCommandLevel op = new Permission.HasCommandLevel(PermissionLevel.GAMEMASTERS);
-        if (!player.permissions().hasPermission(op)) return;
+        if (!canManage(player)) return;
         MinecraftServer server = player.level().getServer();
         if (server == null) return;
         Optional<RopePreset> opt = library(server).load(name);
         PresetDetailsResponse resp = opt
                 .map(p -> new PresetDetailsResponse(name, true, p.overrides()))
-                .orElseGet(() -> new PresetDetailsResponse(name, false, java.util.Map.of()));
+                .orElseGet(() -> new PresetDetailsResponse(name, false, Map.of()));
         PacketDistributor.sendToPlayer(player, resp);
     }
 
@@ -249,12 +306,16 @@ public final class PresetServerManager {
                 }
             }
         }
-        return library(server).delete(name);
+        boolean deleted = library(server).delete(name);
+        if (deleted) {
+            refreshAllLoadedDimensions(server);
+        }
+        return deleted;
     }
 
     /** No-op: prompt-based opt-in is gone. Kept so the existing payload handler still compiles. */
     public static void handleResponse(ServerPlayer player, PresetPromptResponse payload) {
-        // intentionally empty: zones decide application now.
+        // intentionally empty: ropes and zones decide application now.
     }
 
     public static void warnDisabled() {

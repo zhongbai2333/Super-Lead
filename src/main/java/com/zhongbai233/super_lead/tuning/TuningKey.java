@@ -30,9 +30,20 @@ public final class TuningKey<T> {
     public boolean isPresetActive() { return presetValue != null; }
 
     public boolean setLocalFromString(String raw) {
-        T v;
-        try { v = type.parse(raw); } catch (Exception e) { return false; }
+        T v = parseOrNull(raw);
+        if (v == null) return false;
         if (!type.validate(v)) return false;
+        T old = effective;
+        this.localValue = v;
+        recomputeAndFire(old);
+        return true;
+    }
+
+    public boolean setLocalUncheckedFromString(String raw) {
+        T v = parseOrNull(raw);
+        if (v == null) return false;
+        if (v instanceof Double d && (!Double.isFinite(d))) return false;
+        if (v instanceof Float f && (!Float.isFinite(f))) return false;
         T old = effective;
         this.localValue = v;
         recomputeAndFire(old);
@@ -47,9 +58,20 @@ public final class TuningKey<T> {
     }
 
     public boolean setPresetFromString(String raw) {
-        T v;
-        try { v = type.parse(raw); } catch (Exception e) { return false; }
+        T v = parseOrNull(raw);
+        if (v == null) return false;
         if (!type.validate(v)) return false;
+        T old = effective;
+        this.presetValue = v;
+        recomputeAndFire(old);
+        return true;
+    }
+
+    public boolean setPresetUncheckedFromString(String raw) {
+        T v = parseOrNull(raw);
+        if (v == null) return false;
+        if (v instanceof Double d && (!Double.isFinite(d))) return false;
+        if (v instanceof Float f && (!Float.isFinite(f))) return false;
         T old = effective;
         this.presetValue = v;
         recomputeAndFire(old);
@@ -68,6 +90,14 @@ public final class TuningKey<T> {
         this.effective = newEff;
         if (!Objects.equals(old, newEff)) {
             ClientTuning.fire(this, old, newEff);
+        }
+    }
+
+    private T parseOrNull(String raw) {
+        try {
+            return type.parse(raw);
+        } catch (RuntimeException e) {
+            return null;
         }
     }
 

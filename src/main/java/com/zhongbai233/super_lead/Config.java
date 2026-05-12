@@ -168,7 +168,7 @@ public final class Config {
                 case "presets.allow_op_visual_presets" -> PRESETS_ALLOW_OP_VISUAL_PRESETS.set(Boolean.parseBoolean(value.trim()));
                 default -> { return false; }
             }
-        } catch (Exception e) {
+        } catch (RuntimeException e) {
             return false;
         }
         refresh();

@@ -4,7 +4,6 @@ import com.zhongbai233.super_lead.Config;
 import com.zhongbai233.super_lead.Super_lead;
 import com.zhongbai233.super_lead.lead.LeadConnection;
 import com.zhongbai233.super_lead.lead.LeadKind;
-import com.zhongbai233.super_lead.lead.SuperLeadNetwork;
 import com.zhongbai233.super_lead.lead.client.SuperLeadClientEvents;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
@@ -141,14 +140,14 @@ public final class LeadTooltipOverlay {
                 }
             }
             case ITEM -> {
-                if (hovered.tier() < SuperLeadNetwork.itemTierMax()) {
+                if (hovered.tier() < Config.itemTierMax()) {
                     rows.add(new UpgradeRow(new ItemStack(Items.CHEST),
                             Component.translatable("tooltip.super_lead.upgrade.tier_up",
                                     hovered.tier() + 1)));
                 }
             }
             case FLUID -> {
-                if (hovered.tier() < SuperLeadNetwork.fluidTierMax()) {
+                if (hovered.tier() < Config.fluidTierMax()) {
                     rows.add(new UpgradeRow(new ItemStack(Items.BUCKET),
                             Component.translatable("tooltip.super_lead.upgrade.tier_up",
                                     hovered.tier() + 1)));

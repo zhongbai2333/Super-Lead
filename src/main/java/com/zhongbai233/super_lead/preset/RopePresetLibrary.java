@@ -3,7 +3,6 @@ package com.zhongbai233.super_lead.preset;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonObject;
-import com.google.gson.reflect.TypeToken;
 import com.mojang.logging.LogUtils;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -79,7 +78,7 @@ public final class RopePresetLibrary {
                 }
             }
             return Optional.of(new RopePreset(name, m));
-        } catch (Exception e) {
+        } catch (IOException | RuntimeException e) {
             LOG.warn("[super_lead] cannot read preset {}: {}", name, e.toString());
             return Optional.empty();
         }
@@ -98,7 +97,7 @@ public final class RopePresetLibrary {
             root.add("overrides", ov);
             Files.writeString(p, GSON.toJson(root), StandardCharsets.UTF_8);
             return true;
-        } catch (Exception e) {
+        } catch (IOException | RuntimeException e) {
             LOG.warn("[super_lead] cannot save preset {}: {}", preset.name(), e.toString());
             return false;
         }
@@ -115,8 +114,4 @@ public final class RopePresetLibrary {
         }
     }
 
-    @SuppressWarnings("unused")
-    private static TypeToken<Map<String, String>> mapTypeToken() {
-        return new TypeToken<Map<String, String>>() {};
-    }
 }

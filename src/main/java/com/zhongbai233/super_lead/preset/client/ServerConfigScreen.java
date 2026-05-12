@@ -2,7 +2,6 @@ package com.zhongbai233.super_lead.preset.client;
 
 import com.zhongbai233.super_lead.Config;
 import com.zhongbai233.super_lead.preset.PresetListRequest;
-import com.zhongbai233.super_lead.preset.PresetServerManager;
 import com.zhongbai233.super_lead.preset.RopePresetLibrary;
 import com.zhongbai233.super_lead.preset.SyncPhysicsZones;
 import com.zhongbai233.super_lead.preset.ZoneListRequest;
@@ -194,7 +193,7 @@ public final class ServerConfigScreen extends Screen {
                 int min = (int) def.min();
                 int max = (int) def.max();
                 int cur;
-                try { cur = Integer.parseInt(current); } catch (Exception e) { cur = min; }
+                try { cur = Integer.parseInt(current); } catch (RuntimeException e) { cur = min; }
                 cur = Mth.clamp(cur, min, max);
                 double t = max == min ? 0.0 : (double) (cur - min) / (double) (max - min);
                 final FieldDef capture = def;
@@ -205,7 +204,7 @@ public final class ServerConfigScreen extends Screen {
                 double min = def.min();
                 double max = def.max();
                 double cur;
-                try { cur = Double.parseDouble(current); } catch (Exception e) { cur = min; }
+                try { cur = Double.parseDouble(current); } catch (RuntimeException e) { cur = min; }
                 cur = Mth.clamp(cur, min, max);
                 double t = max == min ? 0.0 : (cur - min) / (max - min);
                 final FieldDef capture = def;
@@ -569,11 +568,5 @@ public final class ServerConfigScreen extends Screen {
             next = Math.round(next * 1000.0D) / 1000.0D;
             sink.accept(Mth.clamp(next, min, max));
         }
-    }
-
-    @SuppressWarnings("unused")
-    private void unusedShim() {
-        Object a = PresetServerManager.class;
-        Object b = AbstractWidget.class;
     }
 }

@@ -6,7 +6,6 @@ import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.suggestion.SuggestionProvider;
 import com.zhongbai233.super_lead.Super_lead;
-import com.zhongbai233.super_lead.preset.PresetClearOverrides;
 import com.zhongbai233.super_lead.preset.PresetEditKey;
 import com.zhongbai233.super_lead.preset.PresetServerManager;
 import com.zhongbai233.super_lead.preset.RopePreset;
@@ -27,7 +26,6 @@ import net.minecraft.server.permissions.PermissionLevel;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.event.RegisterCommandsEvent;
-import net.neoforged.neoforge.network.PacketDistributor;
 
 @EventBusSubscriber(modid = Super_lead.MODID)
 public final class SuperLeadPresetCommands {
@@ -187,12 +185,5 @@ public final class SuperLeadPresetCommands {
         ctx.getSource().sendSuccess(() -> Component.literal("Removed " + name + "." + key)
                 .withStyle(ChatFormatting.GREEN), true);
         return 1;
-    }
-
-    @SuppressWarnings("unused")
-    private static void unusedShim() {
-        // keep imports referenced even if compile-paths shift later
-        Object a = PresetClearOverrides.INSTANCE;
-        Object b = PacketDistributor.class;
     }
 }

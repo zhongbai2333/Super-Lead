@@ -1,9 +1,9 @@
 package com.zhongbai233.super_lead.tuning;
 
 import com.zhongbai233.super_lead.Super_lead;
-import java.util.ArrayList;
 import java.util.Collection;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -152,13 +152,11 @@ public final class ClientTuning {
     }
 
     public static List<String> groups() {
-        List<String> out = new ArrayList<>();
+                LinkedHashSet<String> out = new LinkedHashSet<>();
         for (TuningKey<?> key : KEYS.values()) {
-            if (!out.contains(key.group)) {
-                out.add(key.group);
-            }
+                        out.add(key.group);
         }
-        return out;
+                return List.copyOf(out);
     }
 
     public static long renderEpoch() {
@@ -179,7 +177,7 @@ public final class ClientTuning {
         for (BiConsumer<TuningKey<?>, Object> listener : LISTENERS) {
             try {
                 listener.accept(key, newValue);
-            } catch (Exception ignored) {
+            } catch (RuntimeException ignored) {
             }
         }
         if (loaded) {

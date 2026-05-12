@@ -1,16 +1,20 @@
 package com.zhongbai233.super_lead.preset.client;
 
 import com.zhongbai233.super_lead.preset.SyncPhysicsZones;
+import com.zhongbai233.super_lead.preset.SyncDimensionPresets;
 import java.util.List;
 import java.util.Map;
 import net.minecraft.world.phys.Vec3;
 
 /**
- * Client cache of the current dimension's {@link SyncPhysicsZones}. Rope simulation resolves
- * physics tuning from this cache by testing the rope midpoint against the synced zone AABBs.
+ * Client cache for physics presets and OP-only zone previews.
+ *
+ * <p>Normal rope simulation resolves tuning from the rope's stamped preset name and the
+ * {@link SyncDimensionPresets} cache. {@link SyncPhysicsZones} remains only for OP preview UI.
  */
 public final class PhysicsZonesClient {
     private static volatile List<SyncPhysicsZones.Entry> ZONES = List.of();
+    private static volatile Map<String, Map<String, String>> PRESETS = Map.of();
     private static volatile long EPOCH;
 
     private PhysicsZonesClient() {}
@@ -22,9 +26,25 @@ public final class PhysicsZonesClient {
         EPOCH++;
     }
 
+    public static void apply(SyncDimensionPresets payload) {
+        Map<String, Map<String, String>> next = payload.presets();
+        if (next.equals(PRESETS)) return;
+        PRESETS = next;
+        EPOCH++;
+    }
+
     public static List<SyncPhysicsZones.Entry> zones() { return ZONES; }
 
     public static long epoch() { return EPOCH; }
+
+    public static Map<String, String> overridesForPreset(String presetName) {
+        if (presetName == null || presetName.isBlank()) return Map.of();
+        return PRESETS.getOrDefault(presetName, Map.of());
+    }
+
+    public static boolean hasPreset(String presetName) {
+        return presetName != null && !presetName.isBlank() && PRESETS.containsKey(presetName);
+    }
 
     public static Map<String, String> overridesAt(Vec3 pos) {
         return overridesAt(pos.x, pos.y, pos.z);
@@ -63,8 +83,9 @@ public final class PhysicsZonesClient {
     }
 
     public static void clear() {
-        if (!ZONES.isEmpty()) {
+        if (!ZONES.isEmpty() || !PRESETS.isEmpty()) {
             ZONES = List.of();
+            PRESETS = Map.of();
             EPOCH++;
         }
     }

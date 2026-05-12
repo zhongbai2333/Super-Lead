@@ -1,6 +1,8 @@
 package com.zhongbai233.super_lead.tuning.gui;
 
 import com.zhongbai233.super_lead.tuning.ClientTuning;
+import com.zhongbai233.super_lead.tuning.TuningKey;
+import java.util.Map;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 
 public final class PreviewRope {
@@ -22,6 +24,10 @@ public final class PreviewRope {
     private boolean colliderActive = true;
     private double colliderX = 2.5D, colliderY = 1.4D;
     private final double colliderR = 0.45D;
+    private Map<String, String> overrides = Map.of();
+    private boolean defaultMissingOverrides;
+    private long overridesEpoch;
+    private long lastOverridesEpoch = -1L;
 
     public PreviewRope() {
         rebuildFromTuning(true);
@@ -34,6 +40,19 @@ public final class PreviewRope {
     }
 
     public void setColliderActive(boolean active) { this.colliderActive = active; }
+
+    public void setOverrides(Map<String, String> overrides, boolean defaultMissingOverrides) {
+        Map<String, String> next = overrides == null || overrides.isEmpty()
+                ? Map.of()
+                : Map.copyOf(overrides);
+        if (this.overrides.equals(next) && this.defaultMissingOverrides == defaultMissingOverrides) {
+            return;
+        }
+        this.overrides = next;
+        this.defaultMissingOverrides = defaultMissingOverrides;
+        overridesEpoch++;
+        rebuildFromTuning(true);
+    }
 
     public void disturb() {
         if (n < 3) return;
@@ -49,11 +68,12 @@ public final class PreviewRope {
 
     private void rebuildFromTuning(boolean force) {
         long pe = ClientTuning.physicsEpoch();
-        if (!force && pe == lastPhysEpoch) return;
+        if (!force && pe == lastPhysEpoch && overridesEpoch == lastOverridesEpoch) return;
         lastPhysEpoch = pe;
+        lastOverridesEpoch = overridesEpoch;
 
-        double segLen = ClientTuning.SEGMENT_LENGTH.get();
-        int segMax = ClientTuning.SEGMENT_MAX.get();
+        double segLen = value(ClientTuning.SEGMENT_LENGTH);
+        int segMax = value(ClientTuning.SEGMENT_MAX);
         int segments = Math.max(2, Math.min(segMax, (int) Math.round(spanMeters / Math.max(0.05D, segLen))));
         int newN = segments + 1;
         if (newN != n || x == null) {
@@ -84,11 +104,11 @@ public final class PreviewRope {
             colliderY = 1.30D + 0.15D * Math.sin(t * 0.7D);
         }
 
-        double slack = ClientTuning.SLACK_TIGHT.get();
-        double gravity = -ClientTuning.GRAVITY.get();
-        double damping = ClientTuning.DAMPING.get();
-        int iterAir = ClientTuning.ITER_AIR.get();
-        int iterContact = ClientTuning.ITER_CONTACT.get();
+        double slack = value(ClientTuning.SLACK_TIGHT);
+        double gravity = -value(ClientTuning.GRAVITY);
+        double damping = value(ClientTuning.DAMPING);
+        int iterAir = value(ClientTuning.ITER_AIR);
+        int iterContact = value(ClientTuning.ITER_CONTACT);
         int iters = colliderActive ? Math.max(iterAir, iterContact) : iterAir;
 
         double target = restLen * slack;
@@ -150,9 +170,9 @@ public final class PreviewRope {
         int left = (int) (viewX + viewW * margin);
         int top = (int) (viewY + viewH * 0.30D);
 
-        double halfMeters = ClientTuning.THICKNESS_HALF.get();
-        boolean render3d = ClientTuning.MODE_RENDER3D.get();
-        double widthFactor = ClientTuning.RIBBON_WIDTH_FACTOR.get();
+        double halfMeters = value(ClientTuning.THICKNESS_HALF);
+        boolean render3d = value(ClientTuning.MODE_RENDER3D);
+        double widthFactor = value(ClientTuning.RIBBON_WIDTH_FACTOR);
         double halfPx = halfMeters * pxPerMeter * (render3d ? 1.0D : widthFactor);
         int thick = Math.max(1, (int) Math.round(halfPx * 2.0D));
 
@@ -208,5 +228,27 @@ public final class PreviewRope {
             fx += sx;
             fy += sy;
         }
+    }
+
+    private <T> T value(TuningKey<T> key) {
+        String raw = overrides.get(key.id);
+        if (raw != null) {
+            try {
+                T parsed = key.type.parse(raw);
+                if (key.type.validate(parsed) || isUncheckedFiniteDouble(key, parsed)) {
+                    return parsed;
+                }
+            } catch (RuntimeException ignored) {
+            }
+        }
+        return defaultMissingOverrides ? key.getDefault() : key.get();
+    }
+
+    private static <T> boolean isUncheckedFiniteDouble(TuningKey<T> key, T parsed) {
+        if (!key.id.equals(ClientTuning.SLACK_LOOSE.id)
+                && !key.id.equals(ClientTuning.SLACK_TIGHT.id)) {
+            return false;
+        }
+        return parsed instanceof Double d && Double.isFinite(d);
     }
 }

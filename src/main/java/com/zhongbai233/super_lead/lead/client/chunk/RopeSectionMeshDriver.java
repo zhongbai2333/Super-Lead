@@ -58,7 +58,7 @@ public final class RopeSectionMeshDriver {
         try {
             TextureAtlas atlas = mc.getAtlasManager().getAtlasOrThrow(AtlasIds.BLOCKS);
             return atlas.getSprite(WHITE_SPRITE_ID);
-        } catch (Exception ignored) {
+        } catch (RuntimeException ignored) {
             return null;
         }
     }

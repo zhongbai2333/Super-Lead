@@ -13,15 +13,17 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.function.Function;
 import net.minecraft.client.Minecraft;
+import net.minecraft.core.BlockPos;
 import net.minecraft.core.SectionPos;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.chunk.status.ChunkStatus;
 
 public final class StaticRopeChunkRegistry {
 
     private static final StaticRopeChunkRegistry INSTANCE = new StaticRopeChunkRegistry();
 
     private static final double CHUNK_MESH_QUIET_MOTION_SQR = 4.0e-5D; // ~0.0063 block/tick
-    private static final int CHUNK_MESH_QUIET_TICKS = 20;
+    private static final int CHUNK_MESH_QUIET_TICKS = 6;
     private static final int CHUNK_MESH_LINGER_TICKS = 3;
 
     public static StaticRopeChunkRegistry get() {
@@ -33,6 +35,13 @@ public final class StaticRopeChunkRegistry {
     private volatile Map<UUID, Long> claimTick = Map.of();
     private Set<UUID> claimedFromSim = Set.of();
     private final Map<UUID, Set<Long>> connectionSections = new HashMap<>();
+    private final Set<Long> pendingDirtySections = new HashSet<>();
+    /** Connections whose latest static bake was produced while at least one anchor chunk was
+     *  not yet loaded on the client (so {@code Level#getBlockState} returned air and the bake
+     *  used the default 1x1x1 fallback shape). They must be re-baked once chunks finish
+     *  streaming, otherwise re-logging far from the player would leave their static meshes
+     *  silently anchored at wrong positions / never re-meshed by NeoForge. */
+    private final Set<UUID> bakedWithMissingAnchors = new HashSet<>();
 
     private List<LeadConnection> realSources = List.of();
     private List<StressSource> stressSources = List.of();
@@ -42,6 +51,12 @@ public final class StaticRopeChunkRegistry {
      *  via {@code RopeStaticGeometry.build}, briefly snapping the world's ropes back to their
      *  no-physics catenary shape. */
     private volatile Function<UUID, RopeSimulation> simLookup = null;
+
+    private volatile int debugEligible;
+    private volatile int debugIneligible;
+    private volatile int debugWaitingQuiet;
+    private volatile int debugReadyFromSim;
+    private volatile int debugReadyAnchorBake;
 
     private StaticRopeChunkRegistry() {}
 
@@ -96,6 +111,38 @@ public final class StaticRopeChunkRegistry {
         return sum;
     }
 
+    public int eligibleCount() {
+        return debugEligible;
+    }
+
+    public int ineligibleCount() {
+        return debugIneligible;
+    }
+
+    public int waitingQuietCount() {
+        return debugWaitingQuiet;
+    }
+
+    public int readyFromSimCount() {
+        return debugReadyFromSim;
+    }
+
+    public int readyAnchorBakeCount() {
+        return debugReadyAnchorBake;
+    }
+
+    public int claimedFromSimCount() {
+        return claimedFromSim.size();
+    }
+
+    public int claimedAnchorBakeCount() {
+        return Math.max(0, claimed.size() - claimedFromSim.size());
+    }
+
+    public int missingAnchorBakeCount() {
+        return bakedWithMissingAnchors.size();
+    }
+
     public synchronized void clear() {
         if (bySection.isEmpty() && claimed.isEmpty() && stressSources.isEmpty()) return;
         Set<Long> toDirty = new HashSet<>(bySection.keySet());
@@ -104,8 +151,17 @@ public final class StaticRopeChunkRegistry {
         claimTick = Map.of();
         claimedFromSim = Set.of();
         connectionSections.clear();
+        bakedWithMissingAnchors.clear();
         stressSources = List.of();
+        clearDebugCounts();
         markSectionsDirty(toDirty);
+    }
+
+    public synchronized void flushPendingDirtySections() {
+        if (pendingDirtySections.isEmpty()) return;
+        Set<Long> dirty = new HashSet<>(pendingDirtySections);
+        pendingDirtySections.clear();
+        markSectionsDirty(dirty);
     }
 
     public synchronized void clearStressSources(Level level) {
@@ -183,25 +239,59 @@ public final class StaticRopeChunkRegistry {
         if (level == null || !level.isClientSide() || simLookup == null) return;
         boolean enabled = ClientTuning.MODE_CHUNK_MESH_STATIC_ROPES.get()
                 && ClientTuning.MODE_RENDER3D.get();
+        // If any prior bake used air-defaulted anchors because the anchor chunk hadn't streamed
+        // in yet, retry now that chunks may have arrived. Without this, re-logging far from
+        // physicalized ropes would leave their static meshes silently mis-anchored until a later
+        // chunk-scoped rope sync happened to force a re-bake.
+        boolean forceRebakeForMissingAnchors = false;
+        if (enabled && !bakedWithMissingAnchors.isEmpty()) {
+            for (LeadConnection c : realSources) {
+                if (!bakedWithMissingAnchors.contains(c.id())) continue;
+                if (anchorsLoaded(level, c)) {
+                    forceRebakeForMissingAnchors = true;
+                    break;
+                }
+            }
+        }
         Set<UUID> desired = new HashSet<>();
         Set<UUID> desiredFromSim = new HashSet<>();
+        int eligible = 0;
+        int ineligible = 0;
+        int waitingQuiet = 0;
+        int readyFromSim = 0;
+        int readyAnchorBake = 0;
         if (enabled) {
             for (LeadConnection c : realSources) {
-                if (!isEligible(c)) continue;
+                if (!isEligible(c)) {
+                    ineligible++;
+                    continue;
+                }
+                eligible++;
                 RopeSimulation sim = simLookup.apply(c.id());
                 if (sim != null) {
-                    if (!isQuiescent(sim)) continue;
+                    if (!isQuiescent(sim)) {
+                        waitingQuiet++;
+                        continue;
+                    }
                     desired.add(c.id());
                     desiredFromSim.add(c.id());
+                    readyFromSim++;
                 } else {
                     desired.add(c.id());
+                    readyAnchorBake++;
                 }
             }
             for (StressSource s : stressSources) {
                 desired.add(s.id());
             }
         }
-        if (desired.equals(claimed) && desiredFromSim.equals(claimedFromSim)) return;
+        debugEligible = eligible;
+        debugIneligible = ineligible;
+        debugWaitingQuiet = waitingQuiet;
+        debugReadyFromSim = readyFromSim;
+        debugReadyAnchorBake = readyAnchorBake;
+        if (!forceRebakeForMissingAnchors
+                && desired.equals(claimed) && desiredFromSim.equals(claimedFromSim)) return;
         rebuildInternal(level, simLookup);
     }
 
@@ -247,6 +337,11 @@ public final class StaticRopeChunkRegistry {
                 nextClaimed.add(c.id());
                 nextConnSections.put(c.id(), r.sectionKeys);
                 addSnapshots(nextBySection, r);
+                if (sim == null && !anchorsLoaded(level, c)) {
+                    bakedWithMissingAnchors.add(c.id());
+                } else {
+                    bakedWithMissingAnchors.remove(c.id());
+                }
             }
             for (StressSource s : stressSources) {
                 RopeStaticGeometryResult r = RopeStaticGeometry.build(s.id(), s.a(), s.b(), level);
@@ -278,6 +373,7 @@ public final class StaticRopeChunkRegistry {
         claimedFromSim = Set.copyOf(nextClaimedFromSim);
         connectionSections.clear();
         connectionSections.putAll(nextConnSections);
+        bakedWithMissingAnchors.retainAll(nextClaimed);
 
         markSectionsDirty(toDirty);
     }
@@ -303,10 +399,24 @@ public final class StaticRopeChunkRegistry {
         return false;
     }
 
-    private static void markSectionsDirty(Set<Long> sectionKeys) {
+    private static boolean anchorsLoaded(Level level, LeadConnection connection) {
+        return anchorChunkReady(level, connection.from().pos())
+                && anchorChunkReady(level, connection.to().pos());
+    }
+
+    private static boolean anchorChunkReady(Level level, BlockPos pos) {
+        int cx = SectionPos.blockToSectionCoord(pos.getX());
+        int cz = SectionPos.blockToSectionCoord(pos.getZ());
+        return level.getChunk(cx, cz, ChunkStatus.FULL, false) != null;
+    }
+
+    private void markSectionsDirty(Set<Long> sectionKeys) {
         if (sectionKeys.isEmpty()) return;
         Minecraft mc = Minecraft.getInstance();
-        if (mc.levelRenderer == null) return;
+        if (mc.levelRenderer == null) {
+            pendingDirtySections.addAll(sectionKeys);
+            return;
+        }
         var level = mc.level;
         if (level != null) {
             var emptySet = level.getChunkSource().getLoadedEmptySections();
@@ -322,5 +432,13 @@ public final class StaticRopeChunkRegistry {
             int sz = SectionPos.z(key);
             mc.levelRenderer.setSectionDirty(sx, sy, sz);
         }
+    }
+
+    private void clearDebugCounts() {
+        debugEligible = 0;
+        debugIneligible = 0;
+        debugWaitingQuiet = 0;
+        debugReadyFromSim = 0;
+        debugReadyAnchorBake = 0;
     }
 }

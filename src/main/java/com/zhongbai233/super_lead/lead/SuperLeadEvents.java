@@ -1,10 +1,6 @@
 package com.zhongbai233.super_lead.lead;
 
 import com.zhongbai233.super_lead.Super_lead;
-import java.util.HashMap;
-import java.util.Iterator;
-import java.util.Map;
-import java.util.UUID;
 import net.minecraft.core.Direction;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.server.level.ServerLevel;
@@ -21,13 +17,11 @@ import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.event.entity.player.PlayerEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerInteractEvent;
+import net.neoforged.neoforge.event.level.ChunkWatchEvent;
 import net.neoforged.neoforge.event.tick.LevelTickEvent;
 
 @EventBusSubscriber(modid = Super_lead.MODID)
 public final class SuperLeadEvents {
-    private static final int LOGIN_SYNC_DELAY_TICKS = 10;
-    private static final Map<UUID, Integer> DELAYED_SYNCS = new HashMap<>();
-
     private SuperLeadEvents() {}
 
     @SubscribeEvent
@@ -36,14 +30,6 @@ public final class SuperLeadEvents {
 
         // Sneak-gated rope-targeting actions: cut, upgrade, extract toggle, remove attachment.
         if (event.getEntity().isShiftKeyDown()) {
-            if (event.getLevel().isClientSide()
-                    && stack.is(Items.SHEARS)
-                    && com.zhongbai233.super_lead.preset.client.ZoneSelectionClient
-                            .tryHandleBlockClick(event.getEntity(), event.getHand(), event.getPos())) {
-                event.setCanceled(true);
-                event.setCancellationResult(InteractionResult.SUCCESS);
-                return;
-            }
             if (stack.is(Items.SHEARS) && tryUseConnectionAction(event)) {
                 return;
             }
@@ -203,18 +189,8 @@ public final class SuperLeadEvents {
     public static void onLeftClickEmpty(PlayerInteractEvent.LeftClickEmpty event) {
         if (!event.getLevel().isClientSide()) return;
         // Plain left-click on a rope attachment with both block- and item-display forms
+        // toggles between the two. trySend… filters on BlockItem so harmless on misses.
         com.zhongbai233.super_lead.lead.client.SuperLeadClientEvents.trySendToggleRopeAttachmentForm();
-    }
-
-    @SubscribeEvent
-    public static void onLeftClickBlock(PlayerInteractEvent.LeftClickBlock event) {
-        if (!event.getLevel().isClientSide()) return;
-        // LeftClickEmpty only fires when vanilla finds no hit. If the player is looking at a
-        // rope attachment that happens to overlap a block behind it, vanilla picks the block
-        // and the empty event never fires; intercept here too.
-        if (com.zhongbai233.super_lead.lead.client.SuperLeadClientEvents.trySendToggleRopeAttachmentForm()) {
-            event.setCanceled(true);
-        }
     }
 
     /** Attempt to add the held attachable item to a rope under the player's crosshair.
@@ -275,7 +251,7 @@ public final class SuperLeadEvents {
             if (first.equals(anchor)) {
                 SuperLeadNetwork.clearPendingAnchor(player);
                 clearLeashingState(stack);
-            } else if (first.attachmentPoint(level).distanceTo(anchor.attachmentPoint(level)) > SuperLeadNetwork.maxLeashDistance()) {
+            } else if (first.attachmentPoint(level).distanceTo(anchor.attachmentPoint(level)) > SuperLeadNetwork.MAX_LEASH_DISTANCE) {
                 SuperLeadNetwork.clearPendingAnchor(player);
                 clearLeashingState(stack);
                 result = InteractionResult.FAIL;
@@ -298,7 +274,7 @@ public final class SuperLeadEvents {
     public static void onLevelTick(LevelTickEvent.Post event) {
         for (Player player : event.getLevel().players()) {
             SuperLeadNetwork.pendingAnchor(player).ifPresent(anchor -> {
-                if (anchor.attachmentPoint(event.getLevel()).distanceTo(player.getRopeHoldPosition(1.0F)) > SuperLeadNetwork.maxLeashDistance()) {
+                if (anchor.attachmentPoint(event.getLevel()).distanceTo(player.getRopeHoldPosition(1.0F)) > SuperLeadNetwork.MAX_LEASH_DISTANCE) {
                     SuperLeadNetwork.clearPendingAnchor(player);
                     clearLeashingState(player.getMainHandItem());
                     clearLeashingState(player.getOffhandItem());
@@ -317,46 +293,31 @@ public final class SuperLeadEvents {
                 SuperLeadNetwork.tickFluid(serverLevel);
                 RopeContactTracker.tickRopeContacts(serverLevel);
             }
-            flushDelayedSyncs();
         }
     }
 
     @SubscribeEvent
     public static void onPlayerLoggedIn(PlayerEvent.PlayerLoggedInEvent event) {
         if (event.getEntity() instanceof ServerPlayer player) {
-            queueDelayedSync(player);
+            SuperLeadPayloads.sendToPlayer(player);
         }
     }
 
     @SubscribeEvent
     public static void onPlayerChangedDimension(PlayerEvent.PlayerChangedDimensionEvent event) {
         if (event.getEntity() instanceof ServerPlayer player) {
-            queueDelayedSync(player);
+            SuperLeadPayloads.sendToPlayer(player);
         }
     }
 
-    private static void queueDelayedSync(ServerPlayer player) {
-        DELAYED_SYNCS.put(player.getUUID(), LOGIN_SYNC_DELAY_TICKS);
+    @SubscribeEvent
+    public static void onChunkSent(ChunkWatchEvent.Sent event) {
+        SuperLeadPayloads.sendChunkToPlayer(event.getLevel(), event.getPlayer(), event.getPos());
     }
 
-    private static void flushDelayedSyncs() {
-        Iterator<Map.Entry<UUID, Integer>> iterator = DELAYED_SYNCS.entrySet().iterator();
-        while (iterator.hasNext()) {
-            Map.Entry<UUID, Integer> entry = iterator.next();
-            int ticks = entry.getValue() - 1;
-            if (ticks > 0) {
-                entry.setValue(ticks);
-                continue;
-            }
-
-            ServerPlayer player = net.neoforged.neoforge.server.ServerLifecycleHooks.getCurrentServer()
-                    .getPlayerList()
-                    .getPlayer(entry.getKey());
-            if (player != null) {
-                SuperLeadPayloads.sendToPlayer(player);
-            }
-            iterator.remove();
-        }
+    @SubscribeEvent
+    public static void onChunkUnwatch(ChunkWatchEvent.UnWatch event) {
+        SuperLeadPayloads.unloadChunkForPlayer(event.getPlayer(), event.getPos());
     }
 
     private static void markLeashingState(ItemStack stack) {

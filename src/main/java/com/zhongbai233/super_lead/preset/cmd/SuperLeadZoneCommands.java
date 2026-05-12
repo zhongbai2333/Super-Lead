@@ -4,6 +4,7 @@ import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import com.mojang.brigadier.context.CommandContext;
+import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import com.mojang.brigadier.suggestion.SuggestionProvider;
 import com.zhongbai233.super_lead.Super_lead;
 import com.zhongbai233.super_lead.preset.PhysicsZone;
@@ -77,10 +78,11 @@ public final class SuperLeadZoneCommands {
         }
         ctx.getSource().sendSuccess(() -> Component.literal("Physics zones (" + zones.size() + "):")
                 .withStyle(ChatFormatting.GOLD), false);
-        for (PhysicsZone z : zones) {
-            AABB a = z.area();
+        for (PhysicsZone zone : zones) {
+            AABB area = zone.area();
             String line = String.format("  %s -> %s  [%.0f,%.0f,%.0f .. %.0f,%.0f,%.0f]",
-                    z.name(), z.presetName(), a.minX, a.minY, a.minZ, a.maxX, a.maxY, a.maxZ);
+                    zone.name(), zone.presetName(), area.minX, area.minY, area.minZ,
+                    area.maxX, area.maxY, area.maxZ);
             ctx.getSource().sendSuccess(() -> Component.literal(line).withStyle(ChatFormatting.AQUA), false);
         }
         return zones.size();
@@ -93,7 +95,9 @@ public final class SuperLeadZoneCommands {
         BlockPos b = BlockPosArgument.getBlockPos(ctx, "to");
         AABB area = new AABB(
                 Math.min(a.getX(), b.getX()), Math.min(a.getY(), b.getY()), Math.min(a.getZ(), b.getZ()),
-                Math.max(a.getX(), b.getX()) + 1.0, Math.max(a.getY(), b.getY()) + 1.0, Math.max(a.getZ(), b.getZ()) + 1.0);
+                Math.max(a.getX(), b.getX()) + 1.0,
+                Math.max(a.getY(), b.getY()) + 1.0,
+                Math.max(a.getZ(), b.getZ()) + 1.0);
         ServerLevel level = ctx.getSource().getLevel();
         boolean ok = PresetServerManager.addZone(level, name, preset, area);
         if (!ok) {
@@ -107,15 +111,15 @@ public final class SuperLeadZoneCommands {
         return 1;
     }
 
-        private static int select(CommandContext<CommandSourceStack> ctx) throws com.mojang.brigadier.exceptions.CommandSyntaxException {
-                PhysicsZoneSelectionManager.start(ctx.getSource().getPlayerOrException());
-                return 1;
-        }
+    private static int select(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
+        PhysicsZoneSelectionManager.start(ctx.getSource().getPlayerOrException());
+        return 1;
+    }
 
-        private static int cancelSelect(CommandContext<CommandSourceStack> ctx) throws com.mojang.brigadier.exceptions.CommandSyntaxException {
-                PhysicsZoneSelectionManager.cancel(ctx.getSource().getPlayerOrException());
-                return 1;
-        }
+    private static int cancelSelect(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
+        PhysicsZoneSelectionManager.cancel(ctx.getSource().getPlayerOrException());
+        return 1;
+    }
 
     private static int remove(CommandContext<CommandSourceStack> ctx) {
         String name = StringArgumentType.getString(ctx, "name");

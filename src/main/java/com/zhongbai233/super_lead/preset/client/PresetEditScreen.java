@@ -7,6 +7,7 @@ import com.zhongbai233.super_lead.tuning.ClientTuning;
 import com.zhongbai233.super_lead.tuning.DoubleTuningType;
 import com.zhongbai233.super_lead.tuning.IntTuningType;
 import com.zhongbai233.super_lead.tuning.TuningKey;
+import com.zhongbai233.super_lead.tuning.gui.PreviewRope;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -16,7 +17,9 @@ import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.AbstractSliderButton;
 import net.minecraft.client.gui.components.AbstractWidget;
 import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
 import net.minecraft.util.Mth;
 import net.neoforged.neoforge.client.network.ClientPacketDistributor;
@@ -31,12 +34,14 @@ public final class PresetEditScreen extends Screen {
     private static final int ROW_GAP = 4;
     private static final int RESET_BTN_W = 14;
     private static final int VALUE_TEXT_W = 96;
+    private static final int INPUT_W = 56;
     private static final int SCROLLBAR_W = 4;
 
     private final Screen parent;
     private final String presetName;
     private final Map<String, String> overrides = new HashMap<>();
     private final List<Row> rows = new ArrayList<>();
+    private final PreviewRope preview = new PreviewRope();
 
     private List<String> groups;
     private int activeTab;
@@ -45,6 +50,9 @@ public final class PresetEditScreen extends Screen {
     private int contentHeight;
     private int scrollOffset;
     private boolean loaded;
+    private boolean detailsRequested;
+    private boolean pointerDownInBody;
+    private PresetDetailsResponse pendingDetails;
 
     public PresetEditScreen(Screen parent, String presetName) {
         super(Component.translatable("super_lead.preset.edit.title", presetName));
@@ -62,21 +70,21 @@ public final class PresetEditScreen extends Screen {
             groups = new ArrayList<>(ClientTuning.groups());
         }
         if (activeTab >= groups.size()) activeTab = 0;
+        preview.setViewport(0, 0, this.width, this.height);
+        preview.setOverrides(overrides, true);
 
         PresetClientHandler.setDetailsListener(resp -> {
             if (!resp.name().equals(presetName)) return;
-            overrides.clear();
-            overrides.putAll(resp.overrides());
-            loaded = true;
-            this.rebuildWidgets();
+            applyDetails(resp, true);
         });
         PresetDetailsResponse cached = PresetClientHandler.lastDetails();
         if (cached != null && cached.name().equals(presetName) && cached.exists()) {
-            overrides.clear();
-            overrides.putAll(cached.overrides());
-            loaded = true;
+            applyDetails(cached, false);
         }
-        ClientPacketDistributor.sendToServer(new PresetDetailsRequest(presetName));
+        if (!detailsRequested) {
+            detailsRequested = true;
+            ClientPacketDistributor.sendToServer(new PresetDetailsRequest(presetName));
+        }
 
         int tabsY = PADDING + 12;
         int tabX = PADDING;
@@ -109,13 +117,14 @@ public final class PresetEditScreen extends Screen {
         bodyBottom = this.height - PADDING;
 
         int rowW = this.width - PADDING * 2 - SCROLLBAR_W - 2;
-        int sliderW = Math.max(120, rowW * 5 / 12);
-        int labelW = rowW - sliderW - VALUE_TEXT_W - RESET_BTN_W - 8;
+        int sliderW = Math.max(100, rowW * 4 / 12);
+        int labelW = rowW - sliderW - INPUT_W - VALUE_TEXT_W - RESET_BTN_W - 12;
         if (labelW < 60) {
             labelW = 60;
-            sliderW = rowW - labelW - VALUE_TEXT_W - RESET_BTN_W - 8;
+            sliderW = rowW - labelW - INPUT_W - VALUE_TEXT_W - RESET_BTN_W - 12;
         }
         int sliderX = PADDING + labelW + 4;
+        int inputX = sliderX + sliderW + 4;
         int resetX = PADDING + rowW - RESET_BTN_W;
 
         int baseY = startY;
@@ -123,19 +132,27 @@ public final class PresetEditScreen extends Screen {
             if (!key.group.equals(group)) continue;
             int y = baseY - scrollOffset;
             AbstractWidget widget = buildWidget(key, sliderX, y, sliderW);
+            AbstractWidget input = buildInput(key, inputX, y, INPUT_W);
             AbstractWidget reset = Button.builder(Component.translatable("super_lead.config.reset"), b -> {
-                overrides.remove(key.id);
-                send(new PresetEditKey(presetName, key.id, "", true));
+                clearOverride(key);
                 this.rebuildWidgets();
             }).bounds(resetX, y, RESET_BTN_W, WIDGET_H).build();
             boolean visible = y >= bodyTop && y + ROW_HEIGHT <= bodyBottom;
+            boolean interactive = loaded && visible;
             widget.visible = visible;
-            widget.active = visible && widget.active;
+            widget.active = interactive && widget.active;
+            if (input != null) {
+                input.visible = visible;
+                input.active = interactive && input.active;
+            }
             reset.visible = visible;
-            reset.active = visible && overrides.containsKey(key.id);
+            reset.active = interactive && overrides.containsKey(key.id);
             addRenderableWidget(widget);
+            if (input != null) {
+                addRenderableWidget(input);
+            }
             addRenderableWidget(reset);
-            rows.add(new Row(widget, reset, key, baseY));
+            rows.add(new Row(widget, input, reset, key, baseY));
             baseY += ROW_HEIGHT + ROW_GAP;
         }
         contentHeight = Math.max(0, baseY - startY);
@@ -145,6 +162,47 @@ public final class PresetEditScreen extends Screen {
     private void clampScroll() {
         int maxScroll = Math.max(0, contentHeight - (bodyBottom - bodyTop));
         scrollOffset = Mth.clamp(scrollOffset, 0, maxScroll);
+    }
+
+    private void applyDetails(PresetDetailsResponse response, boolean rebuild) {
+        if (rebuild && isInteractingWithBodyControls()) {
+            pendingDetails = response;
+            return;
+        }
+        if (!response.exists()) {
+            overrides.clear();
+            loaded = true;
+            preview.setOverrides(overrides, true);
+            if (rebuild) this.rebuildWidgets();
+            return;
+        }
+        if (loaded && overrides.equals(response.overrides())) {
+            return;
+        }
+        overrides.clear();
+        overrides.putAll(response.overrides());
+        loaded = true;
+        preview.setOverrides(overrides, true);
+        if (rebuild) this.rebuildWidgets();
+    }
+
+    private boolean isInteractingWithBodyControls() {
+        if (pointerDownInBody) return true;
+        for (Row row : rows) {
+            if (row.input instanceof EditBox box && box.isFocused()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void applyPendingDetailsIfIdle() {
+        if (pendingDetails == null || isInteractingWithBodyControls()) {
+            return;
+        }
+        PresetDetailsResponse response = pendingDetails;
+        pendingDetails = null;
+        applyDetails(response, true);
     }
 
     @Override
@@ -158,6 +216,21 @@ public final class PresetEditScreen extends Screen {
         return super.mouseScrolled(mx, my, dx, dy);
     }
 
+    @Override
+    public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
+        boolean handled = super.mouseClicked(event, doubleClick);
+        pointerDownInBody = handled && event.y() >= bodyTop && event.y() <= bodyBottom;
+        return handled;
+    }
+
+    @Override
+    public boolean mouseReleased(MouseButtonEvent event) {
+        pointerDownInBody = false;
+        boolean handled = super.mouseReleased(event);
+        applyPendingDetailsIfIdle();
+        return handled;
+    }
+
     @SuppressWarnings("unchecked")
     private AbstractWidget buildWidget(TuningKey<?> key, int x, int y, int width) {
         if (key.type instanceof DoubleTuningType doubleType) {
@@ -166,8 +239,7 @@ public final class PresetEditScreen extends Screen {
             double current = parseDouble(overrides.get(key.id), dKey.getDefault());
             double initial = mapValueToSlider(current, doubleType.min(), doubleType.max(), log);
             return new PresetDoubleSlider(x, y, width, WIDGET_H, doubleType, log, initial, value -> {
-                overrides.put(key.id, value);
-                send(new PresetEditKey(presetName, key.id, value, false));
+                setOverride(key, value);
             });
         }
         if (key.type instanceof IntTuningType intType) {
@@ -175,8 +247,7 @@ public final class PresetEditScreen extends Screen {
             int current = parseInt(overrides.get(key.id), iKey.getDefault());
             double initial = (double) (current - intType.min()) / Math.max(1, intType.max() - intType.min());
             return new PresetIntSlider(x, y, width, WIDGET_H, intType, initial, value -> {
-                overrides.put(key.id, value);
-                send(new PresetEditKey(presetName, key.id, value, false));
+                setOverride(key, value);
             });
         }
 
@@ -186,20 +257,65 @@ public final class PresetEditScreen extends Screen {
         return Button.builder(boolLabel(state[0]), button -> {
             state[0] = !state[0];
             String value = Boolean.toString(state[0]);
-            overrides.put(key.id, value);
+            setOverride(key, value);
             button.setMessage(boolLabel(state[0]));
-            send(new PresetEditKey(presetName, key.id, value, false));
         }).bounds(x, y, width, WIDGET_H).build();
+    }
+
+    @SuppressWarnings("unchecked")
+    private AbstractWidget buildInput(TuningKey<?> key, int x, int y, int width) {
+        if (!(key.type instanceof DoubleTuningType)) {
+            return null;
+        }
+        TuningKey<Double> doubleKey = (TuningKey<Double>) key;
+        EditBox box = new EditBox(this.font, x, y, width, WIDGET_H,
+                Component.translatableWithFallback("super_lead.config.value", "Value"));
+        box.setMaxLength(16);
+        box.setValue(formatInputValue(doubleKey));
+        box.setResponder(raw -> {
+            boolean ok = isValidDoubleInput(doubleKey, raw);
+            box.setTextColor(ok ? 0xFFE8E8E8 : 0xFFFF6666);
+            if (ok) {
+                setOverride(doubleKey, raw);
+            }
+        });
+        return box;
+    }
+
+    private String formatInputValue(TuningKey<Double> key) {
+        String raw = overrides.get(key.id);
+        if (raw == null) {
+            return key.type.format(key.getDefault());
+        }
+        try {
+            return key.type.format(key.type.parse(raw));
+        } catch (RuntimeException ignored) {
+            return raw;
+        }
+    }
+
+    private static boolean isValidDoubleInput(TuningKey<Double> key, String raw) {
+        try {
+            Double parsed = key.type.parse(raw);
+            return key.type.validate(parsed)
+                    || (isUnboundedInputKey(key) && Double.isFinite(parsed));
+        } catch (RuntimeException ignored) {
+            return false;
+        }
+    }
+
+    private static boolean isUnboundedInputKey(TuningKey<Double> key) {
+        return key == ClientTuning.SLACK_LOOSE || key == ClientTuning.SLACK_TIGHT;
     }
 
     private static double parseDouble(String raw, double fallback) {
         if (raw == null) return fallback;
-        try { return Double.parseDouble(raw.trim()); } catch (Exception e) { return fallback; }
+        try { return Double.parseDouble(raw.trim()); } catch (RuntimeException e) { return fallback; }
     }
 
     private static int parseInt(String raw, int fallback) {
         if (raw == null) return fallback;
-        try { return Integer.parseInt(raw.trim()); } catch (Exception e) { return fallback; }
+        try { return Integer.parseInt(raw.trim()); } catch (RuntimeException e) { return fallback; }
     }
 
     private static boolean parseBool(String raw, boolean fallback) {
@@ -220,6 +336,28 @@ public final class PresetEditScreen extends Screen {
         return Mth.clamp((value - min) / (max - min), 0.0D, 1.0D);
     }
 
+    private void setOverride(TuningKey<?> key, String value) {
+        if (value.equals(overrides.get(key.id))) {
+            return;
+        }
+        overrides.put(key.id, value);
+        preview.setOverrides(overrides, true);
+        for (Row row : rows) {
+            if (row.key == key) {
+                row.reset.active = row.reset.visible;
+            }
+        }
+        send(new PresetEditKey(presetName, key.id, value, false));
+    }
+
+    private void clearOverride(TuningKey<?> key) {
+        if (overrides.remove(key.id) == null) {
+            return;
+        }
+        preview.setOverrides(overrides, true);
+        send(new PresetEditKey(presetName, key.id, "", true));
+    }
+
     private void send(PresetEditKey edit) {
         ClientPacketDistributor.sendToServer(edit);
     }
@@ -231,7 +369,15 @@ public final class PresetEditScreen extends Screen {
     }
 
     @Override
+    public void tick() {
+        super.tick();
+        preview.tick();
+        applyPendingDetailsIfIdle();
+    }
+
+    @Override
     public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float partialTick) {
+        preview.render(graphics);
         graphics.fill(0, 0, this.width, bodyTop, 0x80000000);
         graphics.fill(0, bodyTop, this.width, this.height, 0xA0000000);
         graphics.text(this.font, this.title, PADDING, PADDING, 0xFFFFD24F);
@@ -264,7 +410,9 @@ public final class PresetEditScreen extends Screen {
             String displayed = formatRowValue(key);
             boolean overridden = overrides.containsKey(key.id);
             int color = overridden ? 0xFFFFAAFF : 0xFFAAAAAA;
-            int valueX = row.reset.getX() - 4 - this.font.width(displayed);
+            int valueX = row.input != null
+                    ? row.input.getX() - 4 - this.font.width(displayed)
+                    : row.reset.getX() - 4 - this.font.width(displayed);
             graphics.text(this.font, Component.literal(displayed), valueX, rowY, color);
 
             if (key.description != null && !key.description.isEmpty()) {
@@ -288,7 +436,7 @@ public final class PresetEditScreen extends Screen {
         try {
             Object parsed = ((TuningKey<Object>) key).type.parse(raw);
             return ((TuningKey<Object>) key).type.format(parsed);
-        } catch (Exception e) {
+        } catch (RuntimeException e) {
             return raw;
         }
     }
@@ -338,7 +486,7 @@ public final class PresetEditScreen extends Screen {
         Minecraft.getInstance().setScreen(new PresetEditScreen(parent, name));
     }
 
-    private record Row(AbstractWidget widget, AbstractWidget reset, TuningKey<?> key, int baseY) {}
+    private record Row(AbstractWidget widget, AbstractWidget input, AbstractWidget reset, TuningKey<?> key, int baseY) {}
 
     private static final class PresetDoubleSlider extends AbstractSliderButton {
         private final DoubleTuningType type;

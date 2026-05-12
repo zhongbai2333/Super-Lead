@@ -18,6 +18,7 @@ public final class EmptySectionRescuer {
     @SubscribeEvent
     public static void onClientTick(ClientTickEvent.Post event) {
         StaticRopeChunkRegistry reg = StaticRopeChunkRegistry.get();
+        reg.flushPendingDirtySections();
         if (!reg.isActive()) return;
 
         Minecraft mc = Minecraft.getInstance();

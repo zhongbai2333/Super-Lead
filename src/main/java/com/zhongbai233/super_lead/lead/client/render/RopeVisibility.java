@@ -27,6 +27,7 @@ public final class RopeVisibility {
     // Margin added to per-segment AABBs so thick ropes don't get culled when the centerline
     // sits just outside the frustum.
     private static final double SEGMENT_FRUSTUM_MARGIN = 0.25D;
+    private static final double VISIBILITY_RAY_TARGET_BIAS = 0.06D;
     private static final double CAMERA_SHIFT_INVALIDATE_SQR = 1.5D * 1.5D;
 
     private static long frameSeq;
@@ -71,10 +72,11 @@ public final class RopeVisibility {
         }
         boolean visible;
         if (dSqr < PER_SEGMENT_DIST_SQR) {
-            // Close-up: build a per-segment visibility mask so that the occluded half of a
-            // rope can be hidden while the visible half still renders. Whole-rope visibility
-            // is just "any segment visible".
-            visible = computePerSegmentVisibility(level, sourceEntity, frustum, cameraPos, sim, partialTick);
+            // Close-up: CPU line-of-sight culling is too coarse for ropes. A single block edge
+            // can cover the sampled centerline while half of the thick rendered segment is still
+            // visible. Let the render depth path handle block occlusion and only use the frustum
+            // here, preserving partial visibility instead of dropping whole segments.
+            visible = computePerSegmentFrustumVisibility(frustum, sim, partialTick);
         } else {
             // Far ropes: cheap whole-rope test, mark mask as fully visible (or fully hidden).
             sim.beginSegmentVisibility(0);
@@ -85,12 +87,11 @@ public final class RopeVisibility {
     }
 
     /**
-     * Test each rope segment against the frustum and a single line-of-sight ray to its
-     * midpoint, populating {@link RopeSimulation}'s segment-visibility mask. Returns
-     * {@code true} if any segment is visible.
+     * Test each rope segment against the frustum, populating {@link RopeSimulation}'s
+     * segment-visibility mask. Returns {@code true} if any segment is visible.
      */
-    private static boolean computePerSegmentVisibility(Level level, Entity sourceEntity,
-            Frustum frustum, Vec3 cameraPos, RopeSimulation sim, float partialTick) {
+    private static boolean computePerSegmentFrustumVisibility(
+            Frustum frustum, RopeSimulation sim, float partialTick) {
         sim.prepareRender(partialTick);
         int nodeCount = sim.nodeCount();
         int segCount = nodeCount - 1;
@@ -98,7 +99,6 @@ public final class RopeVisibility {
         if (segCount <= 0) {
             return false;
         }
-        boolean cameraInsideRope = false;
         boolean anyVisible = false;
         for (int s = 0; s < segCount; s++) {
             double ax = sim.renderX(s);
@@ -119,20 +119,8 @@ public final class RopeVisibility {
                     continue;
                 }
             }
-            // If the camera sits inside this segment's box, treat it (and so the whole rope)
-            // as visible without raycasting; ClipContext from a point inside a block can
-            // misbehave.
-            if (!cameraInsideRope
-                    && cameraPos.x >= minX && cameraPos.x <= maxX
-                    && cameraPos.y >= minY && cameraPos.y <= maxY
-                    && cameraPos.z >= minZ && cameraPos.z <= maxZ) {
-                cameraInsideRope = true;
-            }
-            if (cameraInsideRope || hasLineOfSight(level, sourceEntity, cameraPos,
-                    (ax + bx) * 0.5D, (ay + by) * 0.5D, (az + bz) * 0.5D)) {
-                sim.setSegmentVisible(s, true);
-                anyVisible = true;
-            }
+            sim.setSegmentVisible(s, true);
+            anyVisible = true;
         }
         return anyVisible;
     }
@@ -166,6 +154,14 @@ public final class RopeVisibility {
         double distSqr = dx * dx + dy * dy + dz * dz;
         if (distSqr <= MIN_RAY_DISTANCE_SQR) {
             return true;
+        }
+        double dist = Math.sqrt(distSqr);
+        double bias = Math.min(VISIBILITY_RAY_TARGET_BIAS, dist * 0.25D);
+        if (bias > 0.0D) {
+            double invDist = 1.0D / dist;
+            tx -= dx * invDist * bias;
+            ty -= dy * invDist * bias;
+            tz -= dz * invDist * bias;
         }
         return !rayHitsOpaque(level, cameraPos.x, cameraPos.y, cameraPos.z, tx, ty, tz);
     }

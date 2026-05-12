@@ -1,9 +1,12 @@
 package com.zhongbai233.super_lead.lead;
 
 import com.zhongbai233.super_lead.Config;
+import com.zhongbai233.super_lead.preset.PresetServerManager;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -13,7 +16,9 @@ import java.util.function.IntSupplier;
 import java.util.function.Predicate;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.SignalGetter;
 import net.minecraft.world.entity.Leashable;
 import net.minecraft.world.entity.decoration.LeashFenceKnotEntity;
@@ -36,16 +41,20 @@ import net.neoforged.neoforge.transfer.resource.Resource;
 import net.neoforged.neoforge.transfer.transaction.Transaction;
 
 public final class SuperLeadNetwork {
-    public static double maxLeashDistance() { return Config.maxLeashDistance(); }
-    public static int itemTierMax() { return Config.itemTierMax(); }
-    public static int fluidTierMax() { return Config.fluidTierMax(); }
-    private static double serverConfirmedPickReach() { return Config.maxLeashDistance() + 1.5D; }
+    public static final double MAX_LEASH_DISTANCE = 12.0D;
     private static final double SERVER_CONFIRMED_PICK_RADIUS = 0.95D;
+    private static final double SERVER_CONFIRMED_PICK_REACH = MAX_LEASH_DISTANCE + 1.5D;
     private static final int SERVER_CONFIRMED_CURVE_SAMPLES = 12;
     private static final double SERVER_CONFIRMED_CURVE_SAG_PER_BLOCK = 0.065D;
     private static final double SERVER_CONFIRMED_CURVE_MAX_SAG = 0.70D;
+    private static final double SERVER_CLAIM_RAY_RADIUS = 1.15D;
+    private static final double SERVER_CLAIM_ROPE_RADIUS = 1.35D;
+    private static final double SERVER_CLAIM_T_SLACK = 0.35D;
+    private static final double SERVER_CLAIM_BLOCK_SLACK = 1.10D;
     private static final Map<NetworkKey, List<LeadConnection>> CONNECTIONS = new HashMap<>();
-    private static final Map<NetworkKey, Map<BlockPos, Integer>> REDSTONE_SIGNAL_INDEX = new HashMap<>();
+    private static final Map<NetworkKey, Map<UUID, LeadConnection>> CLIENT_CONNECTIONS_BY_ID = new HashMap<>();
+    private static final Map<NetworkKey, Map<Long, Set<UUID>>> CLIENT_CHUNK_CONNECTIONS = new HashMap<>();
+    private static final Map<NetworkKey, Map<UUID, Integer>> CLIENT_CONNECTION_REFCOUNTS = new HashMap<>();
     private static final Map<PlayerKey, PendingLead> PENDING_LEADS = new HashMap<>();
     private static final Map<UUID, Long> INTERIOR_BLOCKED_SINCE = new HashMap<>();
     // Sticky "recently active" deadline per ENERGY connection (gameTime tick at which power expires).
@@ -57,10 +66,16 @@ public final class SuperLeadNetwork {
     private static final Map<BlockPos, Integer> ITEM_RR_CURSOR = new HashMap<>();
     private static final Map<BlockPos, Integer> FLUID_RR_CURSOR = new HashMap<>();
     private static final int ITEM_PULSE_DURATION_TICKS = 10;
+    private static final int ITEM_TRANSFER_INTERVAL_TICKS = 4;
     private static final long STUCK_CHECK_INTERVAL_TICKS = 5L;
+    private static final long STUCK_BREAK_TICKS = 100L;
     private static final double STUCK_SAMPLE_STEP = 0.20D;
     private static final double STUCK_ENDPOINT_IGNORE_DISTANCE = 0.35D;
     private static final double STUCK_INSIDE_EPS = 1.0e-4D;
+    public static final int ITEM_TIER_MAX = 6;
+    public static final int FLUID_TIER_MAX = 4;
+    /** Per-rope batch unit for fluid transfers (1 bucket = 1000 mB). */
+    private static final int FLUID_BUCKET_AMOUNT = 1000;
     private static final ThreadLocal<Boolean> SUPPRESS_LEAD_SIGNALS = ThreadLocal.withInitial(() -> false);
 
     private SuperLeadNetwork() {}
@@ -94,19 +109,22 @@ public final class SuperLeadNetwork {
     }
 
     public static LeadConnection connect(Level level, LeadAnchor from, LeadAnchor to, LeadKind kind) {
-        LeadConnection connection = LeadConnection.create(from, to, kind);
-        // Server-authoritative: only the logical server records the connection. The client
-        // mirror is populated by SyncConnections / SyncConnectionChanges. Writing on the
-        // client too would create a phantom entry with a different UUID (in single-player
-        // both sides share this static call path), which the server cannot cut.
-        if (level instanceof ServerLevel serverLevel && !level.isClientSide()) {
+        if (!level.isClientSide() && level instanceof ServerLevel serverLevel) {
+            LeadConnection connection = LeadConnection.create(from, to, kind);
+            connection = connection.withPhysicsPreset(
+                    PresetServerManager.resolvePresetForConnection(serverLevel, connection));
             ensureFenceKnot(serverLevel, from);
             ensureFenceKnot(serverLevel, to);
             SuperLeadSavedData.get(serverLevel).add(connection);
             notifyRedstoneChange(serverLevel, connection);
+            PresetServerManager.syncDimensionPresets(serverLevel);
             SuperLeadPayloads.sendToDimension(serverLevel);
+            return connection;
         }
-        return connection;
+        // Client-side right-click handling only maintains the local pending-anchor state. The
+        // actual rope must arrive from the server via SyncRopeChunk; otherwise the client creates
+        // a random-UUID prediction that cannot be removed or saved.
+        return LeadConnection.create(from, to, kind);
     }
 
     public static List<LeadConnection> connections(Level level) {
@@ -117,45 +135,106 @@ public final class SuperLeadNetwork {
     }
 
     public static void replaceConnections(Level level, List<LeadConnection> connections) {
-        CONNECTIONS.put(NetworkKey.of(level), new ArrayList<>(connections));
-        invalidateRedstoneIndex(level);
-        if (level.isClientSide()) {
-            com.zhongbai233.super_lead.lead.client.chunk.StaticRopeChunkRegistry.get()
-                    .onConnectionsReplaced(level, connections);
+        NetworkKey key = NetworkKey.of(level);
+        CONNECTIONS.put(key, new ArrayList<>(connections));
+        Map<UUID, LeadConnection> byId = new LinkedHashMap<>();
+        for (LeadConnection connection : connections) {
+            byId.put(connection.id(), connection);
         }
+        CLIENT_CONNECTIONS_BY_ID.put(key, byId);
+        CLIENT_CHUNK_CONNECTIONS.remove(key);
+        CLIENT_CONNECTION_REFCOUNTS.remove(key);
     }
 
     public static void applyConnectionChanges(Level level, List<UUID> removed, List<LeadConnection> upserts) {
-        ArrayList<LeadConnection> connections = new ArrayList<>(connections(level));
+        NetworkKey key = NetworkKey.of(level);
+        Map<UUID, LeadConnection> byId = CLIENT_CONNECTIONS_BY_ID.computeIfAbsent(key, ignored -> {
+            Map<UUID, LeadConnection> out = new LinkedHashMap<>();
+            for (LeadConnection connection : CONNECTIONS.getOrDefault(key, List.of())) {
+                out.put(connection.id(), connection);
+            }
+            return out;
+        });
         if (!removed.isEmpty()) {
-            Set<UUID> removedSet = new HashSet<>(removed);
-            connections.removeIf(connection -> removedSet.contains(connection.id()));
+            for (UUID id : removed) {
+                byId.remove(id);
+            }
         }
+
         for (LeadConnection upsert : upserts) {
-            boolean replaced = false;
-            for (int i = 0; i < connections.size(); i++) {
-                if (connections.get(i).id().equals(upsert.id())) {
-                    connections.set(i, upsert);
-                    replaced = true;
-                    break;
-                }
-            }
-            if (!replaced) {
-                connections.add(upsert);
+            byId.put(upsert.id(), upsert);
+        }
+        rebuildClientConnectionList(key);
+    }
+
+    public static void replaceChunkConnections(Level level, ChunkPos chunk, List<LeadConnection> connections) {
+        NetworkKey key = NetworkKey.of(level);
+        long chunkKey = SuperLeadSavedData.chunkKey(chunk);
+        Map<Long, Set<UUID>> byChunk = CLIENT_CHUNK_CONNECTIONS.computeIfAbsent(key, ignored -> new HashMap<>());
+        Map<UUID, Integer> refCounts = CLIENT_CONNECTION_REFCOUNTS.computeIfAbsent(key, ignored -> new HashMap<>());
+        Map<UUID, LeadConnection> byId = CLIENT_CONNECTIONS_BY_ID.computeIfAbsent(key, ignored -> new LinkedHashMap<>());
+
+        Set<UUID> oldIds = byChunk.remove(chunkKey);
+        if (oldIds != null) {
+            for (UUID id : oldIds) {
+                decrementClientRef(byId, refCounts, id);
             }
         }
-        CONNECTIONS.put(NetworkKey.of(level), connections);
-        invalidateRedstoneIndex(level);
-        if (level.isClientSide()) {
-            com.zhongbai233.super_lead.lead.client.chunk.StaticRopeChunkRegistry.get()
-                    .onConnectionsReplaced(level, connections);
+
+        LinkedHashSet<UUID> newIds = new LinkedHashSet<>();
+        for (LeadConnection connection : connections) {
+            if (!newIds.add(connection.id())) continue;
+            byId.put(connection.id(), connection);
+            refCounts.put(connection.id(), refCounts.getOrDefault(connection.id(), 0) + 1);
+        }
+        if (!newIds.isEmpty()) {
+            byChunk.put(chunkKey, newIds);
+        }
+        pruneUnreferencedClientConnections(key);
+        rebuildClientConnectionList(key);
+    }
+
+    public static void unloadChunkConnections(Level level, ChunkPos chunk) {
+        NetworkKey key = NetworkKey.of(level);
+        Map<Long, Set<UUID>> byChunk = CLIENT_CHUNK_CONNECTIONS.get(key);
+        if (byChunk == null) {
+            return;
+        }
+        Set<UUID> oldIds = byChunk.remove(SuperLeadSavedData.chunkKey(chunk));
+        if (oldIds == null || oldIds.isEmpty()) {
+            return;
+        }
+        Map<UUID, Integer> refCounts = CLIENT_CONNECTION_REFCOUNTS.computeIfAbsent(key, ignored -> new HashMap<>());
+        Map<UUID, LeadConnection> byId = CLIENT_CONNECTIONS_BY_ID.computeIfAbsent(key, ignored -> new LinkedHashMap<>());
+        for (UUID id : oldIds) {
+            decrementClientRef(byId, refCounts, id);
+        }
+        pruneUnreferencedClientConnections(key);
+        rebuildClientConnectionList(key);
+    }
+
+    private static void decrementClientRef(Map<UUID, LeadConnection> byId, Map<UUID, Integer> refCounts, UUID id) {
+        int next = refCounts.getOrDefault(id, 0) - 1;
+        if (next <= 0) {
+            refCounts.remove(id);
+            byId.remove(id);
+        } else {
+            refCounts.put(id, next);
         }
     }
 
-    public static void invalidateRedstoneIndex(Level level) {
-        if (level != null) {
-            REDSTONE_SIGNAL_INDEX.remove(NetworkKey.of(level));
+    private static void pruneUnreferencedClientConnections(NetworkKey key) {
+        Map<UUID, LeadConnection> byId = CLIENT_CONNECTIONS_BY_ID.get(key);
+        Map<UUID, Integer> refCounts = CLIENT_CONNECTION_REFCOUNTS.get(key);
+        if (byId == null || refCounts == null) {
+            return;
         }
+        byId.keySet().removeIf(id -> refCounts.getOrDefault(id, 0) <= 0);
+    }
+
+    private static void rebuildClientConnectionList(NetworkKey key) {
+        Map<UUID, LeadConnection> byId = CLIENT_CONNECTIONS_BY_ID.get(key);
+        CONNECTIONS.put(key, byId == null ? new ArrayList<>() : new ArrayList<>(byId.values()));
     }
 
     public static void pruneInvalid(Level level) {
@@ -164,25 +243,20 @@ public final class SuperLeadNetwork {
             ensureFenceKnots(serverLevel);
             if (removed) {
                 SuperLeadPayloads.sendToDimension(serverLevel);
+                PresetServerManager.syncDimensionPresets(serverLevel);
             }
             return;
         }
 
-        List<LeadConnection> connections = CONNECTIONS.get(NetworkKey.of(level));
-        if (connections == null) {
-            return;
-        }
-
-        boolean removed = connections.removeIf(connection -> invalid(level, connection));
-        if (removed) {
-            invalidateRedstoneIndex(level);
-        }
+        // Clients receive authoritative chunk-scoped rope data from the server. Do not prune here:
+        // a cross-chunk rope can reference an endpoint chunk that has not streamed in yet, and
+        // treating that unloaded endpoint as air would incorrectly delete a valid visible rope.
     }
 
     private static boolean invalid(Level level, LeadConnection connection) {
         return level.getBlockState(connection.from().pos()).isAir()
                 || level.getBlockState(connection.to().pos()).isAir()
-                || connection.from().attachmentPoint(level).distanceTo(connection.to().attachmentPoint(level)) > maxLeashDistance();
+                || connection.from().attachmentPoint(level).distanceTo(connection.to().attachmentPoint(level)) > MAX_LEASH_DISTANCE;
     }
 
     public static void tickStuckBreaks(ServerLevel level) {
@@ -202,7 +276,7 @@ public final class SuperLeadNetwork {
             }
 
             long since = INTERIOR_BLOCKED_SINCE.computeIfAbsent(connection.id(), id -> now);
-            if (now - since >= Config.stuckBreakTicks()) {
+            if (now - since >= STUCK_BREAK_TICKS) {
                 broken.add(connection);
             }
         }
@@ -231,6 +305,7 @@ public final class SuperLeadNetwork {
             notifyRedstoneChange(level, connection);
         }
         SuperLeadPayloads.sendToDimension(level);
+        PresetServerManager.syncDimensionPresets(level);
     }
 
     private static boolean hasInteriorBlockage(Level level, LeadConnection connection) {
@@ -378,18 +453,15 @@ public final class SuperLeadNetwork {
     }
 
     public static boolean upgradeNearestItemTierInView(Level level, Player player, double radius) {
-        return upgradeNearestKindTierInView(level, player, radius, LeadKind.ITEM, itemTierMax(), Items.CHEST);
+        return upgradeNearestKindTierInView(level, player, radius, LeadKind.ITEM, ITEM_TIER_MAX, Items.CHEST);
     }
 
     public static boolean upgradeNearestFluidTierInView(Level level, Player player, double radius) {
-        return upgradeNearestKindTierInView(level, player, radius, LeadKind.FLUID, fluidTierMax(), Items.BUCKET);
+        return upgradeNearestKindTierInView(level, player, radius, LeadKind.FLUID, FLUID_TIER_MAX, Items.BUCKET);
     }
 
     /** Find a known connection by id in the given level (server or client). */
     public static Optional<LeadConnection> findConnectionById(Level level, UUID id) {
-        if (!level.isClientSide() && level instanceof ServerLevel serverLevel) {
-            return SuperLeadSavedData.get(serverLevel).find(id);
-        }
         for (LeadConnection connection : connections(level)) {
             if (connection.id().equals(id)) {
                 return Optional.of(connection);
@@ -398,44 +470,44 @@ public final class SuperLeadNetwork {
         return Optional.empty();
     }
 
+    /** Broad server-side view check used only to consume the vanilla block interaction. */
+    public static boolean canUseClientPickedConnection(ServerLevel level, Player player, LeadConnection connection) {
+        return canAimAtConnectionEnvelope(level, player, connection);
+    }
+
     /**
      * Server-side validation for a client-confirmed rope target.
      *
      * The client picks against the rendered rope simulation, which can sag or be pushed by blocks.
-     * The server only has the two anchors, so this intentionally checks a wider envelope around the
-     * straight anchor segment plus a conservative sagged curve. This keeps the packet tied to the
-     * exact client-highlighted connection without going back to server-side "nearest rope" picking.
+     * The packet therefore carries the exact rendered hit point and an approximate rope parameter.
+     * The server verifies that the hit is still in the player's view ray and inside a generous
+     * capsule/envelope around the same rope instead of doing a fresh nearest-rope pick.
      */
-    public static boolean canUseClientPickedConnection(ServerLevel level, Player player, LeadConnection connection) {
+    public static boolean canUseClientPickedConnection(ServerLevel level, Player player,
+            LeadConnection connection, Vec3 claimedHitPoint, double claimedT) {
+        if (!isFinite(claimedHitPoint) || !Double.isFinite(claimedT)) {
+            return false;
+        }
+
         Vec3 origin = player.getEyePosition(1.0F);
         Vec3 direction = player.getViewVector(1.0F).normalize();
         Vec3 a = connection.from().attachmentPoint(level);
         Vec3 b = connection.to().attachmentPoint(level);
-        double radiusSqr = SERVER_CONFIRMED_PICK_RADIUS * SERVER_CONFIRMED_PICK_RADIUS;
+        double reach = clippedAimReach(level, player, origin, direction,
+                SERVER_CONFIRMED_PICK_REACH, SERVER_CLAIM_BLOCK_SLACK);
 
-        // Clamp pick reach to whatever block the player is actually aiming at, so a rope that lies
-        // along the view direction past a closer block does not get treated as targeted.
-        double reach = serverConfirmedPickReach();
-        Vec3 reachEnd = origin.add(direction.scale(reach));
-        net.minecraft.world.level.ClipContext clip = new net.minecraft.world.level.ClipContext(
-                origin, reachEnd,
-                net.minecraft.world.level.ClipContext.Block.OUTLINE,
-                net.minecraft.world.level.ClipContext.Fluid.NONE,
-                player);
-        net.minecraft.world.phys.BlockHitResult blockHit = level.clip(clip);
-        if (blockHit.getType() != net.minecraft.world.phys.HitResult.Type.MISS) {
-            reach = Math.min(reach,
-                    blockHit.getLocation().distanceTo(origin) + SERVER_CONFIRMED_PICK_RADIUS);
+        Vec3 originToHit = claimedHitPoint.subtract(origin);
+        double along = originToHit.dot(direction);
+        if (along < -0.25D || along > reach) {
+            return false;
         }
 
-        ConnectionPick straightPick = pickSegment(connection, a, b, origin, direction, reach);
-        if (straightPick != null && straightPick.distanceSqr() <= radiusSqr) {
-            return true;
+        Vec3 rayPoint = origin.add(direction.scale(Math.max(0.0D, along)));
+        if (claimedHitPoint.distanceToSqr(rayPoint) > SERVER_CLAIM_RAY_RADIUS * SERVER_CLAIM_RAY_RADIUS) {
+            return false;
         }
 
-        return pickApproximateSaggedCurve(connection, a, b, origin, direction, reach)
-                .map(ConnectionPick::distanceSqr)
-                .orElse(Double.POSITIVE_INFINITY) <= radiusSqr;
+        return isClaimedHitNearConnection(a, b, claimedHitPoint, clamp01(claimedT));
     }
 
     /** Looser variant of {@link #canUseClientPickedConnection} for attachment placement /
@@ -451,21 +523,103 @@ public final class SuperLeadNetwork {
         Vec3 direction = player.getViewVector(1.0F).normalize();
         Vec3 a = connection.from().attachmentPoint(level);
         Vec3 b = connection.to().attachmentPoint(level);
-        double chord = a.distanceTo(b);
-        // Worst-case sag depth of a free-hanging chain of length L between equal-height
-        // anchors is L/2; clamp to half the chord plus a generous floor so short ropes also
-        // pass even when the slack-driven catenary depth is smaller than the radius.
-        double sagDown = Math.max(SERVER_CONFIRMED_CURVE_MAX_SAG + SERVER_CONFIRMED_PICK_RADIUS,
-                chord * 0.5D + SERVER_CONFIRMED_PICK_RADIUS);
-        net.minecraft.world.phys.AABB envelope = new net.minecraft.world.phys.AABB(
-                Math.min(a.x, b.x) - SERVER_CONFIRMED_PICK_RADIUS,
-                Math.min(a.y, b.y) - sagDown,
-                Math.min(a.z, b.z) - SERVER_CONFIRMED_PICK_RADIUS,
-                Math.max(a.x, b.x) + SERVER_CONFIRMED_PICK_RADIUS,
-                Math.max(a.y, b.y) + SERVER_CONFIRMED_PICK_RADIUS,
-                Math.max(a.z, b.z) + SERVER_CONFIRMED_PICK_RADIUS);
-        Vec3 reachEnd = origin.add(direction.scale(serverConfirmedPickReach()));
+        net.minecraft.world.phys.AABB envelope = connectionEnvelope(a, b, SERVER_CONFIRMED_PICK_RADIUS);
+        Vec3 reachEnd = origin.add(direction.scale(SERVER_CONFIRMED_PICK_REACH));
         return envelope.clip(origin, reachEnd).isPresent();
+    }
+
+    private static boolean canAimAtConnectionEnvelope(ServerLevel level, Player player, LeadConnection connection) {
+        Vec3 origin = player.getEyePosition(1.0F);
+        Vec3 direction = player.getViewVector(1.0F).normalize();
+        Vec3 a = connection.from().attachmentPoint(level);
+        Vec3 b = connection.to().attachmentPoint(level);
+        double reach = clippedAimReach(level, player, origin, direction,
+                SERVER_CONFIRMED_PICK_REACH, SERVER_CONFIRMED_PICK_RADIUS);
+        return connectionEnvelope(a, b, SERVER_CONFIRMED_PICK_RADIUS)
+                .clip(origin, origin.add(direction.scale(reach)))
+                .isPresent();
+    }
+
+    private static double clippedAimReach(ServerLevel level, Player player, Vec3 origin, Vec3 direction,
+            double baseReach, double blockSlack) {
+        Vec3 reachEnd = origin.add(direction.scale(baseReach));
+        net.minecraft.world.level.ClipContext clip = new net.minecraft.world.level.ClipContext(
+                origin, reachEnd,
+                net.minecraft.world.level.ClipContext.Block.OUTLINE,
+                net.minecraft.world.level.ClipContext.Fluid.NONE,
+                player);
+        net.minecraft.world.phys.BlockHitResult blockHit = level.clip(clip);
+        if (blockHit.getType() == net.minecraft.world.phys.HitResult.Type.MISS) {
+            return baseReach;
+        }
+        return Math.min(baseReach, blockHit.getLocation().distanceTo(origin) + blockSlack);
+    }
+
+    private static boolean isClaimedHitNearConnection(Vec3 a, Vec3 b, Vec3 hit, double hitT) {
+        double radiusSqr = SERVER_CLAIM_ROPE_RADIUS * SERVER_CLAIM_ROPE_RADIUS;
+        if (distancePointToSegmentSqr(hit, a, b) <= radiusSqr) {
+            return true;
+        }
+        if (distancePointToApproximateSaggedCurveSqr(hit, a, b) <= radiusSqr) {
+            return true;
+        }
+        if (!connectionEnvelope(a, b, SERVER_CLAIM_ROPE_RADIUS).contains(hit)) {
+            return false;
+        }
+        return isInsideProjectedRopeTube(a, b, hit, hitT, SERVER_CLAIM_ROPE_RADIUS);
+    }
+
+    private static boolean isInsideProjectedRopeTube(Vec3 a, Vec3 b, Vec3 hit, double hitT, double radius) {
+        double dx = b.x - a.x;
+        double dz = b.z - a.z;
+        double horizontalLenSqr = dx * dx + dz * dz;
+        double projectionT;
+        double sideSqr;
+        if (horizontalLenSqr > 1.0e-8D) {
+            projectionT = ((hit.x - a.x) * dx + (hit.z - a.z) * dz) / horizontalLenSqr;
+            projectionT = clamp01(projectionT);
+            double cx = a.x + dx * projectionT;
+            double cz = a.z + dz * projectionT;
+            double sideX = hit.x - cx;
+            double sideZ = hit.z - cz;
+            sideSqr = sideX * sideX + sideZ * sideZ;
+        } else {
+            projectionT = closestSegmentParameter(a, b, hit);
+            double sideX = hit.x - a.x;
+            double sideZ = hit.z - a.z;
+            sideSqr = sideX * sideX + sideZ * sideZ;
+        }
+        if (sideSqr > radius * radius) {
+            return false;
+        }
+
+        if (Math.abs(projectionT - hitT) > SERVER_CLAIM_T_SLACK) {
+            double endpointRadius = radius + 0.35D;
+            double endpointRadiusSqr = endpointRadius * endpointRadius;
+            if (hit.distanceToSqr(a) > endpointRadiusSqr && hit.distanceToSqr(b) > endpointRadiusSqr) {
+                return false;
+            }
+        }
+
+        double sagDown = broadSagDown(a, b, radius);
+        return hit.y >= Math.min(a.y, b.y) - sagDown
+                && hit.y <= Math.max(a.y, b.y) + radius;
+    }
+
+    private static net.minecraft.world.phys.AABB connectionEnvelope(Vec3 a, Vec3 b, double radius) {
+        double sagDown = broadSagDown(a, b, radius);
+        return new net.minecraft.world.phys.AABB(
+                Math.min(a.x, b.x) - radius,
+                Math.min(a.y, b.y) - sagDown,
+                Math.min(a.z, b.z) - radius,
+                Math.max(a.x, b.x) + radius,
+                Math.max(a.y, b.y) + radius,
+                Math.max(a.z, b.z) + radius);
+    }
+
+    private static double broadSagDown(Vec3 a, Vec3 b, double radius) {
+        double chord = a.distanceTo(b);
+        return Math.max(SERVER_CONFIRMED_CURVE_MAX_SAG + radius, chord * 0.55D + radius);
     }
 
     public static boolean hasClientPickCompatibleConnectionInView(ServerLevel level, Player player,
@@ -518,6 +672,7 @@ public final class SuperLeadNetwork {
         cleanupFenceKnot(level, connection.from());
         cleanupFenceKnot(level, connection.to());
         SuperLeadPayloads.sendToDimension(level);
+        PresetServerManager.syncDimensionPresets(level);
         return true;
     }
 
@@ -809,6 +964,7 @@ public final class SuperLeadNetwork {
             addEnergyEndpoint(level, connection.to(), endpoints, seenAnchors);
         }
 
+        boolean componentMoved = false;
         for (int i = 0; i < endpoints.size(); i++) {
             for (int j = i + 1; j < endpoints.size(); j++) {
                 EnergyEndpoint a = endpoints.get(i);
@@ -824,10 +980,13 @@ public final class SuperLeadNetwork {
                     moved = 0;
                 }
                 if (moved > 0) {
-                    for (int index : component) {
-                        transferredIds.add(energyConnections.get(index).id());
-                    }
+                    componentMoved = true;
                 }
+            }
+        }
+        if (componentMoved) {
+            for (int index : component) {
+                transferredIds.add(energyConnections.get(index).id());
             }
         }
     }
@@ -884,19 +1043,19 @@ public final class SuperLeadNetwork {
     }
 
     public static void tickItem(ServerLevel level) {
-        if (level.getGameTime() % Config.itemTransferIntervalTicks() != 0L) {
+        if (level.getGameTime() % ITEM_TRANSFER_INTERVAL_TICKS != 0L) {
             return;
         }
         tickTransfer(level, LeadKind.ITEM, Capabilities.Item.BLOCK, ITEM_RR_CURSOR,
-                rope -> Math.min(64, 1 << Math.min(itemTierMax(), rope.tier())));
+                rope -> Math.min(64, 1 << Math.min(ITEM_TIER_MAX, rope.tier())));
     }
 
     public static void tickFluid(ServerLevel level) {
-        if (level.getGameTime() % Config.itemTransferIntervalTicks() != 0L) {
+        if (level.getGameTime() % ITEM_TRANSFER_INTERVAL_TICKS != 0L) {
             return;
         }
         tickTransfer(level, LeadKind.FLUID, Capabilities.Fluid.BLOCK, FLUID_RR_CURSOR,
-                rope -> Config.fluidBucketAmount() * (1 << Math.min(fluidTierMax(), rope.tier())));
+                rope -> FLUID_BUCKET_AMOUNT * (1 << Math.min(FLUID_TIER_MAX, rope.tier())));
     }
 
     private static <R extends Resource> void tickTransfer(
@@ -974,6 +1133,10 @@ public final class SuperLeadNetwork {
             }
         }
     }
+
+    private record PathStep(LeadConnection rope, boolean reverse) {}
+
+    private record RrChoice(BlockPos knot, int idx, int n) {}
 
     /**
      * DFS through the rope graph starting at {@code current}. If {@code current} hosts a handler,
@@ -1111,33 +1274,20 @@ public final class SuperLeadNetwork {
         if (SUPPRESS_LEAD_SIGNALS.get() || !(getter instanceof Level level)) {
             return 0;
         }
-        return redstoneSignalIndex(level).getOrDefault(pos, 0);
-    }
 
-    private static Map<BlockPos, Integer> redstoneSignalIndex(Level level) {
-        return REDSTONE_SIGNAL_INDEX.computeIfAbsent(NetworkKey.of(level),
-                ignored -> buildRedstoneSignalIndex(level));
-    }
-
-    private static Map<BlockPos, Integer> buildRedstoneSignalIndex(Level level) {
-        Map<BlockPos, Integer> signals = new HashMap<>();
+        int signal = 0;
         for (LeadConnection connection : connections(level)) {
             if (connection.kind() != LeadKind.REDSTONE || connection.power() <= 0) {
                 continue;
             }
-            addRedstoneSignal(signals, connection.from(), connection.power());
-            addRedstoneSignal(signals, connection.to(), connection.power());
+            if (isRedstoneOutputPosition(connection.from(), pos) || isRedstoneOutputPosition(connection.to(), pos)) {
+                signal = Math.max(signal, connection.power());
+                if (signal >= 15) {
+                    return 15;
+                }
+            }
         }
-        return signals.isEmpty() ? Map.of() : Map.copyOf(signals);
-    }
-
-    private static void addRedstoneSignal(Map<BlockPos, Integer> signals, LeadAnchor anchor, int power) {
-        addRedstoneSignal(signals, anchor.pos().immutable(), power);
-        addRedstoneSignal(signals, anchor.pos().relative(anchor.face()).immutable(), power);
-    }
-
-    private static void addRedstoneSignal(Map<BlockPos, Integer> signals, BlockPos pos, int power) {
-        signals.merge(pos, Math.min(15, power), Math::max);
+        return signal;
     }
 
     private static Optional<LeadConnection> nearestConnection(Level level, Vec3 point, double maxDistance, Predicate<LeadConnection> predicate) {
@@ -1159,7 +1309,7 @@ public final class SuperLeadNetwork {
     private static Optional<ConnectionPick> nearestConnectionInView(Level level, Player player, double radius, Predicate<LeadConnection> predicate) {
         Vec3 origin = player.getEyePosition(1.0F);
         Vec3 direction = player.getViewVector(1.0F).normalize();
-        double maxDistance = maxLeashDistance();
+        double maxDistance = MAX_LEASH_DISTANCE;
         double radiusSqr = radius * radius;
         ConnectionPick best = null;
 
@@ -1183,28 +1333,22 @@ public final class SuperLeadNetwork {
         return Optional.ofNullable(best);
     }
 
-    private static Optional<ConnectionPick> pickApproximateSaggedCurve(LeadConnection connection, Vec3 a, Vec3 b,
-            Vec3 origin, Vec3 direction, double maxDistance) {
+    private static double distancePointToApproximateSaggedCurveSqr(Vec3 point, Vec3 a, Vec3 b) {
         double sag = Math.min(SERVER_CONFIRMED_CURVE_MAX_SAG,
                 a.distanceTo(b) * SERVER_CONFIRMED_CURVE_SAG_PER_BLOCK);
         if (sag <= 1.0e-6D) {
-            return Optional.empty();
+            return distancePointToSegmentSqr(point, a, b);
         }
 
-        ConnectionPick best = null;
+        double best = Double.POSITIVE_INFINITY;
         Vec3 previous = a;
         for (int i = 1; i <= SERVER_CONFIRMED_CURVE_SAMPLES; i++) {
             double t = i / (double) SERVER_CONFIRMED_CURVE_SAMPLES;
             Vec3 current = a.lerp(b, t).add(0.0D, -Math.sin(Math.PI * t) * sag, 0.0D);
-            ConnectionPick pick = pickSegment(connection, previous, current, origin, direction, maxDistance);
-            if (pick != null && (best == null
-                    || pick.distanceSqr() < best.distanceSqr()
-                    || (Math.abs(pick.distanceSqr() - best.distanceSqr()) < 1.0e-6D && pick.along() < best.along()))) {
-                best = pick;
-            }
+            best = Math.min(best, distancePointToSegmentSqr(point, previous, current));
             previous = current;
         }
-        return Optional.ofNullable(best);
+        return best;
     }
 
     private static ConnectionPick pickSegment(LeadConnection connection, Vec3 a, Vec3 b, Vec3 origin, Vec3 direction, double maxDistance) {
@@ -1229,11 +1373,43 @@ public final class SuperLeadNetwork {
         double along = segment.scale(s).add(w).dot(direction);
         along = Math.max(0.0D, Math.min(maxDistance, along));
 
+        // 重新用裁剪后的射线参数回算一次 segment 参数，保证端点/近距离情况下也稳定。
         s = direction.scale(along).subtract(w).dot(segment) / segLenSqr;
         s = Math.max(0.0D, Math.min(1.0D, s));
         Vec3 ropePoint = a.add(segment.scale(s));
         Vec3 rayPoint = origin.add(direction.scale(along));
         return new ConnectionPick(connection, ropePoint, ropePoint.distanceToSqr(rayPoint), along);
+    }
+
+    private static double distancePointToSegmentSqr(Vec3 point, Vec3 a, Vec3 b) {
+        Vec3 segment = b.subtract(a);
+        double lenSqr = segment.lengthSqr();
+        if (lenSqr < 1.0e-8D) {
+            return point.distanceToSqr(a);
+        }
+        double t = point.subtract(a).dot(segment) / lenSqr;
+        t = clamp01(t);
+        return point.distanceToSqr(a.add(segment.scale(t)));
+    }
+
+    private static double closestSegmentParameter(Vec3 a, Vec3 b, Vec3 point) {
+        Vec3 segment = b.subtract(a);
+        double lenSqr = segment.lengthSqr();
+        if (lenSqr < 1.0e-8D) {
+            return 0.0D;
+        }
+        return clamp01(point.subtract(a).dot(segment) / lenSqr);
+    }
+
+    private static boolean isFinite(Vec3 point) {
+        return point != null
+                && Double.isFinite(point.x)
+                && Double.isFinite(point.y)
+                && Double.isFinite(point.z);
+    }
+
+    private static double clamp01(double value) {
+        return value < 0.0D ? 0.0D : (value > 1.0D ? 1.0D : value);
     }
 
     private static int externalSignalAt(ServerLevel level, LeadAnchor anchor) {
@@ -1265,7 +1441,6 @@ public final class SuperLeadNetwork {
         if (connection.kind() != LeadKind.REDSTONE) {
             return;
         }
-        invalidateRedstoneIndex(level);
         notifyRedstoneAnchor(level, connection.from());
         notifyRedstoneAnchor(level, connection.to());
     }
@@ -1296,6 +1471,7 @@ public final class SuperLeadNetwork {
         cleanupFenceKnot(serverLevel, removedConnection.from());
         cleanupFenceKnot(serverLevel, removedConnection.to());
         SuperLeadPayloads.sendToDimension(serverLevel);
+        PresetServerManager.syncDimensionPresets(serverLevel);
         return true;
     }
 
@@ -1319,6 +1495,7 @@ public final class SuperLeadNetwork {
         cleanupFenceKnot(serverLevel, removedConnection.from());
         cleanupFenceKnot(serverLevel, removedConnection.to());
         SuperLeadPayloads.sendToDimension(serverLevel);
+        PresetServerManager.syncDimensionPresets(serverLevel);
         return true;
     }
 
@@ -1342,6 +1519,7 @@ public final class SuperLeadNetwork {
         dropLeads(serverLevel, anchor.attachmentPoint(level), player, count);
         cleanupFenceKnot(serverLevel, anchor);
         SuperLeadPayloads.sendToDimension(serverLevel);
+        PresetServerManager.syncDimensionPresets(serverLevel);
         return count;
     }
 
@@ -1417,4 +1595,24 @@ public final class SuperLeadNetwork {
         level.addFreshEntity(new ItemEntity(level, point.x, point.y, point.z, new ItemStack(SuperLeadItems.SUPER_LEAD.asItem(), count)));
     }
 
+    private record NetworkKey(ResourceKey<Level> dimension, boolean clientSide) {
+        static NetworkKey of(Level level) {
+            return new NetworkKey(level.dimension(), level.isClientSide());
+        }
+    }
+
+    private record PlayerKey(UUID playerId, boolean clientSide) {
+        static PlayerKey of(Player player) {
+            return new PlayerKey(player.getUUID(), player.level().isClientSide());
+        }
+    }
+
+    private record ConnectionPick(LeadConnection connection, Vec3 point, double distanceSqr, double along) {
+    }
+
+    private record EnergyEndpoint(LeadAnchor anchor, EnergyHandler handler) {
+    }
+
+    private record PendingLead(LeadAnchor anchor, LeadKind kind) {
+    }
 }

@@ -15,7 +15,8 @@ import net.minecraft.resources.Identifier;
  * tells every observer where to bend each rope visually so all clients stay in sync.
  */
 public record RopeContactPulse(List<Entry> contacts) implements CustomPacketPayload {
-    public record Entry(UUID ropeId, float t, float dx, float dy, float dz) {}
+    public record Entry(UUID ropeId, UUID playerId, float t, float dx, float dy, float dz,
+                        float pushX, float pushZ, float pushMag) {}
 
     public static final CustomPacketPayload.Type<RopeContactPulse> TYPE =
             new CustomPacketPayload.Type<>(
@@ -32,10 +33,14 @@ public record RopeContactPulse(List<Entry> contacts) implements CustomPacketPayl
         buffer.writeVarInt(contacts.size());
         for (Entry e : contacts) {
             buffer.writeUUID(e.ropeId);
+            buffer.writeUUID(e.playerId);
             buffer.writeFloat(e.t);
             buffer.writeFloat(e.dx);
             buffer.writeFloat(e.dy);
             buffer.writeFloat(e.dz);
+            buffer.writeFloat(e.pushX);
+            buffer.writeFloat(e.pushZ);
+            buffer.writeFloat(e.pushMag);
         }
     }
 
@@ -45,6 +50,10 @@ public record RopeContactPulse(List<Entry> contacts) implements CustomPacketPayl
         for (int i = 0; i < n; i++) {
             list.add(new Entry(
                     buffer.readUUID(),
+                    buffer.readUUID(),
+                    buffer.readFloat(),
+                    buffer.readFloat(),
+                    buffer.readFloat(),
                     buffer.readFloat(),
                     buffer.readFloat(),
                     buffer.readFloat(),

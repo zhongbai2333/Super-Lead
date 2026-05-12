@@ -8,8 +8,10 @@ import java.util.ArrayList;
 import java.util.List;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.minecraft.client.gui.components.AbstractSliderButton;
 import net.minecraft.client.gui.components.AbstractWidget;
 import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
 import net.minecraft.util.Mth;
@@ -25,6 +27,7 @@ public final class SuperLeadConfigScreen extends Screen {
     private static final int ROW_GAP = 4;
     private static final int RESET_BTN_W = 14;
     private static final int VALUE_TEXT_W = 76;
+    private static final int INPUT_W = 56;
     private static final int SCROLLBAR_W = 4;
 
     private final PreviewRope preview = new PreviewRope();
@@ -100,13 +103,14 @@ public final class SuperLeadConfigScreen extends Screen {
         bodyBottom = this.height - PADDING;
 
         int rowW = this.width - PADDING * 2 - SCROLLBAR_W - 2;
-        int sliderW = Math.max(120, rowW * 5 / 12);
-        int labelW = rowW - sliderW - VALUE_TEXT_W - RESET_BTN_W - 8;
+        int sliderW = Math.max(100, rowW * 4 / 12);
+        int labelW = rowW - sliderW - INPUT_W - VALUE_TEXT_W - RESET_BTN_W - 12;
         if (labelW < 60) {
             labelW = 60;
-            sliderW = rowW - labelW - VALUE_TEXT_W - RESET_BTN_W - 8;
+            sliderW = rowW - labelW - INPUT_W - VALUE_TEXT_W - RESET_BTN_W - 12;
         }
         int sliderX = PADDING + labelW + 4;
+        int inputX = sliderX + sliderW + 4;
         int resetX = PADDING + rowW - RESET_BTN_W;
 
         int baseY = startY;
@@ -116,6 +120,7 @@ public final class SuperLeadConfigScreen extends Screen {
             }
             int y = baseY - scrollOffset;
             AbstractWidget widget = buildWidget(key, sliderX, y, sliderW);
+            AbstractWidget input = buildInput(key, inputX, y, INPUT_W);
             AbstractWidget reset = Button.builder(Component.translatable("super_lead.config.reset"), button -> {
                 key.clearLocal();
                 this.rebuildWidgets();
@@ -123,11 +128,18 @@ public final class SuperLeadConfigScreen extends Screen {
             boolean visible = y >= bodyTop && y + ROW_HEIGHT <= bodyBottom;
             widget.visible = visible;
             widget.active = visible && widget.active;
+            if (input != null) {
+                input.visible = visible;
+                input.active = visible && input.active;
+            }
             reset.visible = visible;
             reset.active = visible;
             addRenderableWidget(widget);
+            if (input != null) {
+                addRenderableWidget(input);
+            }
             addRenderableWidget(reset);
-            rows.add(new ConfigRow(widget, reset, key, baseY));
+            rows.add(new ConfigRow(widget, input, reset, key, baseY));
             baseY += ROW_HEIGHT + ROW_GAP;
         }
         contentHeight = Math.max(0, baseY - startY);
@@ -172,6 +184,29 @@ public final class SuperLeadConfigScreen extends Screen {
             boolKey.setLocalFromString(Boolean.toString(next));
             button.setMessage(boolLabel(next));
         }).bounds(x, y, width, WIDGET_H).build();
+    }
+
+    @SuppressWarnings("unchecked")
+    private AbstractWidget buildInput(TuningKey<?> key, int x, int y, int width) {
+        if (!(key.type instanceof DoubleTuningType)) {
+            return null;
+        }
+        TuningKey<Double> doubleKey = (TuningKey<Double>) key;
+        EditBox box = new EditBox(this.font, x, y, width, WIDGET_H,
+                Component.translatableWithFallback("super_lead.config.value", "Value"));
+        box.setMaxLength(16);
+        box.setValue(doubleKey.formatEffective());
+        box.setResponder(raw -> {
+            boolean ok = isUnboundedInputKey(doubleKey)
+                    ? doubleKey.setLocalUncheckedFromString(raw)
+                    : doubleKey.setLocalFromString(raw);
+            box.setTextColor(ok ? 0xFFE8E8E8 : 0xFFFF6666);
+        });
+        return box;
+    }
+
+    private static boolean isUnboundedInputKey(TuningKey<Double> key) {
+        return key == ClientTuning.SLACK_LOOSE || key == ClientTuning.SLACK_TIGHT;
     }
 
     private static Component boolLabel(boolean value) {
@@ -228,7 +263,9 @@ public final class SuperLeadConfigScreen extends Screen {
             String value = key.formatEffective();
             int color = key.isPresetActive() ? 0xFFFFAAFF
                     : key.isLocalOverridden() ? 0xFFFFD24F : 0xFFAAAAAA;
-            int valueX = row.reset().getX() - 4 - this.font.width(value);
+            int valueX = row.input() != null
+                    ? row.input().getX() - 4 - this.font.width(value)
+                    : row.reset().getX() - 4 - this.font.width(value);
             graphics.text(this.font, value, valueX, rowY, color);
 
             if (key.description != null && !key.description.isEmpty()) {
@@ -293,5 +330,69 @@ public final class SuperLeadConfigScreen extends Screen {
             width += nextWidth;
         }
         return out.append(ellipsis).toString();
+    }
+
+    private record ConfigRow(AbstractWidget widget, AbstractWidget input,
+            AbstractWidget reset, TuningKey<?> key, int baseY) {}
+
+    private static final class DoubleTuningSlider extends AbstractSliderButton {
+        private final TuningKey<Double> key;
+        private final DoubleTuningType type;
+        private final boolean log;
+
+        private DoubleTuningSlider(int x, int y, int width, int height,
+                TuningKey<Double> key, DoubleTuningType type, boolean log, double initial) {
+            super(x, y, width, height, Component.empty(), initial);
+            this.key = key;
+            this.type = type;
+            this.log = log;
+            updateMessage();
+        }
+
+        @Override
+        protected void updateMessage() {
+            this.setMessage(Component.empty());
+        }
+
+        @Override
+        protected void applyValue() {
+            double next = sliderToValue(this.value, type.min(), type.max(), log);
+            next = Math.round(next * 1.0e6D) / 1.0e6D;
+            key.setLocalFromString(Double.toString(next));
+        }
+
+        private static double sliderToValue(double slider, double min, double max, boolean log) {
+            if (log) {
+                double lo = Math.log(min);
+                double hi = Math.log(max);
+                return Math.exp(lo + (hi - lo) * slider);
+            }
+            return min + (max - min) * slider;
+        }
+    }
+
+    private static final class IntTuningSlider extends AbstractSliderButton {
+        private final TuningKey<Integer> key;
+        private final IntTuningType type;
+
+        private IntTuningSlider(int x, int y, int width, int height,
+                TuningKey<Integer> key, IntTuningType type, double initial) {
+            super(x, y, width, height, Component.empty(), initial);
+            this.key = key;
+            this.type = type;
+            updateMessage();
+        }
+
+        @Override
+        protected void updateMessage() {
+            this.setMessage(Component.empty());
+        }
+
+        @Override
+        protected void applyValue() {
+            int span = type.max() - type.min();
+            int next = type.min() + (int) Math.round(this.value * span);
+            key.setLocalFromString(Integer.toString(next));
+        }
     }
 }
