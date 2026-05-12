@@ -10,7 +10,7 @@ public final class TuningKey<T> {
     public final String description;
 
     private volatile T localValue;
-    private volatile T presetValue;    // null means no active preset override.
+    private volatile T presetValue; // null means no active preset override.
     private volatile T effective;
 
     TuningKey(String id, String group, TuningType<T> type, T defaultValue, String description) {
@@ -22,17 +22,36 @@ public final class TuningKey<T> {
         this.effective = defaultValue;
     }
 
-    public T get() { return effective; }
-    public T getDefault() { return defaultValue; }
-    public T getLocalOrDefault() { return localValue != null ? localValue : defaultValue; }
-    public T getPresetOrNull() { return presetValue; }
-    public boolean isLocalOverridden() { return localValue != null; }
-    public boolean isPresetActive() { return presetValue != null; }
+    public T get() {
+        return effective;
+    }
+
+    public T getDefault() {
+        return defaultValue;
+    }
+
+    public T getLocalOrDefault() {
+        return localValue != null ? localValue : defaultValue;
+    }
+
+    public T getPresetOrNull() {
+        return presetValue;
+    }
+
+    public boolean isLocalOverridden() {
+        return localValue != null;
+    }
+
+    public boolean isPresetActive() {
+        return presetValue != null;
+    }
 
     public boolean setLocalFromString(String raw) {
         T v = parseOrNull(raw);
-        if (v == null) return false;
-        if (!type.validate(v)) return false;
+        if (v == null)
+            return false;
+        if (!type.validate(v))
+            return false;
         T old = effective;
         this.localValue = v;
         recomputeAndFire(old);
@@ -41,9 +60,12 @@ public final class TuningKey<T> {
 
     public boolean setLocalUncheckedFromString(String raw) {
         T v = parseOrNull(raw);
-        if (v == null) return false;
-        if (v instanceof Double d && (!Double.isFinite(d))) return false;
-        if (v instanceof Float f && (!Float.isFinite(f))) return false;
+        if (v == null)
+            return false;
+        if (v instanceof Double d && (!Double.isFinite(d)))
+            return false;
+        if (v instanceof Float f && (!Float.isFinite(f)))
+            return false;
         T old = effective;
         this.localValue = v;
         recomputeAndFire(old);
@@ -51,7 +73,8 @@ public final class TuningKey<T> {
     }
 
     public void clearLocal() {
-        if (localValue == null) return;
+        if (localValue == null)
+            return;
         T old = effective;
         this.localValue = null;
         recomputeAndFire(old);
@@ -59,8 +82,10 @@ public final class TuningKey<T> {
 
     public boolean setPresetFromString(String raw) {
         T v = parseOrNull(raw);
-        if (v == null) return false;
-        if (!type.validate(v)) return false;
+        if (v == null)
+            return false;
+        if (!type.validate(v))
+            return false;
         T old = effective;
         this.presetValue = v;
         recomputeAndFire(old);
@@ -69,9 +94,12 @@ public final class TuningKey<T> {
 
     public boolean setPresetUncheckedFromString(String raw) {
         T v = parseOrNull(raw);
-        if (v == null) return false;
-        if (v instanceof Double d && (!Double.isFinite(d))) return false;
-        if (v instanceof Float f && (!Float.isFinite(f))) return false;
+        if (v == null)
+            return false;
+        if (v instanceof Double d && (!Double.isFinite(d)))
+            return false;
+        if (v instanceof Float f && (!Float.isFinite(f)))
+            return false;
         T old = effective;
         this.presetValue = v;
         recomputeAndFire(old);
@@ -79,7 +107,8 @@ public final class TuningKey<T> {
     }
 
     public void clearPreset() {
-        if (presetValue == null) return;
+        if (presetValue == null)
+            return;
         T old = effective;
         this.presetValue = null;
         recomputeAndFire(old);
@@ -101,6 +130,11 @@ public final class TuningKey<T> {
         }
     }
 
-    public String formatEffective() { return type.format(effective); }
-    public String formatDefault() { return type.format(defaultValue); }
+    public String formatEffective() {
+        return type.format(effective);
+    }
+
+    public String formatDefault() {
+        return type.format(defaultValue);
+    }
 }

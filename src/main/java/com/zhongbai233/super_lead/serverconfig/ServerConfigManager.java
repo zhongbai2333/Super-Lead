@@ -7,22 +7,24 @@ import net.minecraft.server.permissions.PermissionLevel;
 import net.neoforged.neoforge.network.PacketDistributor;
 
 public final class ServerConfigManager {
-    private ServerConfigManager() {}
+    private ServerConfigManager() {
+    }
 
-    private static final Permission.HasCommandLevel OP =
-            new Permission.HasCommandLevel(PermissionLevel.GAMEMASTERS);
+    private static final Permission.HasCommandLevel OP = new Permission.HasCommandLevel(PermissionLevel.GAMEMASTERS);
 
     public static boolean isOp(ServerPlayer player) {
         return player.permissions().hasPermission(OP);
     }
 
     public static void sendSnapshot(ServerPlayer player) {
-        if (!isOp(player)) return;
+        if (!isOp(player))
+            return;
         PacketDistributor.sendToPlayer(player, new ServerConfigSnapshot(Config.snapshot()));
     }
 
     public static void handleSet(ServerPlayer player, ServerConfigSet payload) {
-        if (!isOp(player)) return;
+        if (!isOp(player))
+            return;
         if (Config.applyRuntime(payload.key(), payload.value())) {
             sendSnapshot(player);
         }

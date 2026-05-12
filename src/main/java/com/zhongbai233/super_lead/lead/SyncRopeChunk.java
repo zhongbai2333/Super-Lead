@@ -10,11 +10,10 @@ import net.minecraft.resources.Identifier;
 import net.minecraft.world.level.ChunkPos;
 
 public record SyncRopeChunk(ChunkPos chunk, List<LeadConnection> connections) implements CustomPacketPayload {
-    public static final CustomPacketPayload.Type<SyncRopeChunk> TYPE =
-            new CustomPacketPayload.Type<>(
-                    Identifier.fromNamespaceAndPath(Super_lead.MODID, "sync_rope_chunk"));
-    public static final StreamCodec<RegistryFriendlyByteBuf, SyncRopeChunk> STREAM_CODEC =
-            CustomPacketPayload.codec(SyncRopeChunk::write, SyncRopeChunk::read);
+    public static final CustomPacketPayload.Type<SyncRopeChunk> TYPE = new CustomPacketPayload.Type<>(
+            Identifier.fromNamespaceAndPath(Super_lead.MODID, "sync_rope_chunk"));
+    public static final StreamCodec<RegistryFriendlyByteBuf, SyncRopeChunk> STREAM_CODEC = CustomPacketPayload
+            .codec(SyncRopeChunk::write, SyncRopeChunk::read);
 
     public SyncRopeChunk {
         connections = List.copyOf(connections);

@@ -6,11 +6,13 @@ import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 
 final class RopeContactGeometry {
-    private RopeContactGeometry() {}
+    private RopeContactGeometry() {
+    }
 
     static boolean finite(float... values) {
         for (float value : values) {
-            if (!Float.isFinite(value)) return false;
+            if (!Float.isFinite(value))
+                return false;
         }
         return true;
     }
@@ -22,9 +24,12 @@ final class RopeContactGeometry {
             return closestPointOnSegment(a, b, p, out, 0.0D, 0.0D, 1.0D);
         }
 
-        // Client ropes start from a catenary-like sag and then settle under a higher precision
-        // XPBD solver. Server validation should check a plausible envelope, not the straight
-        // endpoint chord; otherwise long ropes lose all mid-span collision because the client
+        // Client ropes start from a catenary-like sag and then settle under a higher
+        // precision
+        // XPBD solver. Server validation should check a plausible envelope, not the
+        // straight
+        // endpoint chord; otherwise long ropes lose all mid-span collision because the
+        // client
         // rope is visibly lower than the server's cheap model.
         double slackExtra = Math.max(0.0D, tuning.slackTight() - 1.0D);
         double sag = Math.min(1.35D, dist * (0.055D + slackExtra * 2.0D));
@@ -105,34 +110,45 @@ final class RopeContactGeometry {
     static PhysicsZone findZoneForRope(List<PhysicsZone> zones, Vec3 a, Vec3 b) {
         Vec3 mid = a.add(b).scale(0.5D);
         for (PhysicsZone zone : zones) {
-            if (zone.contains(mid.x, mid.y, mid.z)) return zone;
+            if (zone.contains(mid.x, mid.y, mid.z))
+                return zone;
         }
         for (PhysicsZone zone : zones) {
-            if (segmentIntersects(zone.area(), a, b)) return zone;
+            if (segmentIntersects(zone.area(), a, b))
+                return zone;
         }
         return null;
     }
 
     static boolean segmentIntersects(AABB box, Vec3 a, Vec3 b) {
-        if (contains(box, a) || contains(box, b)) return true;
+        if (contains(box, a) || contains(box, b))
+            return true;
         double t0 = 0.0D;
         double t1 = 1.0D;
-        double[] lo = {box.minX, box.minY, box.minZ};
-        double[] hi = {box.maxX, box.maxY, box.maxZ};
-        double[] p = {a.x, a.y, a.z};
-        double[] d = {b.x - a.x, b.y - a.y, b.z - a.z};
+        double[] lo = { box.minX, box.minY, box.minZ };
+        double[] hi = { box.maxX, box.maxY, box.maxZ };
+        double[] p = { a.x, a.y, a.z };
+        double[] d = { b.x - a.x, b.y - a.y, b.z - a.z };
         for (int axis = 0; axis < 3; axis++) {
             if (Math.abs(d[axis]) < 1.0e-9D) {
-                if (p[axis] < lo[axis] || p[axis] >= hi[axis]) return false;
+                if (p[axis] < lo[axis] || p[axis] >= hi[axis])
+                    return false;
                 continue;
             }
             double inv = 1.0D / d[axis];
             double ta = (lo[axis] - p[axis]) * inv;
             double tb = (hi[axis] - p[axis]) * inv;
-            if (ta > tb) { double tmp = ta; ta = tb; tb = tmp; }
-            if (ta > t0) t0 = ta;
-            if (tb < t1) t1 = tb;
-            if (t0 > t1) return false;
+            if (ta > tb) {
+                double tmp = ta;
+                ta = tb;
+                tb = tmp;
+            }
+            if (ta > t0)
+                t0 = ta;
+            if (tb < t1)
+                t1 = tb;
+            if (t0 > t1)
+                return false;
         }
         return t1 >= 0.0D && t0 <= 1.0D;
     }

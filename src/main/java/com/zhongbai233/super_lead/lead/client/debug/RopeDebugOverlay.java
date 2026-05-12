@@ -21,7 +21,8 @@ public final class RopeDebugOverlay implements DebugScreenEntry {
     private static final Identifier ENTRY_ID = Identifier.fromNamespaceAndPath(Super_lead.MODID, "stats");
     private static final Identifier GROUP = Identifier.fromNamespaceAndPath(Super_lead.MODID, "stats");
 
-    private RopeDebugOverlay() {}
+    private RopeDebugOverlay() {
+    }
 
     public static void register(IEventBus modBus) {
         modBus.addListener(RopeDebugOverlay::onRegister);
@@ -34,33 +35,33 @@ public final class RopeDebugOverlay implements DebugScreenEntry {
 
     @Override
     public void display(DebugScreenDisplayer displayer,
-                        @Nullable Level serverOrClientLevel,
-                        @Nullable LevelChunk clientChunk,
-                        @Nullable LevelChunk serverChunk) {
+            @Nullable Level serverOrClientLevel,
+            @Nullable LevelChunk clientChunk,
+            @Nullable LevelChunk serverChunk) {
         displayer.addToGroup(GROUP, List.of(
                 "[SuperLead] conns=" + RopeDebugStats.totalConnections
                         + " sim=" + RopeDebugStats.simEntries
                         + " render=" + RopeDebugStats.renderEntries,
                 "[SuperLead] dyn=" + RopeDebugStats.dynamicJobs
-                    + " claimed=" + RopeDebugStats.chunkMeshClaimed
-                    + " elig=" + RopeDebugStats.chunkMeshEligible
-                    + " wait=" + RopeDebugStats.chunkMeshWaitingQuiet,
+                        + " claimed=" + RopeDebugStats.chunkMeshClaimed
+                        + " elig=" + RopeDebugStats.chunkMeshEligible
+                        + " wait=" + RopeDebugStats.chunkMeshWaitingQuiet,
                 "[SuperLead] mesh src sim=" + RopeDebugStats.chunkMeshClaimedFromSim
-                    + " anchor=" + RopeDebugStats.chunkMeshClaimedAnchorBake
-                    + " ready " + RopeDebugStats.chunkMeshReadyFromSim + "/"
-                    + RopeDebugStats.chunkMeshReadyAnchorBake
-                    + " miss=" + RopeDebugStats.chunkMeshMissingAnchors,
+                        + " anchor=" + RopeDebugStats.chunkMeshClaimedAnchorBake
+                        + " ready " + RopeDebugStats.chunkMeshReadyFromSim + "/"
+                        + RopeDebugStats.chunkMeshReadyAnchorBake
+                        + " miss=" + RopeDebugStats.chunkMeshMissingAnchors,
                 "[SuperLead] bake " + RopeDebugStats.bakeCacheHits + "h/"
-                    + RopeDebugStats.bakeCacheMisses + "m"
-                    + " inelig=" + RopeDebugStats.chunkMeshIneligible
-                    + " atts=" + RopeDebugStats.attachmentsTotal
-                    + " sims=" + RopeDebugStats.simCount,
+                        + RopeDebugStats.bakeCacheMisses + "m"
+                        + " inelig=" + RopeDebugStats.chunkMeshIneligible
+                        + " atts=" + RopeDebugStats.attachmentsTotal
+                        + " sims=" + RopeDebugStats.simCount,
                 "[SuperLead] nodes=" + RopeDebugStats.totalRenderNodes
                         + " (dyn=" + RopeDebugStats.dynamicNodesTotal
                         + " mesh=" + RopeDebugStats.chunkMeshNodesTotal + ")"
                         + " verts=" + RopeDebugStats.verticesEmitted,
                 "[SuperLead] meshSec=" + RopeDebugStats.chunkMeshSections
-                    + " snap=" + RopeDebugStats.chunkMeshSnapshots,
+                        + " snap=" + RopeDebugStats.chunkMeshSnapshots,
                 "[SuperLead] zones=" + PhysicsZonesClient.zones().size()
                         + " overrides=" + zoneOverrideCount()
                         + " zoneEpoch=" + PhysicsZonesClient.epoch(),

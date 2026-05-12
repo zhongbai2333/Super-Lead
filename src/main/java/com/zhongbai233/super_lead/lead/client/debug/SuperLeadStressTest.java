@@ -63,7 +63,8 @@ public final class SuperLeadStressTest {
     private static int lastBakeMisses;
     private static int lastVerticesEmitted;
 
-    private SuperLeadStressTest() {}
+    private SuperLeadStressTest() {
+    }
 
     @SubscribeEvent
     public static void onRegisterClientCommands(RegisterClientCommandsEvent event) {
@@ -78,7 +79,8 @@ public final class SuperLeadStressTest {
 
     @SubscribeEvent
     public static void onSubmitCustomGeometry(SubmitCustomGeometryEvent event) {
-        if (ROPES.isEmpty()) return;
+        if (ROPES.isEmpty())
+            return;
         Minecraft minecraft = Minecraft.getInstance();
         ClientLevel level = minecraft.level;
         if (level == null) {
@@ -109,8 +111,10 @@ public final class SuperLeadStressTest {
                 }
                 lastPhysicsNanos = System.nanoTime() - start;
             } else {
-                // Static mode is intentionally render-only. This isolates the FPS/vertex cost from
-                // the XPBD solver so static and moving results are meaningful instead of identical.
+                // Static mode is intentionally render-only. This isolates the FPS/vertex cost
+                // from
+                // the XPBD solver so static and moving results are meaningful instead of
+                // identical.
                 lastPhysicsNanos = 0L;
                 lastNeighborCandidates = 0;
                 lastNeighborLinks = 0;
@@ -124,10 +128,11 @@ public final class SuperLeadStressTest {
         java.util.List<RopeJob> jobs = new java.util.ArrayList<>(ROPES.size());
         for (StressRope rope : ROPES) {
             // Pipeline parity: when chunk-mesh has claimed this rope, the section mesh
-            if (chunkReg.isClaimed(rope.id())) continue;
+            if (chunkReg.isClaimed(rope.id()))
+                continue;
             Vec3 a = rope.a(tick);
             Vec3 b = rope.b(tick);
-                AABB renderBounds = rope.sim().renderBounds(partialTick).inflate(FRUSTUM_BOUNDS_MARGIN);
+            AABB renderBounds = rope.sim().renderBounds(partialTick).inflate(FRUSTUM_BOUNDS_MARGIN);
             if (!RopeVisibility.shouldRender(level, minecraft.player, frustum, cameraPos,
                     renderBounds, rope.sim(), partialTick)) {
                 culled++;
@@ -144,10 +149,14 @@ public final class SuperLeadStressTest {
                     LeashBuilder.NO_HIGHLIGHT, LeadKind.NORMAL, false, 0, null, 0));
             vertices += estimateVertices(rope.sim(), cameraPos);
         }
-        // Snapshot stats BEFORE reset+flush. The flush below only enqueues a deferred lambda;
-        // the actual renderJob calls (which increment cacheHits/Misses/verticesEmitted) run
-        // later in the render pipeline. Reading the counters right after flush() always sees
-        // the just-cleared values. Instead we report what the previous frame's lambda left
+        // Snapshot stats BEFORE reset+flush. The flush below only enqueues a deferred
+        // lambda;
+        // the actual renderJob calls (which increment cacheHits/Misses/verticesEmitted)
+        // run
+        // later in the render pipeline. Reading the counters right after flush() always
+        // sees
+        // the just-cleared values. Instead we report what the previous frame's lambda
+        // left
         // behind, then reset for this frame.
         lastBakeHits = LeashBuilder.cacheHits;
         lastBakeMisses = LeashBuilder.cacheMisses;
@@ -186,7 +195,8 @@ public final class SuperLeadStressTest {
                                                         DoubleArgumentType.getDouble(ctx, "spacing"),
                                                         IntegerArgumentType.getInteger(ctx, "columns"),
                                                         DEFAULT_AMPLITUDE, DEFAULT_SPEED))
-                                                .then(Commands.argument("amplitude", DoubleArgumentType.doubleArg(0.0D, 8.0D))
+                                                .then(Commands
+                                                        .argument("amplitude", DoubleArgumentType.doubleArg(0.0D, 8.0D))
                                                         .executes(ctx -> start(ctx, moving,
                                                                 IntegerArgumentType.getInteger(ctx, "count"),
                                                                 DoubleArgumentType.getDouble(ctx, "length"),
@@ -194,14 +204,17 @@ public final class SuperLeadStressTest {
                                                                 IntegerArgumentType.getInteger(ctx, "columns"),
                                                                 DoubleArgumentType.getDouble(ctx, "amplitude"),
                                                                 DEFAULT_SPEED))
-                                                        .then(Commands.argument("speed", DoubleArgumentType.doubleArg(0.0D, 4.0D))
+                                                        .then(Commands
+                                                                .argument("speed",
+                                                                        DoubleArgumentType.doubleArg(0.0D, 4.0D))
                                                                 .executes(ctx -> start(ctx, moving,
                                                                         IntegerArgumentType.getInteger(ctx, "count"),
                                                                         DoubleArgumentType.getDouble(ctx, "length"),
                                                                         DoubleArgumentType.getDouble(ctx, "spacing"),
                                                                         IntegerArgumentType.getInteger(ctx, "columns"),
                                                                         DoubleArgumentType.getDouble(ctx, "amplitude"),
-                                                                        DoubleArgumentType.getDouble(ctx, "speed")))))))));
+                                                                        DoubleArgumentType.getDouble(ctx,
+                                                                                "speed")))))))));
     }
 
     private static int start(CommandContext<CommandSourceStack> ctx, boolean moving, int count,
@@ -222,8 +235,10 @@ public final class SuperLeadStressTest {
         double ux = up.x(), uy = up.y(), uz = up.z();
         int cols = columns > 0 ? columns : Math.max(1, (int) Math.ceil(Math.sqrt(count)));
         int rows = (count + cols - 1) / cols;
-        // Ropes run along camera-right; the grid spreads along camera-forward and camera-up so
-        // adjacent ropes are parallel lanes and the test measures normal render/solver cost.
+        // Ropes run along camera-right; the grid spreads along camera-forward and
+        // camera-up so
+        // adjacent ropes are parallel lanes and the test measures normal render/solver
+        // cost.
         Vec3 origin = camera.position().add(
                 fx * (SPAWN_DISTANCE + (cols - 1) * spacing * 0.5D),
                 fy * (SPAWN_DISTANCE + (cols - 1) * spacing * 0.5D),
@@ -258,7 +273,7 @@ public final class SuperLeadStressTest {
         lastNeighborLinks = 0;
 
         source.sendSuccess(() -> Component.literal(String.format(
-            "Super Lead stress: spawned %,d %s ropes, length=%.2f, spacing=%.2f, columns=%d. Static is render-only; moving measures solver cost. Use status or stop.",
+                "Super Lead stress: spawned %,d %s ropes, length=%.2f, spacing=%.2f, columns=%d. Static is render-only; moving measures solver cost. Use status or stop.",
                 count, moving ? "moving" : "static", length, spacing, cols)), false);
         return count;
     }
@@ -266,18 +281,19 @@ public final class SuperLeadStressTest {
     private static int stop(CommandSourceStack source) {
         int count = ROPES.size();
         clear();
-        source.sendSuccess(() -> Component.literal("Super Lead stress: cleared " + count + " client-only ropes."), false);
+        source.sendSuccess(() -> Component.literal("Super Lead stress: cleared " + count + " client-only ropes."),
+                false);
         return count;
     }
 
     private static int status(CommandSourceStack source) {
         double physicsMs = lastPhysicsNanos / 1_000_000.0D;
         source.sendSuccess(() -> Component.literal(String.format(
-            "Super Lead stress: %,d ropes, mode=%s, last physics=%.3f ms/tick, visible=%d, culled=%d, neighbor candidates=%,d, neighbor links=%,d, est verts=%,d, emitted=%,d, bake hits=%,d, misses=%,d.",
-            ROPES.size(), movingMode ? "moving" : "static", physicsMs,
-            lastVisibleRopes, lastCulledRopes,
-            lastNeighborCandidates, lastNeighborLinks, lastEstimatedVertices,
-            lastVerticesEmitted, lastBakeHits, lastBakeMisses)), false);
+                "Super Lead stress: %,d ropes, mode=%s, last physics=%.3f ms/tick, visible=%d, culled=%d, neighbor candidates=%,d, neighbor links=%,d, est verts=%,d, emitted=%,d, bake hits=%,d, misses=%,d.",
+                ROPES.size(), movingMode ? "moving" : "static", physicsMs,
+                lastVisibleRopes, lastCulledRopes,
+                lastNeighborCandidates, lastNeighborLinks, lastEstimatedVertices,
+                lastVerticesEmitted, lastBakeHits, lastBakeMisses)), false);
         return ROPES.size();
     }
 
@@ -338,9 +354,11 @@ public final class SuperLeadStressTest {
                 for (int cy = minY; cy <= maxY; cy++) {
                     for (int cz = minZ; cz <= maxZ; cz++) {
                         List<Integer> candidates = buckets.get(cellKey(cx, cy, cz));
-                        if (candidates == null) continue;
+                        if (candidates == null)
+                            continue;
                         for (int idx : candidates) {
-                            if (idx == i || !seen.add(idx)) continue;
+                            if (idx == i || !seen.add(idx))
+                                continue;
                             StressRope other = ROPES.get(idx);
                             AABB otherBounds = other.bounds(tick);
                             if (query.intersects(otherBounds)) {

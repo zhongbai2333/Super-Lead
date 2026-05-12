@@ -6,7 +6,8 @@ import java.util.Map;
 import net.minecraft.network.RegistryFriendlyByteBuf;
 
 public final class PresetPayloadCodecs {
-    private PresetPayloadCodecs() {}
+    private PresetPayloadCodecs() {
+    }
 
     public static void writeStringMap(RegistryFriendlyByteBuf buf, Map<String, String> map) {
         buf.writeVarInt(map.size());

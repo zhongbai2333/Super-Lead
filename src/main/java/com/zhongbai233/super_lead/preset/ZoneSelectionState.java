@@ -9,18 +9,20 @@ import net.minecraft.resources.Identifier;
 
 /** S→C: current per-player zone selection tool state. */
 public record ZoneSelectionState(boolean active, boolean hasFirst, BlockPos first) implements CustomPacketPayload {
-    public static final CustomPacketPayload.Type<ZoneSelectionState> TYPE =
-            new CustomPacketPayload.Type<>(
-                    Identifier.fromNamespaceAndPath(Super_lead.MODID, "zone_selection_state"));
-    public static final StreamCodec<RegistryFriendlyByteBuf, ZoneSelectionState> STREAM_CODEC =
-            CustomPacketPayload.codec(ZoneSelectionState::write, ZoneSelectionState::read);
+    public static final CustomPacketPayload.Type<ZoneSelectionState> TYPE = new CustomPacketPayload.Type<>(
+            Identifier.fromNamespaceAndPath(Super_lead.MODID, "zone_selection_state"));
+    public static final StreamCodec<RegistryFriendlyByteBuf, ZoneSelectionState> STREAM_CODEC = CustomPacketPayload
+            .codec(ZoneSelectionState::write, ZoneSelectionState::read);
 
     public ZoneSelectionState {
-        if (!hasFirst) first = BlockPos.ZERO;
+        if (!hasFirst)
+            first = BlockPos.ZERO;
     }
 
     @Override
-    public Type<? extends CustomPacketPayload> type() { return TYPE; }
+    public Type<? extends CustomPacketPayload> type() {
+        return TYPE;
+    }
 
     private void write(RegistryFriendlyByteBuf buffer) {
         buffer.writeBoolean(active);

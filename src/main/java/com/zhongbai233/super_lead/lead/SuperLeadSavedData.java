@@ -24,13 +24,13 @@ import net.minecraft.world.level.saveddata.SavedDataType;
 
 public final class SuperLeadSavedData extends SavedData {
     private static final Codec<RopeChunkBucket> BUCKET_CODEC = RecordCodecBuilder.create(instance -> instance.group(
-                    Codec.LONG.fieldOf("chunk").forGetter(RopeChunkBucket::chunkKey),
-                    LeadConnection.CODEC.listOf().optionalFieldOf("owned", List.of()).forGetter(RopeChunkBucket::owned),
-                    UUIDUtil.CODEC.listOf().optionalFieldOf("refs", List.of()).forGetter(RopeChunkBucket::refs))
+            Codec.LONG.fieldOf("chunk").forGetter(RopeChunkBucket::chunkKey),
+            LeadConnection.CODEC.listOf().optionalFieldOf("owned", List.of()).forGetter(RopeChunkBucket::owned),
+            UUIDUtil.CODEC.listOf().optionalFieldOf("refs", List.of()).forGetter(RopeChunkBucket::refs))
             .apply(instance, SuperLeadSavedData::ropeChunkBucket));
 
     public static final Codec<SuperLeadSavedData> CODEC = RecordCodecBuilder.create(instance -> instance.group(
-                    BUCKET_CODEC.listOf().optionalFieldOf("chunks", List.of()).forGetter(SuperLeadSavedData::bucketRecords))
+            BUCKET_CODEC.listOf().optionalFieldOf("chunks", List.of()).forGetter(SuperLeadSavedData::bucketRecords))
             .apply(instance, SuperLeadSavedData::new));
 
     public static final SavedDataType<SuperLeadSavedData> TYPE = new SavedDataType<>(
@@ -47,7 +47,8 @@ public final class SuperLeadSavedData extends SavedData {
     private final Map<Long, Set<UUID>> refsByChunk = new HashMap<>();
     private final Set<Long> dirtyChunkKeys = new LinkedHashSet<>();
 
-    public SuperLeadSavedData() {}
+    public SuperLeadSavedData() {
+    }
 
     public SuperLeadSavedData(List<RopeChunkBucket> buckets) {
         for (RopeChunkBucket bucket : buckets) {
@@ -65,7 +66,8 @@ public final class SuperLeadSavedData extends SavedData {
             long chunk = bucket.chunkKey();
             for (UUID id : bucket.refs()) {
                 StoredRope stored = byId.get(id);
-                if (stored == null) continue;
+                if (stored == null)
+                    continue;
                 stored.coveredChunks.add(chunk);
                 if (chunk != stored.ownerChunk) {
                     refsByChunk.computeIfAbsent(chunk, key -> new LinkedHashSet<>()).add(id);
@@ -126,7 +128,8 @@ public final class SuperLeadSavedData extends SavedData {
     }
 
     public Set<Long> consumeDirtyChunkKeys() {
-        if (dirtyChunkKeys.isEmpty()) return Set.of();
+        if (dirtyChunkKeys.isEmpty())
+            return Set.of();
         LinkedHashSet<Long> out = new LinkedHashSet<>(dirtyChunkKeys);
         dirtyChunkKeys.clear();
         return out;
@@ -191,7 +194,8 @@ public final class SuperLeadSavedData extends SavedData {
         owned.add(connection);
 
         for (long chunk : covered) {
-            if (chunk == owner) continue;
+            if (chunk == owner)
+                continue;
             refsByChunk.computeIfAbsent(chunk, key -> new LinkedHashSet<>()).add(connection.id());
         }
         markDirtyChunks(covered);

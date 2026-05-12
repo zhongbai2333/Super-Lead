@@ -13,25 +13,35 @@ abstract class RopeSimulationStepper extends RopeSimulationContactConstraints {
     // ============================================================================================
     // Main entry: legacy single-rope wrapper + full driver call
     // ============================================================================================
-    /** Backwards-compatible single-rope step (no neighbours, no force fields, no entities). */
+    /**
+     * Backwards-compatible single-rope step (no neighbours, no force fields, no
+     * entities).
+     */
     public boolean stepUpTo(Level level, Vec3 a, Vec3 b, long currentTick) {
         return step(level, a, b, currentTick, List.of(), List.of(), List.of());
     }
 
     /**
-     * Main-thread preparation for an upcoming parallel {@link #step}. Reads {@code level},
-     * pre-fills {@link #blockCache} for the rope's bbox, refreshes own bounds and segment
-     * AABBs, and snapshots {@code terrainNearby} / {@code blockHashChanged}. Once every sim
+     * Main-thread preparation for an upcoming parallel {@link #step}. Reads
+     * {@code level},
+     * pre-fills {@link #blockCache} for the rope's bbox, refreshes own bounds and
+     * segment
+     * AABBs, and snapshots {@code terrainNearby} / {@code blockHashChanged}. Once
+     * every sim
      * scheduled for this tick has been prepared, the driver flips
-     * {@link #beginParallelPhase()} and submits {@code step} calls to a worker pool. Workers
+     * {@link #beginParallelPhase()} and submits {@code step} calls to a worker
+     * pool. Workers
      * never touch {@code level} thereafter.
      */
     public void preparePhysicsParallel(Level level, Vec3 a, Vec3 b, long currentTick) {
-        // 1. Refresh self bounds + segment AABBs (workers read these on neighbours, write on self).
+        // 1. Refresh self bounds + segment AABBs (workers read these on neighbours,
+        // write on self).
         updateBounds();
         refreshSegmentAabbs();
-        // 1b. Take a complete tick-start snapshot of node positions so neighbour workers see a
-        //     consistent view that does not change while we mutate our own x[]/y[]/z[] in step.
+        // 1b. Take a complete tick-start snapshot of node positions so neighbour
+        // workers see a
+        // consistent view that does not change while we mutate our own x[]/y[]/z[] in
+        // step.
         if (snapX == null || snapX.length < nodes) {
             snapX = new double[nodes];
             snapY = new double[nodes];
@@ -40,13 +50,17 @@ abstract class RopeSimulationStepper extends RopeSimulationContactConstraints {
         System.arraycopy(x, 0, snapX, 0, nodes);
         System.arraycopy(y, 0, snapY, 0, nodes);
         System.arraycopy(z, 0, snapZ, 0, nodes);
-        // 2. terrainNearby: side-effect resets blockCache and fills it for the proximity bbox.
+        // 2. terrainNearby: side-effect resets blockCache and fills it for the
+        // proximity bbox.
         cachedTerrainNearby = hasTerrainNearby(level, a, b);
-        // 3. Snapshot block-hash diff for this tick (mutates lastBlockHash exactly once).
+        // 3. Snapshot block-hash diff for this tick (mutates lastBlockHash exactly
+        // once).
         cachedBlockChanged = cachedTerrainNearby && !blockHashUnchanged(level, currentTick);
-        // 4. Re-prefetch with a generous margin covering every level-touching query inside step
-        //    (segment-vs-terrain capsule, node MTV, sweep test). Without this the cache only
-        //    holds the proximity-only bbox from hasTerrainNearby which is too small.
+        // 4. Re-prefetch with a generous margin covering every level-touching query
+        // inside step
+        // (segment-vs-terrain capsule, node MTV, sweep test). Without this the cache
+        // only
+        // holds the proximity-only bbox from hasTerrainNearby which is too small.
         if (cachedTerrainNearby) {
             double r = TERRAIN_RADIUS + COLLISION_EPS + TERRAIN_PROXIMITY_MARGIN + 1.0D;
             int bx0 = (int) Math.floor(Math.min(Math.min(minX, a.x), b.x) - r) - 1;
@@ -61,8 +75,10 @@ abstract class RopeSimulationStepper extends RopeSimulationContactConstraints {
     }
 
     /**
-     * Advance one logical tick. Driver supplies neighbours (already pre-filtered by bounds),
-     * external force fields, and a list of nearby entity bounding boxes that push the rope.
+     * Advance one logical tick. Driver supplies neighbours (already pre-filtered by
+     * bounds),
+     * external force fields, and a list of nearby entity bounding boxes that push
+     * the rope.
      */
     public boolean step(
             Level level, Vec3 a, Vec3 b, long currentTick,
@@ -79,7 +95,8 @@ abstract class RopeSimulationStepper extends RopeSimulationContactConstraints {
             finishPrecompute();
             return false;
         }
-        if (delta > 2) delta = 2;
+        if (delta > 2)
+            delta = 2;
 
         boolean endpointMoved = rememberEndpointsMoved(a, b);
         boolean terrainNearby;
@@ -87,7 +104,8 @@ abstract class RopeSimulationStepper extends RopeSimulationContactConstraints {
         if (precomputeReady) {
             terrainNearby = cachedTerrainNearby;
             blockHashChangedNow = cachedBlockChanged;
-            // Workers must not call level.getBlockState; the main-thread prefetch covered the bbox.
+            // Workers must not call level.getBlockState; the main-thread prefetch covered
+            // the bbox.
             blockCache.setReadOnly(true);
         } else {
             terrainNearby = hasTerrainNearby(level, a, b);
@@ -97,18 +115,23 @@ abstract class RopeSimulationStepper extends RopeSimulationContactConstraints {
         terrainNearbyLast = terrainNearby;
         boolean blockChanged = terrainStateChanged || (terrainNearby && blockHashChangedNow);
         boolean neighborAwake = anyNeighborAwake(neighbors);
-        // Entity overlap forces a wake-up: a frozen airborne rope would otherwise let the player
+        // Entity overlap forces a wake-up: a frozen airborne rope would otherwise let
+        // the player
         // walk through it because no constraint loop runs at all.
         boolean entityNearby = !entityBoxes.isEmpty();
         boolean serverPullActive = hasFreshServerNodes(currentTick);
-        boolean awake = endpointMoved || blockChanged || neighborAwake || entityNearby || !isSettled() || hasExternalContact(currentTick) || serverPullActive;
-        if (endpointMoved || blockChanged || neighborAwake || entityNearby || hasExternalContact(currentTick) || serverPullActive) {
+        boolean awake = endpointMoved || blockChanged || neighborAwake || entityNearby || !isSettled()
+                || hasExternalContact(currentTick) || serverPullActive;
+        if (endpointMoved || blockChanged || neighborAwake || entityNearby || hasExternalContact(currentTick)
+                || serverPullActive) {
             settledTicks = 0;
         }
 
         // Snapshot tick-start positions for render lerp + settle measurement.
         for (int i = 0; i < nodes; i++) {
-            xLastTick[i] = x[i]; yLastTick[i] = y[i]; zLastTick[i] = z[i];
+            xLastTick[i] = x[i];
+            yLastTick[i] = y[i];
+            zLastTick[i] = z[i];
         }
 
         if (!awake) {
@@ -129,13 +152,13 @@ abstract class RopeSimulationStepper extends RopeSimulationContactConstraints {
             for (int sub = 0; sub < substeps; sub++) {
                 double frac = (sub + 1) / (double) substeps;
                 Vec3 aInterp = new Vec3(
-                    lastAx + (a.x - lastAx) * frac,
-                    lastAy + (a.y - lastAy) * frac,
-                    lastAz + (a.z - lastAz) * frac);
+                        lastAx + (a.x - lastAx) * frac,
+                        lastAy + (a.y - lastAy) * frac,
+                        lastAz + (a.z - lastAz) * frac);
                 Vec3 bInterp = new Vec3(
-                    lastBx + (b.x - lastBx) * frac,
-                    lastBy + (b.y - lastBy) * frac,
-                    lastBz + (b.z - lastBz) * frac);
+                        lastBx + (b.x - lastBx) * frac,
+                        lastBy + (b.y - lastBy) * frac,
+                        lastBz + (b.z - lastBz) * frac);
                 substep(level, aInterp, bInterp, h, currentTick, terrainNearby,
                         neighbors, forceFields, entityBoxes);
             }
@@ -165,9 +188,11 @@ abstract class RopeSimulationStepper extends RopeSimulationContactConstraints {
             List<RopeForceField> forceFields,
             List<AABB> entityBoxes) {
         if (terrainEnabled) {
-            // In parallel mode the main-thread prefetch covers the whole step's bbox; clearing
+            // In parallel mode the main-thread prefetch covers the whole step's bbox;
+            // clearing
             // through the (still warm) cache.
-            if (!precomputeReady) blockCache.reset();
+            if (!precomputeReady)
+                blockCache.reset();
             detectAnchorBlocks(level);
         } else {
             clearAnchorColumns();
@@ -176,8 +201,11 @@ abstract class RopeSimulationStepper extends RopeSimulationContactConstraints {
 
         double dampingPerSubstep = Math.pow(tuning.damping(), h);
         for (int i = 0; i < nodes; i++) {
-            xPrev[i] = x[i]; yPrev[i] = y[i]; zPrev[i] = z[i];
-            if (pinned[i]) continue;
+            xPrev[i] = x[i];
+            yPrev[i] = y[i];
+            zPrev[i] = z[i];
+            if (pinned[i])
+                continue;
             vx[i] *= dampingPerSubstep;
             vy[i] *= dampingPerSubstep;
             vz[i] *= dampingPerSubstep;
@@ -198,7 +226,8 @@ abstract class RopeSimulationStepper extends RopeSimulationContactConstraints {
         pinEndpoints(a, b);
 
         // 2. Reset XPBD lambdas at substep start
-        for (int i = 0; i < segments; i++) lambdaDistance[i] = 0.0D;
+        for (int i = 0; i < segments; i++)
+            lambdaDistance[i] = 0.0D;
 
         // 3. Unified constraint loop
         double targetLen = a.distanceTo(b) * slackFactor(a, b) / segments;
@@ -217,18 +246,23 @@ abstract class RopeSimulationStepper extends RopeSimulationContactConstraints {
         // middle segments never reaches a pinned end). Ensure we run at least
         // ceil(segments/2) passes so corrections from both ends meet in the middle.
         int minPasses = (segments + 1) / 2;
-        if (iterations < minPasses) iterations = minPasses;
+        if (iterations < minPasses)
+            iterations = minPasses;
         for (int it = 0; it < iterations; it++) {
             solveDistanceConstraints(targetLen, alphaTilde, (it & 1) == 0);
-            if (terrainEnabled) solveTerrainConstraints(level);
-            if (!neighbors.isEmpty()) solveRopeRopeConstraints(neighbors);
-            if (!entityBoxes.isEmpty()) solveEntityConstraints(entityBoxes);
+            if (terrainEnabled)
+                solveTerrainConstraints(level);
+            if (!neighbors.isEmpty())
+                solveRopeRopeConstraints(neighbors);
+            if (!entityBoxes.isEmpty())
+                solveEntityConstraints(entityBoxes);
             pinEndpoints(a, b);
         }
 
         // 4. Reconstruct velocity from position delta
         for (int i = 0; i < nodes; i++) {
-            if (pinned[i]) continue;
+            if (pinned[i])
+                continue;
             vx[i] = (x[i] - xPrev[i]) / h;
             vy[i] = (y[i] - yPrev[i]) / h;
             vz[i] = (z[i] - zPrev[i]) / h;
@@ -242,15 +276,19 @@ abstract class RopeSimulationStepper extends RopeSimulationContactConstraints {
     }
 
     private int chooseSubsteps(Vec3 a, Vec3 b) {
-        if (!endpointInit) return 1;
+        if (!endpointInit)
+            return 1;
         double daX = a.x - lastAx, daY = a.y - lastAy, daZ = a.z - lastAz;
         double dbX = b.x - lastBx, dbY = b.y - lastBy, dbZ = b.z - lastBz;
         double aSpeedSqr = daX * daX + daY * daY + daZ * daZ;
         double bSpeedSqr = dbX * dbX + dbY * dbY + dbZ * dbZ;
         double s2 = Math.max(Math.max(aSpeedSqr, bSpeedSqr), maxInteriorSpeedSqr());
-        if (s2 < SUBSTEP_SPEED_TIER1 * SUBSTEP_SPEED_TIER1) return 1;
-        if (s2 < SUBSTEP_SPEED_TIER2 * SUBSTEP_SPEED_TIER2) return 2;
-        if (s2 < SUBSTEP_SPEED_TIER3 * SUBSTEP_SPEED_TIER3) return 3;
+        if (s2 < SUBSTEP_SPEED_TIER1 * SUBSTEP_SPEED_TIER1)
+            return 1;
+        if (s2 < SUBSTEP_SPEED_TIER2 * SUBSTEP_SPEED_TIER2)
+            return 2;
+        if (s2 < SUBSTEP_SPEED_TIER3 * SUBSTEP_SPEED_TIER3)
+            return 3;
         return MAX_SUBSTEPS;
     }
 
@@ -258,7 +296,8 @@ abstract class RopeSimulationStepper extends RopeSimulationContactConstraints {
         double max = 0.0D;
         for (int i = 1; i < nodes - 1; i++) {
             double s2 = vx[i] * vx[i] + vy[i] * vy[i] + vz[i] * vz[i];
-            if (s2 > max) max = s2;
+            if (s2 > max)
+                max = s2;
         }
         return max;
     }

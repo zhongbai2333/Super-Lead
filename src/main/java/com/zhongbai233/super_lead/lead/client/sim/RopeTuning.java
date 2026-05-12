@@ -10,7 +10,8 @@ import net.minecraft.world.phys.Vec3;
 /**
  * Immutable snapshot of the tuning values a single rope should use.
  * <p>
- * Values are resolved from the preset name stamped on each rope by the server. Keys absent from
+ * Values are resolved from the preset name stamped on each rope by the server.
+ * Keys absent from
  * that preset fall back to the player's local/default tuning.
  */
 public record RopeTuning(
@@ -66,7 +67,8 @@ public record RopeTuning(
         if (raw != null) {
             try {
                 T parsed = key.type.parse(raw);
-                if (key.type.validate(parsed) || acceptsUncheckedFiniteDouble(key, parsed)) return parsed;
+                if (key.type.validate(parsed) || acceptsUncheckedFiniteDouble(key, parsed))
+                    return parsed;
             } catch (RuntimeException ignored) {
             }
         }

@@ -6,9 +6,12 @@ import net.minecraft.world.phys.Vec3;
 public final class RopeMath {
     public static final double EPS = 1.0e-8D;
 
-    private RopeMath() {}
+    private RopeMath() {
+    }
 
-    /** Closest points on two finite segments [p1,p2] and [q1,q2]. Writes into out. */
+    /**
+     * Closest points on two finite segments [p1,p2] and [q1,q2]. Writes into out.
+     */
     public static void closestSegmentPoints(
             double p1x, double p1y, double p1z, double p2x, double p2y, double p2z,
             double q1x, double q1y, double q1z, double q2x, double q2y, double q2z,
@@ -24,11 +27,14 @@ public final class RopeMath {
         double denom = aa * cc - bb * bb;
         double s, t;
         if (aa < EPS && cc < EPS) {
-            s = 0.0; t = 0.0;
+            s = 0.0;
+            t = 0.0;
         } else if (aa < EPS) {
-            s = 0.0; t = clamp01(ee / cc);
+            s = 0.0;
+            t = clamp01(ee / cc);
         } else if (cc < EPS) {
-            t = 0.0; s = clamp01(-dd / aa);
+            t = 0.0;
+            s = clamp01(-dd / aa);
         } else {
             s = denom < EPS ? 0.0 : clamp01((bb * ee - cc * dd) / denom);
             t = clamp01((bb * s + ee) / cc);
@@ -37,13 +43,17 @@ public final class RopeMath {
         }
         double pcx = p1x + ux * s, pcy = p1y + uy * s, pcz = p1z + uz * s;
         double qcx = q1x + vx * t, qcy = q1y + vy * t, qcz = q1z + vz * t;
-        out.s = s; out.t = t;
-        out.dx = pcx - qcx; out.dy = pcy - qcy; out.dz = pcz - qcz;
+        out.s = s;
+        out.t = t;
+        out.dx = pcx - qcx;
+        out.dy = pcy - qcy;
+        out.dz = pcz - qcz;
         out.distSqr = out.dx * out.dx + out.dy * out.dy + out.dz * out.dz;
     }
 
     /**
-     * Segment vs AABB intersection. Returns true and writes hit time t and recommended push (out)
+     * Segment vs AABB intersection. Returns true and writes hit time t and
+     * recommended push (out)
      * when the segment intersects; false otherwise.
      */
     public static boolean intersectSegmentAabb(
@@ -52,34 +62,56 @@ public final class RopeMath {
         double dx = tx - fx, dy = ty - fy, dz = tz - fz;
         double xEntry, xExit;
         if (Math.abs(dx) < 1e-9) {
-            if (fx < box.minX || fx > box.maxX) return false;
-            xEntry = 0.0; xExit = 1.0;
+            if (fx < box.minX || fx > box.maxX)
+                return false;
+            xEntry = 0.0;
+            xExit = 1.0;
         } else {
             double t1 = (box.minX - fx) / dx, t2 = (box.maxX - fx) / dx;
-            if (t1 > t2) { double tmp = t1; t1 = t2; t2 = tmp; }
-            xEntry = t1; xExit = t2;
+            if (t1 > t2) {
+                double tmp = t1;
+                t1 = t2;
+                t2 = tmp;
+            }
+            xEntry = t1;
+            xExit = t2;
         }
         double yEntry, yExit;
         if (Math.abs(dy) < 1e-9) {
-            if (fy < box.minY || fy > box.maxY) return false;
-            yEntry = 0.0; yExit = 1.0;
+            if (fy < box.minY || fy > box.maxY)
+                return false;
+            yEntry = 0.0;
+            yExit = 1.0;
         } else {
             double t1 = (box.minY - fy) / dy, t2 = (box.maxY - fy) / dy;
-            if (t1 > t2) { double tmp = t1; t1 = t2; t2 = tmp; }
-            yEntry = t1; yExit = t2;
+            if (t1 > t2) {
+                double tmp = t1;
+                t1 = t2;
+                t2 = tmp;
+            }
+            yEntry = t1;
+            yExit = t2;
         }
         double zEntry, zExit;
         if (Math.abs(dz) < 1e-9) {
-            if (fz < box.minZ || fz > box.maxZ) return false;
-            zEntry = 0.0; zExit = 1.0;
+            if (fz < box.minZ || fz > box.maxZ)
+                return false;
+            zEntry = 0.0;
+            zExit = 1.0;
         } else {
             double t1 = (box.minZ - fz) / dz, t2 = (box.maxZ - fz) / dz;
-            if (t1 > t2) { double tmp = t1; t1 = t2; t2 = tmp; }
-            zEntry = t1; zExit = t2;
+            if (t1 > t2) {
+                double tmp = t1;
+                t1 = t2;
+                t2 = tmp;
+            }
+            zEntry = t1;
+            zExit = t2;
         }
         double tMin = Math.max(0.0, Math.max(xEntry, Math.max(yEntry, zEntry)));
         double tMax = Math.min(1.0, Math.min(xExit, Math.min(yExit, zExit)));
-        if (tMin > tMax || tMax < 0.0 || tMin > 1.0) return false;
+        if (tMin > tMax || tMax < 0.0 || tMin > 1.0)
+            return false;
 
         double sxMin = Math.min(fx, tx), sxMax = Math.max(fx, tx);
         double syMin = Math.min(fy, ty), syMax = Math.max(fy, ty);
@@ -91,7 +123,10 @@ public final class RopeMath {
         double min = Math.min(ax, Math.min(ay, az));
         double midT = (tMin + tMax) * 0.5;
         if (pushY > 0.0 && ay <= min + topEps) {
-            out.t = midT; out.dx = 0.0; out.dy = pushY; out.dz = 0.0;
+            out.t = midT;
+            out.dx = 0.0;
+            out.dy = pushY;
+            out.dz = 0.0;
             return true;
         }
         out.t = midT;

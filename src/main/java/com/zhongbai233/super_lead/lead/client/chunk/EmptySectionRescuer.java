@@ -13,21 +13,25 @@ import net.neoforged.neoforge.client.event.ClientTickEvent;
 @EventBusSubscriber(modid = Super_lead.MODID, value = Dist.CLIENT)
 public final class EmptySectionRescuer {
 
-    private EmptySectionRescuer() {}
+    private EmptySectionRescuer() {
+    }
 
     @SubscribeEvent
     public static void onClientTick(ClientTickEvent.Post event) {
         StaticRopeChunkRegistry reg = StaticRopeChunkRegistry.get();
         reg.flushPendingDirtySections();
-        if (!reg.isActive()) return;
+        if (!reg.isActive())
+            return;
 
         Minecraft mc = Minecraft.getInstance();
         ClientLevel level = mc.level;
         LevelRenderer levelRenderer = mc.levelRenderer;
-        if (level == null || levelRenderer == null) return;
+        if (level == null || levelRenderer == null)
+            return;
 
         LongOpenHashSet emptySet = level.getChunkSource().getLoadedEmptySections();
-        if (emptySet.isEmpty()) return;
+        if (emptySet.isEmpty())
+            return;
 
         for (long key : reg.publishedSectionKeys()) {
             if (emptySet.remove(key)) {

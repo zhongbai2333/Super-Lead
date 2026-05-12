@@ -34,7 +34,8 @@ public final class ZoneSelectionClient {
     private static SyncPhysicsZones.Entry managedPreview;
     private static AABB createPreview;
 
-    private ZoneSelectionClient() {}
+    private ZoneSelectionClient() {
+    }
 
     public static void apply(ZoneSelectionState state) {
         active = state.active();
@@ -45,7 +46,9 @@ public final class ZoneSelectionClient {
         }
     }
 
-    public static boolean isActive() { return active; }
+    public static boolean isActive() {
+        return active;
+    }
 
     public static void openCreate(OpenZoneCreateScreen payload) {
         Minecraft mc = Minecraft.getInstance();
@@ -56,8 +59,10 @@ public final class ZoneSelectionClient {
     }
 
     public static boolean tryHandleBlockClick(Player player, InteractionHand hand, BlockPos pos) {
-        if (!active || player == null || !player.isShiftKeyDown()) return false;
-        if (!player.getItemInHand(hand).is(Items.SHEARS)) return false;
+        if (!active || player == null || !player.isShiftKeyDown())
+            return false;
+        if (!player.getItemInHand(hand).is(Items.SHEARS))
+            return false;
         ClientPacketDistributor.sendToServer(new ZoneSelectionClick(pos.immutable()));
         return true;
     }
@@ -99,7 +104,8 @@ public final class ZoneSelectionClient {
     public static void onClientTick(ClientTickEvent.Post event) {
         Minecraft mc = Minecraft.getInstance();
         ClientLevel level = mc.level;
-        if (level == null || mc.player == null || mc.options.hideGui) return;
+        if (level == null || mc.player == null || mc.options.hideGui)
+            return;
 
         if (managedPreview != null) {
             drawBox(level, managedPreview.toAabb(), MANAGED_DUST);
@@ -109,11 +115,14 @@ public final class ZoneSelectionClient {
             drawBox(level, createPreview, SELECT_DUST);
         }
 
-        if (mc.screen != null) return;
+        if (mc.screen != null)
+            return;
 
-        if (!active) return;
+        if (!active)
+            return;
         BlockPos target = currentTargetBlock(mc);
-        if (target == null && firstCorner == null) return;
+        if (target == null && firstCorner == null)
+            return;
         if (firstCorner == null) {
             drawBox(level, blockBox(target), SELECT_DUST);
         } else {

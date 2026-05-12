@@ -29,15 +29,19 @@ abstract class RopeSimulationVisualState extends RopeSimulationRenderCache {
                     tz += contactDz * w;
                 }
             }
-            xLastTick[i] = x[i]; yLastTick[i] = y[i]; zLastTick[i] = z[i];
+            xLastTick[i] = x[i];
+            yLastTick[i] = y[i];
+            zLastTick[i] = z[i];
             x[i] += (tx - x[i]) * smoothing;
             y[i] += (ty - y[i]) * smoothing;
             z[i] += (tz - z[i]) * smoothing;
             vx[i] = vy[i] = vz[i] = 0.0D;
         }
-        // The LOD-off visual catenary differs from the physics steady state, so when the
+        // The LOD-off visual catenary differs from the physics steady state, so when
+        // the
         // rope LOD-ins later step() must run real physics instead of taking the settled
-        // early-out. Mark the sim as unsettled and invalidate the endpoint snapshot so the
+        // early-out. Mark the sim as unsettled and invalidate the endpoint snapshot so
+        // the
         // next awake check trips.
         settledTicks = 0;
         quietTicks = 0;
@@ -53,8 +57,12 @@ abstract class RopeSimulationVisualState extends RopeSimulationRenderCache {
             double nx = a.x + (b.x - a.x) * t;
             double ny = a.y + (b.y - a.y) * t - Math.sin(Math.PI * t) * sag;
             double nz = a.z + (b.z - a.z) * t;
-            x[i] = nx; y[i] = ny; z[i] = nz;
-            xLastTick[i] = nx; yLastTick[i] = ny; zLastTick[i] = nz;
+            x[i] = nx;
+            y[i] = ny;
+            z[i] = nz;
+            xLastTick[i] = nx;
+            yLastTick[i] = ny;
+            zLastTick[i] = nz;
             vx[i] = vy[i] = vz[i] = 0.0D;
         }
         markBoundsDirty();
@@ -76,16 +84,21 @@ abstract class RopeSimulationVisualState extends RopeSimulationRenderCache {
         }
     }
 
-    /** Add a falloff-weighted velocity impulse around a world position. Useful for "rope hit" effects. */
+    /**
+     * Add a falloff-weighted velocity impulse around a world position. Useful for
+     * "rope hit" effects.
+     */
     public void applyImpulseAt(Vec3 worldPos, Vec3 impulse, double radius) {
-        if (radius <= 0.0D) return;
+        if (radius <= 0.0D)
+            return;
         double r2 = radius * radius;
         for (int i = 1; i < nodes - 1; i++) {
             double dx = x[i] - worldPos.x;
             double dy = y[i] - worldPos.y;
             double dz = z[i] - worldPos.z;
             double d2 = dx * dx + dy * dy + dz * dz;
-            if (d2 > r2) continue;
+            if (d2 > r2)
+                continue;
             double falloff = 1.0D - Math.sqrt(d2) / radius;
             vx[i] += impulse.x * falloff;
             vy[i] += impulse.y * falloff;
@@ -113,7 +126,10 @@ abstract class RopeSimulationVisualState extends RopeSimulationRenderCache {
         contactT = -1.0F;
     }
 
-    /** Active iff a contact was set within the last few ticks (handles dropped packets). */
+    /**
+     * Active iff a contact was set within the last few ticks (handles dropped
+     * packets).
+     */
     public boolean hasExternalContact(long currentTick) {
         return contactT >= 0.0F && (currentTick - contactRefreshTick) <= 5L;
     }
@@ -121,9 +137,12 @@ abstract class RopeSimulationVisualState extends RopeSimulationRenderCache {
     // ============================================================================================
     // Server Verlet snapshot (coarse-to-fine sync)
     // ============================================================================================
-    /** Push the latest server-side Verlet shape for this rope. {@code interior} is the
-     *  interleaved xyz triples of the server's interior nodes (length must be
-     *  {@code (segments-1)*3}). Pass {@code segments <= 0} or null array to disable. */
+    /**
+     * Push the latest server-side Verlet shape for this rope. {@code interior} is
+     * the
+     * interleaved xyz triples of the server's interior nodes (length must be
+     * {@code (segments-1)*3}). Pass {@code segments <= 0} or null array to disable.
+     */
     public void setServerNodes(long currentTick, int segments, float[] interior) {
         if (segments <= 0 || interior == null || interior.length != Math.max(0, segments - 1) * 3) {
             serverNodesSegments = 0;
@@ -148,35 +167,51 @@ abstract class RopeSimulationVisualState extends RopeSimulationRenderCache {
                 && (currentTick - serverNodesRefreshTick) <= SERVER_BLEND_STALE_TICKS;
     }
 
-    /** Soft pull of every interior node toward its corresponding point on the server polyline.
-     *  Called once per game tick; XPBD constraints subsequently smooth and re-tighten the chain. */
+    /**
+     * Soft pull of every interior node toward its corresponding point on the server
+     * polyline.
+     * Called once per game tick; XPBD constraints subsequently smooth and
+     * re-tighten the chain.
+     */
     protected void applyServerNodeBlend(Vec3 a, Vec3 b, long currentTick) {
-        if (!hasFreshServerNodes(currentTick)) return;
+        if (!hasFreshServerNodes(currentTick))
+            return;
         int sSeg = serverNodesSegments;
         // Walk client interior nodes 1..nodes-2.
         for (int j = 1; j < nodes - 1; j++) {
-            if (pinned[j]) continue;
+            if (pinned[j])
+                continue;
             double tj = j / (double) segments;
             // Locate the server segment containing tj.
             double sPos = tj * sSeg;
             int sIdx = (int) Math.floor(sPos);
-            if (sIdx < 0) sIdx = 0;
-            if (sIdx > sSeg - 1) sIdx = sSeg - 1;
+            if (sIdx < 0)
+                sIdx = 0;
+            if (sIdx > sSeg - 1)
+                sIdx = sSeg - 1;
             double frac = sPos - sIdx;
             // Server polyline points: P0 = a, P1..P_{sSeg-1} = interior, P_{sSeg} = b.
             double p0x, p0y, p0z, p1x, p1y, p1z;
             if (sIdx == 0) {
-                p0x = a.x; p0y = a.y; p0z = a.z;
+                p0x = a.x;
+                p0y = a.y;
+                p0z = a.z;
             } else {
                 int o = (sIdx - 1) * 3;
-                p0x = serverInterior[o]; p0y = serverInterior[o + 1]; p0z = serverInterior[o + 2];
+                p0x = serverInterior[o];
+                p0y = serverInterior[o + 1];
+                p0z = serverInterior[o + 2];
             }
             int next = sIdx + 1;
             if (next >= sSeg) {
-                p1x = b.x; p1y = b.y; p1z = b.z;
+                p1x = b.x;
+                p1y = b.y;
+                p1z = b.z;
             } else {
                 int o = (next - 1) * 3;
-                p1x = serverInterior[o]; p1y = serverInterior[o + 1]; p1z = serverInterior[o + 2];
+                p1x = serverInterior[o];
+                p1y = serverInterior[o + 1];
+                p1z = serverInterior[o + 2];
             }
             double tx = p0x + (p1x - p0x) * frac;
             double ty = p0y + (p1y - p0y) * frac;
@@ -187,15 +222,21 @@ abstract class RopeSimulationVisualState extends RopeSimulationRenderCache {
         }
     }
 
-    /** Apply the contact as a soft pull on the segment containing {@code contactT}.
-     *  Called once per game-tick from {@link #step}; XPBD distance constraints subsequently
-     *  propagate the deformation along the rope. */
+    /**
+     * Apply the contact as a soft pull on the segment containing {@code contactT}.
+     * Called once per game-tick from {@link #step}; XPBD distance constraints
+     * subsequently
+     * propagate the deformation along the rope.
+     */
     protected void applyExternalContactPush() {
-        if (contactT < 0.0F) return;
+        if (contactT < 0.0F)
+            return;
         float ct = contactT < 0.0F ? 0.0F : (contactT > 1.0F ? 1.0F : contactT);
         int seg = (int) Math.floor(ct * segments);
-        if (seg >= segments) seg = segments - 1;
-        if (seg < 0) seg = 0;
+        if (seg >= segments)
+            seg = segments - 1;
+        if (seg < 0)
+            seg = 0;
         double frac = ct * segments - seg;
         int i = seg, j = seg + 1;
         double wi = 1.0D - frac, wj = frac;

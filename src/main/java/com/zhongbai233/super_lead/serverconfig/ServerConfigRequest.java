@@ -8,13 +8,20 @@ import net.minecraft.resources.Identifier;
 
 public record ServerConfigRequest() implements CustomPacketPayload {
     public static final ServerConfigRequest INSTANCE = new ServerConfigRequest();
-    public static final CustomPacketPayload.Type<ServerConfigRequest> TYPE =
-            new CustomPacketPayload.Type<>(Identifier.fromNamespaceAndPath(Super_lead.MODID, "server_config_request"));
-    public static final StreamCodec<RegistryFriendlyByteBuf, ServerConfigRequest> STREAM_CODEC =
-            CustomPacketPayload.codec(ServerConfigRequest::write, ServerConfigRequest::read);
+    public static final CustomPacketPayload.Type<ServerConfigRequest> TYPE = new CustomPacketPayload.Type<>(
+            Identifier.fromNamespaceAndPath(Super_lead.MODID, "server_config_request"));
+    public static final StreamCodec<RegistryFriendlyByteBuf, ServerConfigRequest> STREAM_CODEC = CustomPacketPayload
+            .codec(ServerConfigRequest::write, ServerConfigRequest::read);
 
-    @Override public Type<? extends CustomPacketPayload> type() { return TYPE; }
+    @Override
+    public Type<? extends CustomPacketPayload> type() {
+        return TYPE;
+    }
 
-    private void write(RegistryFriendlyByteBuf buf) {}
-    private static ServerConfigRequest read(RegistryFriendlyByteBuf buf) { return INSTANCE; }
+    private void write(RegistryFriendlyByteBuf buf) {
+    }
+
+    private static ServerConfigRequest read(RegistryFriendlyByteBuf buf) {
+        return INSTANCE;
+    }
 }

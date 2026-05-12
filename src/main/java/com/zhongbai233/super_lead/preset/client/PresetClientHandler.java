@@ -21,7 +21,8 @@ public final class PresetClientHandler {
     private static volatile PresetDetailsResponse lastDetails;
     private static volatile java.util.function.Consumer<PresetDetailsResponse> detailsListener;
 
-    private PresetClientHandler() {}
+    private PresetClientHandler() {
+    }
 
     public static void onPromptOpen(PresetPromptOpen payload) {
         Minecraft mc = Minecraft.getInstance();
@@ -68,7 +69,10 @@ public final class PresetClientHandler {
         detailsListener = listener;
     }
 
-    /** Apply a set of stringified key->value overrides as preset values, clearing any keys not present. */
+    /**
+     * Apply a set of stringified key->value overrides as preset values, clearing
+     * any keys not present.
+     */
     public static void applyOverrides(Map<String, String> overrides) {
         ClientTuning.loadOnce();
         Map<String, String> map = new HashMap<>(overrides);

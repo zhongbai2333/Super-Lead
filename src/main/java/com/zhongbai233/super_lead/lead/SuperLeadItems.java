@@ -20,7 +20,8 @@ public final class SuperLeadItems {
     public static final DeferredRegister.Items ITEMS = DeferredRegister.createItems(Super_lead.MODID);
     public static final DeferredItem<Item> SUPER_LEAD = ITEMS.registerSimpleItem("super_lead");
 
-    private SuperLeadItems() {}
+    private SuperLeadItems() {
+    }
 
     public static void register(IEventBus eventBus) {
         ITEMS.register(eventBus);

@@ -9,8 +9,10 @@ import net.minecraft.resources.Identifier;
 
 /**
  * C->S report for a locally detected player-vs-rope contact.
- * The client owns the high precision rope shape; the server treats this as a claim and
- * accepts it only if the contact is plausible for the authoritative endpoints and player box.
+ * The client owns the high precision rope shape; the server treats this as a
+ * claim and
+ * accepts it only if the contact is plausible for the authoritative endpoints
+ * and player box.
  */
 public record ClientRopeContactReport(
         UUID ropeId,
@@ -22,12 +24,12 @@ public record ClientRopeContactReport(
         float normalZ,
         float inputX,
         float inputZ,
-        float depth) implements CustomPacketPayload {
-    public static final CustomPacketPayload.Type<ClientRopeContactReport> TYPE =
-            new CustomPacketPayload.Type<>(
-                    Identifier.fromNamespaceAndPath(Super_lead.MODID, "client_rope_contact_report"));
-    public static final StreamCodec<RegistryFriendlyByteBuf, ClientRopeContactReport> STREAM_CODEC =
-            CustomPacketPayload.codec(ClientRopeContactReport::write, ClientRopeContactReport::read);
+        float depth,
+        boolean support) implements CustomPacketPayload {
+    public static final CustomPacketPayload.Type<ClientRopeContactReport> TYPE = new CustomPacketPayload.Type<>(
+            Identifier.fromNamespaceAndPath(Super_lead.MODID, "client_rope_contact_report"));
+    public static final StreamCodec<RegistryFriendlyByteBuf, ClientRopeContactReport> STREAM_CODEC = CustomPacketPayload
+            .codec(ClientRopeContactReport::write, ClientRopeContactReport::read);
 
     @Override
     public Type<? extends CustomPacketPayload> type() {
@@ -45,6 +47,7 @@ public record ClientRopeContactReport(
         buffer.writeFloat(inputX);
         buffer.writeFloat(inputZ);
         buffer.writeFloat(depth);
+        buffer.writeBoolean(support);
     }
 
     private static ClientRopeContactReport read(RegistryFriendlyByteBuf buffer) {
@@ -58,6 +61,7 @@ public record ClientRopeContactReport(
                 buffer.readFloat(),
                 buffer.readFloat(),
                 buffer.readFloat(),
-                buffer.readFloat());
+                buffer.readFloat(),
+                buffer.readBoolean());
     }
 }

@@ -24,14 +24,17 @@ import net.neoforged.neoforge.event.RegisterCommandsEvent;
 
 /**
  * Server-side OP commands for runtime mutation of {@link Config} values.
- * Mutations apply in memory immediately and are persisted by NeoForge on world unload;
+ * Mutations apply in memory immediately and are persisted by NeoForge on world
+ * unload;
  * for guaranteed persistence between sessions edit the TOML directly.
  */
 @EventBusSubscriber(modid = Super_lead.MODID)
 public final class SuperLeadServerCommands {
-    private SuperLeadServerCommands() {}
+    private SuperLeadServerCommands() {
+    }
 
-    private record Entry(String id, ModConfigSpec.ConfigValue<?> value, String range, String def) {}
+    private record Entry(String id, ModConfigSpec.ConfigValue<?> value, String range, String def) {
+    }
 
     private static final Map<String, Entry> ENTRIES = buildEntries();
 
@@ -48,13 +51,15 @@ public final class SuperLeadServerCommands {
         m.put("network.fluid_tier_max",
                 new Entry("network.fluid_tier_max", Config.NETWORK_FLUID_TIER_MAX, "[1..12]", "4"));
         m.put("network.item_transfer_interval_ticks",
-                new Entry("network.item_transfer_interval_ticks", Config.NETWORK_ITEM_TRANSFER_INTERVAL_TICKS, "[1..40]", "4"));
+                new Entry("network.item_transfer_interval_ticks", Config.NETWORK_ITEM_TRANSFER_INTERVAL_TICKS,
+                        "[1..40]", "4"));
         m.put("network.fluid_bucket_amount",
                 new Entry("network.fluid_bucket_amount", Config.NETWORK_FLUID_BUCKET_AMOUNT, "[100..10000]", "1000"));
         m.put("network.stuck_break_ticks",
                 new Entry("network.stuck_break_ticks", Config.NETWORK_STUCK_BREAK_TICKS, "[20..1200]", "100"));
         m.put("presets.allow_op_visual_presets",
-                new Entry("presets.allow_op_visual_presets", Config.PRESETS_ALLOW_OP_VISUAL_PRESETS, "[true|false]", "true"));
+                new Entry("presets.allow_op_visual_presets", Config.PRESETS_ALLOW_OP_VISUAL_PRESETS, "[true|false]",
+                        "true"));
         return m;
     }
 
@@ -82,8 +87,8 @@ public final class SuperLeadServerCommands {
         dispatcher.register(root);
     }
 
-    private static final SuggestionProvider<CommandSourceStack> SUGGEST_KEY =
-            (ctx, builder) -> SharedSuggestionProvider.suggest(ENTRIES.keySet(), builder);
+    private static final SuggestionProvider<CommandSourceStack> SUGGEST_KEY = (ctx, builder) -> SharedSuggestionProvider
+            .suggest(ENTRIES.keySet(), builder);
 
     private static int list(CommandContext<CommandSourceStack> ctx) {
         ctx.getSource().sendSuccess(
@@ -105,7 +110,7 @@ public final class SuperLeadServerCommands {
         return 1;
     }
 
-    @SuppressWarnings({"rawtypes", "unchecked"})
+    @SuppressWarnings({ "rawtypes", "unchecked" })
     private static int set(CommandContext<CommandSourceStack> ctx) {
         String id = StringArgumentType.getString(ctx, "key");
         String raw = StringArgumentType.getString(ctx, "value").trim();
@@ -137,7 +142,7 @@ public final class SuperLeadServerCommands {
         return 1;
     }
 
-    @SuppressWarnings({"rawtypes", "unchecked"})
+    @SuppressWarnings({ "rawtypes", "unchecked" })
     private static int reset(CommandContext<CommandSourceStack> ctx) {
         String id = StringArgumentType.getString(ctx, "key");
         Entry entry = ENTRIES.get(id);
@@ -167,18 +172,24 @@ public final class SuperLeadServerCommands {
         }
         if (cv instanceof ModConfigSpec.BooleanValue) {
             String n = raw.toLowerCase(Locale.ROOT);
-            if (n.equals("true") || n.equals("1") || n.equals("on") || n.equals("yes")) return Boolean.TRUE;
-            if (n.equals("false") || n.equals("0") || n.equals("off") || n.equals("no")) return Boolean.FALSE;
+            if (n.equals("true") || n.equals("1") || n.equals("on") || n.equals("yes"))
+                return Boolean.TRUE;
+            if (n.equals("false") || n.equals("0") || n.equals("off") || n.equals("no"))
+                return Boolean.FALSE;
             throw new IllegalArgumentException("expected boolean");
         }
         return raw;
     }
 
     private static String describeType(ModConfigSpec.ConfigValue<?> cv) {
-        if (cv instanceof ModConfigSpec.IntValue) return "integer";
-        if (cv instanceof ModConfigSpec.LongValue) return "long";
-        if (cv instanceof ModConfigSpec.DoubleValue) return "double";
-        if (cv instanceof ModConfigSpec.BooleanValue) return "boolean";
+        if (cv instanceof ModConfigSpec.IntValue)
+            return "integer";
+        if (cv instanceof ModConfigSpec.LongValue)
+            return "long";
+        if (cv instanceof ModConfigSpec.DoubleValue)
+            return "double";
+        if (cv instanceof ModConfigSpec.BooleanValue)
+            return "boolean";
         return "string";
     }
 

@@ -10,19 +10,22 @@ import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.resources.Identifier;
 
 /**
- * S→C broadcast describing the current set of rope-vs-player contacts in a dimension.
- * The rope is server-authoritative for gameplay (player push-back) and the snapshot
- * tells every observer where to bend each rope visually so all clients stay in sync.
+ * S→C broadcast describing the current set of rope-vs-player contacts in a
+ * dimension.
+ * The rope is server-authoritative for gameplay (player push-back) and the
+ * snapshot
+ * tells every observer where to bend each rope visually so all clients stay in
+ * sync.
  */
 public record RopeContactPulse(List<Entry> contacts) implements CustomPacketPayload {
     public record Entry(UUID ropeId, UUID playerId, float t, float dx, float dy, float dz,
-                        float pushX, float pushZ, float pushMag) {}
+            float pushX, float pushZ, float pushMag) {
+    }
 
-    public static final CustomPacketPayload.Type<RopeContactPulse> TYPE =
-            new CustomPacketPayload.Type<>(
-                    Identifier.fromNamespaceAndPath(Super_lead.MODID, "rope_contact_pulse"));
-    public static final StreamCodec<RegistryFriendlyByteBuf, RopeContactPulse> STREAM_CODEC =
-            CustomPacketPayload.codec(RopeContactPulse::write, RopeContactPulse::read);
+    public static final CustomPacketPayload.Type<RopeContactPulse> TYPE = new CustomPacketPayload.Type<>(
+            Identifier.fromNamespaceAndPath(Super_lead.MODID, "rope_contact_pulse"));
+    public static final StreamCodec<RegistryFriendlyByteBuf, RopeContactPulse> STREAM_CODEC = CustomPacketPayload
+            .codec(RopeContactPulse::write, RopeContactPulse::read);
 
     @Override
     public Type<? extends CustomPacketPayload> type() {

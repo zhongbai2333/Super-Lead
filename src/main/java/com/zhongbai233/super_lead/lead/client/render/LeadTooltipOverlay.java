@@ -35,7 +35,8 @@ public final class LeadTooltipOverlay {
     private static final int TEXT_SECONDARY = 0xFFB0C4D0;
     private static final Component MAX_LABEL = Component.translatable("tooltip.super_lead.upgrade.max");
 
-    private LeadTooltipOverlay() {}
+    private LeadTooltipOverlay() {
+    }
 
     @SubscribeEvent
     public static void onRenderGui(RenderGuiEvent.Post event) {
@@ -153,7 +154,8 @@ public final class LeadTooltipOverlay {
                                     hovered.tier() + 1)));
                 }
             }
-            default -> { }
+            default -> {
+            }
         }
         return rows;
     }

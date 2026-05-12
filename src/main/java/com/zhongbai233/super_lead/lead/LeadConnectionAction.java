@@ -137,8 +137,10 @@ public enum LeadConnectionAction {
 
         @Override
         public boolean canTarget(LeadConnection connection) {
-            // Highlight any rope so the player gets visual feedback when aiming with a hopper.
-            // Apply only actually upgrades non-ITEM ropes; for ITEM ropes the player toggles
+            // Highlight any rope so the player gets visual feedback when aiming with a
+            // hopper.
+            // Apply only actually upgrades non-ITEM ropes; for ITEM ropes the player
+            // toggles
             // extract by clicking the anchor block, handled separately in SuperLeadEvents.
             return true;
         }
@@ -150,8 +152,10 @@ public enum LeadConnectionAction {
 
         @Override
         public boolean applyTo(ServerLevel level, Player player, LeadConnection connection) {
-            // Hopper does nothing on already-ITEM ropes; toggle is handled via right-click on anchor.
-            if (connection.kind() == LeadKind.ITEM) return false;
+            // Hopper does nothing on already-ITEM ropes; toggle is handled via right-click
+            // on anchor.
+            if (connection.kind() == LeadKind.ITEM)
+                return false;
             return SuperLeadNetwork.upgradeConnectionKind(level, connection, LeadKind.ITEM);
         }
 
@@ -185,7 +189,8 @@ public enum LeadConnectionAction {
 
         @Override
         public boolean applyTo(ServerLevel level, Player player, LeadConnection connection) {
-            if (connection.kind() != LeadKind.ITEM) return false;
+            if (connection.kind() != LeadKind.ITEM)
+                return false;
             return SuperLeadNetwork.upgradeConnectionTier(level, player, connection,
                     Config.itemTierMax(), Items.CHEST);
         }
@@ -210,7 +215,8 @@ public enum LeadConnectionAction {
 
         @Override
         public boolean canTarget(LeadConnection connection) {
-            // Highlight any rope (mirrors ITEM_UPGRADE). Toggle-on-anchor is handled separately.
+            // Highlight any rope (mirrors ITEM_UPGRADE). Toggle-on-anchor is handled
+            // separately.
             return true;
         }
 
@@ -221,8 +227,10 @@ public enum LeadConnectionAction {
 
         @Override
         public boolean applyTo(ServerLevel level, Player player, LeadConnection connection) {
-            // Cauldron does nothing on already-FLUID ropes; toggle is handled via right-click on anchor.
-            if (connection.kind() == LeadKind.FLUID) return false;
+            // Cauldron does nothing on already-FLUID ropes; toggle is handled via
+            // right-click on anchor.
+            if (connection.kind() == LeadKind.FLUID)
+                return false;
             return SuperLeadNetwork.upgradeConnectionKind(level, connection, LeadKind.FLUID);
         }
 
@@ -256,7 +264,8 @@ public enum LeadConnectionAction {
 
         @Override
         public boolean applyTo(ServerLevel level, Player player, LeadConnection connection) {
-            if (connection.kind() != LeadKind.FLUID) return false;
+            if (connection.kind() != LeadKind.FLUID)
+                return false;
             return SuperLeadNetwork.upgradeConnectionTier(level, player, connection,
                     Config.fluidTierMax(), Items.BUCKET);
         }
@@ -281,14 +290,19 @@ public enum LeadConnectionAction {
 
     public abstract boolean matches(ItemStack stack);
 
-    /** Item used to perform this action; rendered as an icon in the rope tooltip. */
+    /**
+     * Item used to perform this action; rendered as an icon in the rope tooltip.
+     */
     public abstract net.minecraft.world.item.Item iconItem();
 
     public abstract boolean canTarget(LeadConnection connection);
 
     public abstract boolean apply(Level level, Player player, double radius);
 
-    /** Apply this action to one specific connection (server side). Returns true if successful. */
+    /**
+     * Apply this action to one specific connection (server side). Returns true if
+     * successful.
+     */
     public abstract boolean applyTo(ServerLevel level, Player player, LeadConnection connection);
 
     public abstract void consumeSuccessfulUse(ItemStack stack, Player player, InteractionHand hand);

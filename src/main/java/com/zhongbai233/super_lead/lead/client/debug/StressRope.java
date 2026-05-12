@@ -18,13 +18,15 @@ record StressRope(
         double speed,
         boolean moving) {
     Vec3 a(long tick) {
-        if (!moving) return baseA;
+        if (!moving)
+            return baseA;
         double offset = Math.sin(tick * speed + phase) * amplitude;
         return new Vec3(baseA.x + moveX * offset, baseA.y + moveY * offset, baseA.z + moveZ * offset);
     }
 
     Vec3 b(long tick) {
-        if (!moving) return baseB;
+        if (!moving)
+            return baseB;
         double offset = Math.sin(tick * speed + phase + Math.PI) * amplitude;
         return new Vec3(baseB.x + moveX * offset, baseB.y + moveY * offset, baseB.z + moveZ * offset);
     }

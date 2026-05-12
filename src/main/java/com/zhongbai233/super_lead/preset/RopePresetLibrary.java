@@ -19,7 +19,10 @@ import java.util.stream.Stream;
 import net.minecraft.server.MinecraftServer;
 import org.slf4j.Logger;
 
-/** JSON file backed library of named rope presets, located under <serverConfig>/super_lead/presets/. */
+/**
+ * JSON file backed library of named rope presets, located under
+ * <serverConfig>/super_lead/presets/.
+ */
 public final class RopePresetLibrary {
     private static final Logger LOG = LogUtils.getLogger();
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().disableHtmlEscaping().create();
@@ -47,7 +50,8 @@ public final class RopePresetLibrary {
 
     public List<String> list() {
         List<String> out = new ArrayList<>();
-        if (!Files.isDirectory(dir)) return out;
+        if (!Files.isDirectory(dir))
+            return out;
         try (Stream<Path> stream = Files.list(dir)) {
             stream.filter(p -> p.getFileName().toString().toLowerCase(Locale.ROOT).endsWith(".json"))
                     .forEach(p -> {
@@ -62,15 +66,19 @@ public final class RopePresetLibrary {
     }
 
     public Optional<RopePreset> load(String name) {
-        if (!isValidName(name)) return Optional.empty();
+        if (!isValidName(name))
+            return Optional.empty();
         Path p = dir.resolve(name + ".json");
-        if (!Files.isRegularFile(p)) return Optional.empty();
+        if (!Files.isRegularFile(p))
+            return Optional.empty();
         try {
             String s = Files.readString(p, StandardCharsets.UTF_8);
             JsonObject root = GSON.fromJson(s, JsonObject.class);
-            if (root == null) return Optional.empty();
+            if (root == null)
+                return Optional.empty();
             JsonObject ov = root.has("overrides") && root.get("overrides").isJsonObject()
-                    ? root.getAsJsonObject("overrides") : new JsonObject();
+                    ? root.getAsJsonObject("overrides")
+                    : new JsonObject();
             Map<String, String> m = new LinkedHashMap<>();
             for (var e : ov.entrySet()) {
                 if (e.getValue().isJsonPrimitive()) {
@@ -85,7 +93,8 @@ public final class RopePresetLibrary {
     }
 
     public boolean save(RopePreset preset) {
-        if (!isValidName(preset.name())) return false;
+        if (!isValidName(preset.name()))
+            return false;
         Path p = dir.resolve(preset.name() + ".json");
         try {
             JsonObject root = new JsonObject();
@@ -104,7 +113,8 @@ public final class RopePresetLibrary {
     }
 
     public boolean delete(String name) {
-        if (!isValidName(name)) return false;
+        if (!isValidName(name))
+            return false;
         Path p = dir.resolve(name + ".json");
         try {
             return Files.deleteIfExists(p);

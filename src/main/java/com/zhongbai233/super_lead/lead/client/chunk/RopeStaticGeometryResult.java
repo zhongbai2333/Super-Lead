@@ -5,8 +5,8 @@ import java.util.Map;
 import java.util.Set;
 
 public final class RopeStaticGeometryResult {
-    public static final RopeStaticGeometryResult EMPTY =
-            new RopeStaticGeometryResult((RopeSectionSnapshot) null, Set.of());
+    public static final RopeStaticGeometryResult EMPTY = new RopeStaticGeometryResult((RopeSectionSnapshot) null,
+            Set.of());
 
     public final RopeSectionSnapshot snapshot;
     public final Set<Long> sectionKeys;

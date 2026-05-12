@@ -9,14 +9,19 @@ import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.resources.Identifier;
 
 public record ServerConfigSnapshot(Map<String, String> values) implements CustomPacketPayload {
-    public static final CustomPacketPayload.Type<ServerConfigSnapshot> TYPE =
-            new CustomPacketPayload.Type<>(Identifier.fromNamespaceAndPath(Super_lead.MODID, "server_config_snapshot"));
-    public static final StreamCodec<RegistryFriendlyByteBuf, ServerConfigSnapshot> STREAM_CODEC =
-            CustomPacketPayload.codec(ServerConfigSnapshot::write, ServerConfigSnapshot::read);
+    public static final CustomPacketPayload.Type<ServerConfigSnapshot> TYPE = new CustomPacketPayload.Type<>(
+            Identifier.fromNamespaceAndPath(Super_lead.MODID, "server_config_snapshot"));
+    public static final StreamCodec<RegistryFriendlyByteBuf, ServerConfigSnapshot> STREAM_CODEC = CustomPacketPayload
+            .codec(ServerConfigSnapshot::write, ServerConfigSnapshot::read);
 
-    public ServerConfigSnapshot { values = PresetPayloadCodecs.immutableCopy(values); }
+    public ServerConfigSnapshot {
+        values = PresetPayloadCodecs.immutableCopy(values);
+    }
 
-    @Override public Type<? extends CustomPacketPayload> type() { return TYPE; }
+    @Override
+    public Type<? extends CustomPacketPayload> type() {
+        return TYPE;
+    }
 
     private void write(RegistryFriendlyByteBuf buf) {
         PresetPayloadCodecs.writeStringMap(buf, values);

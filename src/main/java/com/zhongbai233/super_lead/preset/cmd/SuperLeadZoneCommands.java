@@ -1,6 +1,8 @@
 package com.zhongbai233.super_lead.preset.cmd;
 
 import com.mojang.brigadier.CommandDispatcher;
+import com.mojang.brigadier.arguments.BoolArgumentType;
+import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import com.mojang.brigadier.context.CommandContext;
@@ -30,13 +32,13 @@ import net.neoforged.neoforge.event.RegisterCommandsEvent;
 
 @EventBusSubscriber(modid = Super_lead.MODID)
 public final class SuperLeadZoneCommands {
-    private SuperLeadZoneCommands() {}
+    private SuperLeadZoneCommands() {
+    }
 
-    private static final Permission.HasCommandLevel OP =
-            new Permission.HasCommandLevel(PermissionLevel.GAMEMASTERS);
+    private static final Permission.HasCommandLevel OP = new Permission.HasCommandLevel(PermissionLevel.GAMEMASTERS);
 
-    private static final SuggestionProvider<CommandSourceStack> SUGGEST_PRESET = (ctx, builder) ->
-            SharedSuggestionProvider.suggest(
+    private static final SuggestionProvider<CommandSourceStack> SUGGEST_PRESET = (ctx,
+            builder) -> SharedSuggestionProvider.suggest(
                     RopePresetLibrary.forServer(ctx.getSource().getServer()).list(), builder);
 
     private static final SuggestionProvider<CommandSourceStack> SUGGEST_ZONE = (ctx, builder) -> {
@@ -64,7 +66,17 @@ public final class SuperLeadZoneCommands {
                         .then(Commands.literal("remove")
                                 .then(Commands.argument("name", StringArgumentType.word())
                                         .suggests(SUGGEST_ZONE)
-                                        .executes(SuperLeadZoneCommands::remove))));
+                                        .executes(SuperLeadZoneCommands::remove)))
+                        .then(Commands.literal("adventure")
+                                .then(Commands.argument("name", StringArgumentType.word())
+                                        .suggests(SUGGEST_ZONE)
+                                        .then(Commands.argument("allow", BoolArgumentType.bool())
+                                                .then(Commands.argument("limit", IntegerArgumentType.integer(0))
+                                                        .executes(SuperLeadZoneCommands::setAdventureRules)))))
+                        .then(Commands.literal("clearAdventure")
+                                .then(Commands.argument("name", StringArgumentType.word())
+                                        .suggests(SUGGEST_ZONE)
+                                        .executes(SuperLeadZoneCommands::clearAdventureRopes))));
         dispatcher.register(root);
     }
 
@@ -80,9 +92,14 @@ public final class SuperLeadZoneCommands {
                 .withStyle(ChatFormatting.GOLD), false);
         for (PhysicsZone zone : zones) {
             AABB area = zone.area();
-            String line = String.format("  %s -> %s  [%.0f,%.0f,%.0f .. %.0f,%.0f,%.0f]",
+            int adventureCount = PresetServerManager.adventureRopeCount(level, zone);
+            String adventure = zone.adventurePlacement()
+                    ? String.format(" adventure=%d/%s", adventureCount,
+                            zone.adventureLimit() <= 0 ? "unlimited" : Integer.toString(zone.adventureLimit()))
+                    : " adventure=off";
+            String line = String.format("  %s -> %s  [%.0f,%.0f,%.0f .. %.0f,%.0f,%.0f]%s",
                     zone.name(), zone.presetName(), area.minX, area.minY, area.minZ,
-                    area.maxX, area.maxY, area.maxZ);
+                    area.maxX, area.maxY, area.maxZ, adventure);
             ctx.getSource().sendSuccess(() -> Component.literal(line).withStyle(ChatFormatting.AQUA), false);
         }
         return zones.size();
@@ -132,5 +149,36 @@ public final class SuperLeadZoneCommands {
         ctx.getSource().sendSuccess(() -> Component.literal("Removed zone '" + name + "'.")
                 .withStyle(ChatFormatting.GREEN), true);
         return 1;
+    }
+
+    private static int setAdventureRules(CommandContext<CommandSourceStack> ctx) {
+        String name = StringArgumentType.getString(ctx, "name");
+        boolean allow = BoolArgumentType.getBool(ctx, "allow");
+        int limit = IntegerArgumentType.getInteger(ctx, "limit");
+        ServerLevel level = ctx.getSource().getLevel();
+        boolean ok = PresetServerManager.setZoneAdventureRules(level, name, allow, limit);
+        if (!ok) {
+            ctx.getSource().sendFailure(Component.literal("No zone named '" + name + "' here."));
+            return 0;
+        }
+        ctx.getSource().sendSuccess(() -> Component.literal(
+                "Zone '" + name + "' adventure placement: " + (allow ? "enabled" : "disabled")
+                        + ", limit=" + (limit <= 0 ? "unlimited" : Integer.toString(limit)) + ".")
+                .withStyle(ChatFormatting.GREEN), true);
+        return 1;
+    }
+
+    private static int clearAdventureRopes(CommandContext<CommandSourceStack> ctx) {
+        String name = StringArgumentType.getString(ctx, "name");
+        ServerLevel level = ctx.getSource().getLevel();
+        int removed = PresetServerManager.clearAdventureRopes(level, name);
+        if (removed < 0) {
+            ctx.getSource().sendFailure(Component.literal("No zone named '" + name + "' here."));
+            return 0;
+        }
+        ctx.getSource().sendSuccess(() -> Component.literal(
+                "Removed " + removed + " adventure rope(s) from zone '" + name + "'.")
+                .withStyle(ChatFormatting.GREEN), true);
+        return removed;
     }
 }

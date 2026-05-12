@@ -32,40 +32,72 @@ import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
 import net.neoforged.neoforge.network.handling.IPayloadContext;
 
 public final class SuperLeadPayloads {
-    private SuperLeadPayloads() {}
+    private SuperLeadPayloads() {
+    }
 
     public static void register(RegisterPayloadHandlersEvent event) {
         event.registrar("1")
                 .playToClient(SyncRopeChunk.TYPE, SyncRopeChunk.STREAM_CODEC, SuperLeadPayloads::handleSyncRopeChunk)
-                .playToClient(UnloadRopeChunk.TYPE, UnloadRopeChunk.STREAM_CODEC, SuperLeadPayloads::handleUnloadRopeChunk)
-                .playToClient(SyncConnections.TYPE, SyncConnections.STREAM_CODEC, SuperLeadPayloads::handleSyncConnections)
-                .playToClient(SyncConnectionChanges.TYPE, SyncConnectionChanges.STREAM_CODEC, SuperLeadPayloads::handleSyncConnectionChanges)
+                .playToClient(UnloadRopeChunk.TYPE, UnloadRopeChunk.STREAM_CODEC,
+                        SuperLeadPayloads::handleUnloadRopeChunk)
+                .playToClient(SyncConnections.TYPE, SyncConnections.STREAM_CODEC,
+                        SuperLeadPayloads::handleSyncConnections)
+                .playToClient(SyncConnectionChanges.TYPE, SyncConnectionChanges.STREAM_CODEC,
+                        SuperLeadPayloads::handleSyncConnectionChanges)
                 .playToClient(ItemPulse.TYPE, ItemPulse.STREAM_CODEC, SuperLeadPayloads::handleItemPulse)
-                .playToClient(RopeContactPulse.TYPE, RopeContactPulse.STREAM_CODEC, SuperLeadPayloads::handleRopeContactPulse)
-                .playToClient(PresetPromptOpen.TYPE, PresetPromptOpen.STREAM_CODEC, SuperLeadPayloads::handlePresetPromptOpen)
-                .playToClient(PresetApplyOverrides.TYPE, PresetApplyOverrides.STREAM_CODEC, SuperLeadPayloads::handlePresetApply)
-                .playToClient(PresetClearOverrides.TYPE, PresetClearOverrides.STREAM_CODEC, SuperLeadPayloads::handlePresetClear)
-                .playToClient(PresetListResponse.TYPE, PresetListResponse.STREAM_CODEC, SuperLeadPayloads::handlePresetListResponse)
-                .playToClient(PresetDetailsResponse.TYPE, PresetDetailsResponse.STREAM_CODEC, SuperLeadPayloads::handlePresetDetailsResponse)
-                .playToClient(SyncDimensionPresets.TYPE, SyncDimensionPresets.STREAM_CODEC, SuperLeadPayloads::handleSyncDimensionPresets)
-                .playToClient(SyncPhysicsZones.TYPE, SyncPhysicsZones.STREAM_CODEC, SuperLeadPayloads::handleSyncPhysicsZones)
-                .playToClient(ZoneSelectionState.TYPE, ZoneSelectionState.STREAM_CODEC, SuperLeadPayloads::handleZoneSelectionState)
-                .playToClient(OpenZoneCreateScreen.TYPE, OpenZoneCreateScreen.STREAM_CODEC, SuperLeadPayloads::handleOpenZoneCreateScreen)
-                .playToClient(ServerConfigSnapshot.TYPE, ServerConfigSnapshot.STREAM_CODEC, SuperLeadPayloads::handleServerConfigSnapshot)
-                .playToServer(UseConnectionAction.TYPE, UseConnectionAction.STREAM_CODEC, SuperLeadPayloads::handleUseConnectionAction)
-                .playToServer(ClientRopeContactReport.TYPE, ClientRopeContactReport.STREAM_CODEC, SuperLeadPayloads::handleClientRopeContactReport)
-                .playToServer(AddRopeAttachment.TYPE, AddRopeAttachment.STREAM_CODEC, SuperLeadPayloads::handleAddRopeAttachment)
-                .playToServer(RemoveRopeAttachment.TYPE, RemoveRopeAttachment.STREAM_CODEC, SuperLeadPayloads::handleRemoveRopeAttachment)
-                .playToServer(ToggleRopeAttachmentForm.TYPE, ToggleRopeAttachmentForm.STREAM_CODEC, SuperLeadPayloads::handleToggleRopeAttachmentForm)
-                .playToServer(PresetPromptResponse.TYPE, PresetPromptResponse.STREAM_CODEC, SuperLeadPayloads::handlePresetPromptResponse)
+                .playToClient(RopeContactPulse.TYPE, RopeContactPulse.STREAM_CODEC,
+                        SuperLeadPayloads::handleRopeContactPulse)
+                .playToClient(PresetPromptOpen.TYPE, PresetPromptOpen.STREAM_CODEC,
+                        SuperLeadPayloads::handlePresetPromptOpen)
+                .playToClient(PresetApplyOverrides.TYPE, PresetApplyOverrides.STREAM_CODEC,
+                        SuperLeadPayloads::handlePresetApply)
+                .playToClient(PresetClearOverrides.TYPE, PresetClearOverrides.STREAM_CODEC,
+                        SuperLeadPayloads::handlePresetClear)
+                .playToClient(PresetListResponse.TYPE, PresetListResponse.STREAM_CODEC,
+                        SuperLeadPayloads::handlePresetListResponse)
+                .playToClient(PresetDetailsResponse.TYPE, PresetDetailsResponse.STREAM_CODEC,
+                        SuperLeadPayloads::handlePresetDetailsResponse)
+                .playToClient(SyncDimensionPresets.TYPE, SyncDimensionPresets.STREAM_CODEC,
+                        SuperLeadPayloads::handleSyncDimensionPresets)
+                .playToClient(SyncPhysicsZones.TYPE, SyncPhysicsZones.STREAM_CODEC,
+                        SuperLeadPayloads::handleSyncPhysicsZones)
+                .playToClient(ZoneSelectionState.TYPE, ZoneSelectionState.STREAM_CODEC,
+                        SuperLeadPayloads::handleZoneSelectionState)
+                .playToClient(OpenZoneCreateScreen.TYPE, OpenZoneCreateScreen.STREAM_CODEC,
+                        SuperLeadPayloads::handleOpenZoneCreateScreen)
+                .playToClient(ServerConfigSnapshot.TYPE, ServerConfigSnapshot.STREAM_CODEC,
+                        SuperLeadPayloads::handleServerConfigSnapshot)
+                .playToServer(UseConnectionAction.TYPE, UseConnectionAction.STREAM_CODEC,
+                        SuperLeadPayloads::handleUseConnectionAction)
+                .playToServer(ClientRopeContactReport.TYPE, ClientRopeContactReport.STREAM_CODEC,
+                        SuperLeadPayloads::handleClientRopeContactReport)
+                .playToServer(AddRopeAttachment.TYPE, AddRopeAttachment.STREAM_CODEC,
+                        SuperLeadPayloads::handleAddRopeAttachment)
+                .playToServer(RemoveRopeAttachment.TYPE, RemoveRopeAttachment.STREAM_CODEC,
+                        SuperLeadPayloads::handleRemoveRopeAttachment)
+                .playToServer(ToggleRopeAttachmentForm.TYPE, ToggleRopeAttachmentForm.STREAM_CODEC,
+                        SuperLeadPayloads::handleToggleRopeAttachmentForm)
+                .playToServer(UpdateRopeAttachmentSignText.TYPE, UpdateRopeAttachmentSignText.STREAM_CODEC,
+                        SuperLeadPayloads::handleUpdateRopeAttachmentSignText)
+                .playToServer(UpdateSignAttachmentAppearance.TYPE, UpdateSignAttachmentAppearance.STREAM_CODEC,
+                        SuperLeadPayloads::handleUpdateSignAttachmentAppearance)
+                .playToServer(PresetPromptResponse.TYPE, PresetPromptResponse.STREAM_CODEC,
+                        SuperLeadPayloads::handlePresetPromptResponse)
                 .playToServer(PresetEditKey.TYPE, PresetEditKey.STREAM_CODEC, SuperLeadPayloads::handlePresetEditKey)
-                .playToServer(PresetListRequest.TYPE, PresetListRequest.STREAM_CODEC, SuperLeadPayloads::handlePresetListRequest)
-                .playToServer(PresetDetailsRequest.TYPE, PresetDetailsRequest.STREAM_CODEC, SuperLeadPayloads::handlePresetDetailsRequest)
-                .playToServer(ZoneSelectionClick.TYPE, ZoneSelectionClick.STREAM_CODEC, SuperLeadPayloads::handleZoneSelectionClick)
-                .playToServer(ZoneCreateRequest.TYPE, ZoneCreateRequest.STREAM_CODEC, SuperLeadPayloads::handleZoneCreateRequest)
-                .playToServer(ZoneListRequest.TYPE, ZoneListRequest.STREAM_CODEC, SuperLeadPayloads::handleZoneListRequest)
-                .playToServer(ServerConfigRequest.TYPE, ServerConfigRequest.STREAM_CODEC, SuperLeadPayloads::handleServerConfigRequest)
-                .playToServer(ServerConfigSet.TYPE, ServerConfigSet.STREAM_CODEC, SuperLeadPayloads::handleServerConfigSet);
+                .playToServer(PresetListRequest.TYPE, PresetListRequest.STREAM_CODEC,
+                        SuperLeadPayloads::handlePresetListRequest)
+                .playToServer(PresetDetailsRequest.TYPE, PresetDetailsRequest.STREAM_CODEC,
+                        SuperLeadPayloads::handlePresetDetailsRequest)
+                .playToServer(ZoneSelectionClick.TYPE, ZoneSelectionClick.STREAM_CODEC,
+                        SuperLeadPayloads::handleZoneSelectionClick)
+                .playToServer(ZoneCreateRequest.TYPE, ZoneCreateRequest.STREAM_CODEC,
+                        SuperLeadPayloads::handleZoneCreateRequest)
+                .playToServer(ZoneListRequest.TYPE, ZoneListRequest.STREAM_CODEC,
+                        SuperLeadPayloads::handleZoneListRequest)
+                .playToServer(ServerConfigRequest.TYPE, ServerConfigRequest.STREAM_CODEC,
+                        SuperLeadPayloads::handleServerConfigRequest)
+                .playToServer(ServerConfigSet.TYPE, ServerConfigSet.STREAM_CODEC,
+                        SuperLeadPayloads::handleServerConfigSet);
     }
 
     public static void sendToPlayer(ServerPlayer player) {
@@ -151,7 +183,8 @@ public final class SuperLeadPayloads {
         com.zhongbai233.super_lead.lead.client.render.RopeContactsClient.apply(payload);
         var minecraft = net.minecraft.client.Minecraft.getInstance();
         var level = minecraft.level;
-        if (level == null) return;
+        if (level == null)
+            return;
         var staticRopes = com.zhongbai233.super_lead.lead.client.chunk.StaticRopeChunkRegistry.get();
         for (RopeContactPulse.Entry entry : payload.contacts()) {
             staticRopes.invalidateConnection(level, entry.ropeId());
@@ -159,8 +192,10 @@ public final class SuperLeadPayloads {
     }
 
     private static void handleClientRopeContactReport(ClientRopeContactReport payload, IPayloadContext context) {
-        if (!(context.player() instanceof ServerPlayer player)) return;
-        if (!(player.level() instanceof ServerLevel level)) return;
+        if (!(context.player() instanceof ServerPlayer player))
+            return;
+        if (!(player.level() instanceof ServerLevel level))
+            return;
         RopeContactTracker.acceptClientContact(level, player, payload);
     }
 
@@ -186,27 +221,36 @@ public final class SuperLeadPayloads {
     }
 
     private static void handleAddRopeAttachment(AddRopeAttachment payload, IPayloadContext context) {
-        if (!(context.player() instanceof ServerPlayer player)) return;
-        if (!(player.level() instanceof ServerLevel level)) return;
+        if (!(context.player() instanceof ServerPlayer player))
+            return;
+        if (!(player.level() instanceof ServerLevel level))
+            return;
+        if (!SuperLeadNetwork.canModifyRopes(player))
+            return;
         net.minecraft.world.InteractionHand hand = payload.useOffhand()
                 ? net.minecraft.world.InteractionHand.OFF_HAND
                 : net.minecraft.world.InteractionHand.MAIN_HAND;
         net.minecraft.world.item.ItemStack stack = player.getItemInHand(hand);
-        if (stack.isEmpty()) return;
-        if (!RopeAttachmentItems.isAttachable(stack)) return;
-        // Items must be "tied on" with string in the opposite hand. Creative bypasses both checks.
-        net.minecraft.world.InteractionHand bindHand = payload.useOffhand()
-                ? net.minecraft.world.InteractionHand.MAIN_HAND
-                : net.minecraft.world.InteractionHand.OFF_HAND;
-        net.minecraft.world.item.ItemStack bindStack = player.getItemInHand(bindHand);
-        boolean creative = player.getAbilities().instabuild;
-        if (!creative && !bindStack.is(net.minecraft.world.item.Items.STRING)) return;
+        if (stack.isEmpty())
+            return;
+        if (!RopeAttachmentItems.isAttachable(stack))
+            return;
+        // Items must be "tied on" with string in the offhand. Creative still needs the
+        // string as an explicit intent signal, but does not consume it.
+        net.minecraft.world.item.ItemStack bindStack = player.getOffhandItem();
+        boolean creative = player.isCreative();
+        if (!bindStack.is(net.minecraft.world.item.Items.STRING))
+            return;
         java.util.Optional<LeadConnection> opt = SuperLeadNetwork.findConnectionById(level, payload.connectionId());
-        if (opt.isEmpty()) return;
+        if (opt.isEmpty())
+            return;
         LeadConnection connection = opt.get();
-        if (connection.kind() != LeadKind.NORMAL && connection.kind() != LeadKind.REDSTONE) return;
-        if (!SuperLeadNetwork.canTouchConnectionForAttachment(level, player, connection)) return;
-        SuperLeadNetwork.addAttachment(level, connection, payload.t(), stack.copyWithCount(1));
+        if (connection.kind() != LeadKind.NORMAL && connection.kind() != LeadKind.REDSTONE)
+            return;
+        if (!SuperLeadNetwork.canTouchConnectionForAttachment(level, player, connection))
+            return;
+        SuperLeadNetwork.addAttachment(level, connection, payload.t(), stack.copyWithCount(1),
+                payload.frontSide());
         if (!creative) {
             stack.shrink(1);
             bindStack.shrink(1);
@@ -214,41 +258,124 @@ public final class SuperLeadPayloads {
     }
 
     private static void handleRemoveRopeAttachment(RemoveRopeAttachment payload, IPayloadContext context) {
-        if (!(context.player() instanceof ServerPlayer player)) return;
-        if (!(player.level() instanceof ServerLevel level)) return;
+        if (!(context.player() instanceof ServerPlayer player))
+            return;
+        if (!(player.level() instanceof ServerLevel level))
+            return;
+        if (!SuperLeadNetwork.canModifyRopes(player))
+            return;
         java.util.Optional<LeadConnection> opt = SuperLeadNetwork.findConnectionById(level, payload.connectionId());
-        if (opt.isEmpty()) return;
+        if (opt.isEmpty())
+            return;
         LeadConnection connection = opt.get();
-        if (!SuperLeadNetwork.canTouchConnectionForAttachment(level, player, connection)) return;
+        if (!SuperLeadNetwork.canTouchConnectionForAttachment(level, player, connection))
+            return;
+        // Snapshot world position before removal so the particle lands where the item
+        // was.
+        net.minecraft.world.phys.Vec3 particlePos = null;
+        for (RopeAttachment a : connection.attachments()) {
+            if (a.id().equals(payload.attachmentId())) {
+                net.minecraft.world.phys.Vec3 from = connection.from().attachmentPoint(level);
+                net.minecraft.world.phys.Vec3 to = connection.to().attachmentPoint(level);
+                double dist = from.distanceTo(to);
+                double sag = Math.min(0.70D, dist * 0.055D);
+                particlePos = from.lerp(to, a.t())
+                        .add(0.0D, -Math.sin(Math.PI * a.t()) * sag - 0.25D, 0.0D);
+                break;
+            }
+        }
         SuperLeadNetwork.removeAttachment(level, connection, payload.attachmentId(), player);
+        if (particlePos != null) {
+            level.sendParticles(
+                    net.minecraft.core.particles.ParticleTypes.CRIT,
+                    particlePos.x, particlePos.y, particlePos.z,
+                    8, 0.25D, 0.25D, 0.25D, 0.15D);
+        }
     }
 
     private static void handleToggleRopeAttachmentForm(ToggleRopeAttachmentForm payload, IPayloadContext context) {
-        if (!(context.player() instanceof ServerPlayer player)) return;
-        if (!(player.level() instanceof ServerLevel level)) return;
+        if (!(context.player() instanceof ServerPlayer player))
+            return;
+        if (!(player.level() instanceof ServerLevel level))
+            return;
+        if (!SuperLeadNetwork.canModifyRopes(player))
+            return;
         java.util.Optional<LeadConnection> opt = SuperLeadNetwork.findConnectionById(level, payload.connectionId());
-        if (opt.isEmpty()) return;
+        if (opt.isEmpty())
+            return;
         LeadConnection connection = opt.get();
-        if (!SuperLeadNetwork.canTouchConnectionForAttachment(level, player, connection)) return;
+        if (!SuperLeadNetwork.canTouchConnectionForAttachment(level, player, connection))
+            return;
         SuperLeadNetwork.toggleAttachmentForm(level, connection, payload.attachmentId());
     }
 
+    private static void handleUpdateRopeAttachmentSignText(UpdateRopeAttachmentSignText payload,
+            IPayloadContext context) {
+        if (!(context.player() instanceof ServerPlayer player))
+            return;
+        if (!(player.level() instanceof ServerLevel level))
+            return;
+        if (!SuperLeadNetwork.canModifyRopes(player))
+            return;
+        java.util.Optional<LeadConnection> opt = SuperLeadNetwork.findConnectionById(level, payload.connectionId());
+        if (opt.isEmpty())
+            return;
+        LeadConnection connection = opt.get();
+        if (!SuperLeadNetwork.canTouchConnectionForAttachment(level, player, connection))
+            return;
+        SuperLeadNetwork.updateAttachmentSignText(level, connection, payload.attachmentId(),
+                payload.frontText(), payload.lines());
+    }
+
+    private static void handleUpdateSignAttachmentAppearance(UpdateSignAttachmentAppearance payload,
+            IPayloadContext context) {
+        if (!(context.player() instanceof ServerPlayer player))
+            return;
+        if (!(player.level() instanceof ServerLevel level))
+            return;
+        if (!SuperLeadNetwork.canModifyRopes(player))
+            return;
+        java.util.Optional<LeadConnection> opt = SuperLeadNetwork.findConnectionById(level, payload.connectionId());
+        if (opt.isEmpty())
+            return;
+        LeadConnection connection = opt.get();
+        if (!SuperLeadNetwork.canTouchConnectionForAttachment(level, player, connection))
+            return;
+        if (payload.operation() == UpdateSignAttachmentAppearance.OP_GLOW) {
+            SuperLeadNetwork.applySignGlow(level, connection, payload.attachmentId(), payload.frontText());
+        } else if (payload.operation() == UpdateSignAttachmentAppearance.OP_DYE) {
+            net.minecraft.world.item.DyeColor color = net.minecraft.world.item.DyeColor.byId(payload.dyeColor());
+            if (color != null) {
+                SuperLeadNetwork.applySignDye(level, connection, payload.attachmentId(), color,
+                        payload.frontText());
+            }
+        }
+    }
+
     private static void handleUseConnectionAction(UseConnectionAction payload, IPayloadContext context) {
-        if (!(context.player() instanceof ServerPlayer player)) return;
-        if (!(player.level() instanceof ServerLevel level)) return;
+        if (!(context.player() instanceof ServerPlayer player))
+            return;
+        if (!(player.level() instanceof ServerLevel level))
+            return;
+        if (!SuperLeadNetwork.canModifyRopes(player))
+            return;
         LeadConnectionAction[] actions = LeadConnectionAction.values();
-        if (payload.actionOrdinal() < 0 || payload.actionOrdinal() >= actions.length) return;
+        if (payload.actionOrdinal() < 0 || payload.actionOrdinal() >= actions.length)
+            return;
         LeadConnectionAction action = actions[payload.actionOrdinal()];
         net.minecraft.world.InteractionHand hand = payload.useOffhand()
                 ? net.minecraft.world.InteractionHand.OFF_HAND
                 : net.minecraft.world.InteractionHand.MAIN_HAND;
         net.minecraft.world.item.ItemStack stack = player.getItemInHand(hand);
-        if (!action.matches(stack)) return;
+        if (!action.matches(stack))
+            return;
 
         java.util.Optional<LeadConnection> opt = SuperLeadNetwork.findConnectionById(level, payload.connectionId());
-        if (opt.isEmpty()) return;
+        if (opt.isEmpty())
+            return;
         LeadConnection connection = opt.get();
-        if (!action.canTarget(connection)) return;
+        if (!action.canTarget(connection))
+            return;
 
         if (!SuperLeadNetwork.canUseClientPickedConnection(level, player, connection,
                 payload.hitPoint(), payload.hitT())) {
@@ -277,44 +404,53 @@ public final class SuperLeadPayloads {
     }
 
     private static void handlePresetPromptResponse(PresetPromptResponse payload, IPayloadContext context) {
-        if (!(context.player() instanceof ServerPlayer player)) return;
+        if (!(context.player() instanceof ServerPlayer player))
+            return;
         PresetServerManager.handleResponse(player, payload);
     }
 
     private static void handlePresetEditKey(PresetEditKey payload, IPayloadContext context) {
-        if (!(context.player() instanceof ServerPlayer player)) return;
-        net.minecraft.server.permissions.Permission.HasCommandLevel op =
-                new net.minecraft.server.permissions.Permission.HasCommandLevel(
-                        net.minecraft.server.permissions.PermissionLevel.GAMEMASTERS);
-        if (!player.permissions().hasPermission(op)) return;
+        if (!(context.player() instanceof ServerPlayer player))
+            return;
+        net.minecraft.server.permissions.Permission.HasCommandLevel op = new net.minecraft.server.permissions.Permission.HasCommandLevel(
+                net.minecraft.server.permissions.PermissionLevel.GAMEMASTERS);
+        if (!player.permissions().hasPermission(op))
+            return;
         net.minecraft.server.MinecraftServer server = player.level().getServer();
-        if (server == null) return;
+        if (server == null)
+            return;
         PresetServerManager.editKey(server, payload);
     }
 
     private static void handlePresetListRequest(PresetListRequest payload, IPayloadContext context) {
-        if (!(context.player() instanceof ServerPlayer player)) return;
+        if (!(context.player() instanceof ServerPlayer player))
+            return;
         PresetServerManager.handleListRequest(player);
     }
 
     private static void handlePresetDetailsRequest(PresetDetailsRequest payload, IPayloadContext context) {
-        if (!(context.player() instanceof ServerPlayer player)) return;
+        if (!(context.player() instanceof ServerPlayer player))
+            return;
         PresetServerManager.handleDetailsRequest(player, payload.name());
     }
 
     private static void handleZoneSelectionClick(ZoneSelectionClick payload, IPayloadContext context) {
-        if (!(context.player() instanceof ServerPlayer player)) return;
+        if (!(context.player() instanceof ServerPlayer player))
+            return;
         PhysicsZoneSelectionManager.handleClick(player, payload.pos());
     }
 
     private static void handleZoneCreateRequest(ZoneCreateRequest payload, IPayloadContext context) {
-        if (!(context.player() instanceof ServerPlayer player)) return;
+        if (!(context.player() instanceof ServerPlayer player))
+            return;
         PhysicsZoneSelectionManager.createZone(player, payload);
     }
 
     private static void handleZoneListRequest(ZoneListRequest payload, IPayloadContext context) {
-        if (!(context.player() instanceof ServerPlayer player)) return;
-        if (!PresetServerManager.canManage(player)) return;
+        if (!(context.player() instanceof ServerPlayer player))
+            return;
+        if (!PresetServerManager.canManage(player))
+            return;
         if (player.level() instanceof ServerLevel level) {
             PresetServerManager.sendZones(player, level);
         }
@@ -325,12 +461,14 @@ public final class SuperLeadPayloads {
     }
 
     private static void handleServerConfigRequest(ServerConfigRequest payload, IPayloadContext context) {
-        if (!(context.player() instanceof ServerPlayer player)) return;
+        if (!(context.player() instanceof ServerPlayer player))
+            return;
         ServerConfigManager.sendSnapshot(player);
     }
 
     private static void handleServerConfigSet(ServerConfigSet payload, IPayloadContext context) {
-        if (!(context.player() instanceof ServerPlayer player)) return;
+        if (!(context.player() instanceof ServerPlayer player))
+            return;
         ServerConfigManager.handleSet(player, payload);
     }
 

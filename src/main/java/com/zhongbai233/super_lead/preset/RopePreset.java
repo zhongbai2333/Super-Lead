@@ -14,8 +14,13 @@ public final class RopePreset {
         this.overrides = new LinkedHashMap<>(overrides);
     }
 
-    public String name() { return name; }
-    public Map<String, String> overrides() { return overrides; }
+    public String name() {
+        return name;
+    }
+
+    public Map<String, String> overrides() {
+        return overrides;
+    }
 
     public RopePreset withOverride(String keyId, String value) {
         Map<String, String> m = new LinkedHashMap<>(this.overrides);

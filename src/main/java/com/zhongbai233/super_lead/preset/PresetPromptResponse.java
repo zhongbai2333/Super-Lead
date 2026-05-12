@@ -7,12 +7,15 @@ import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.resources.Identifier;
 
 public record PresetPromptResponse(String presetName, boolean accepted) implements CustomPacketPayload {
-    public static final CustomPacketPayload.Type<PresetPromptResponse> TYPE =
-            new CustomPacketPayload.Type<>(Identifier.fromNamespaceAndPath(Super_lead.MODID, "preset_prompt_response"));
-    public static final StreamCodec<RegistryFriendlyByteBuf, PresetPromptResponse> STREAM_CODEC =
-            CustomPacketPayload.codec(PresetPromptResponse::write, PresetPromptResponse::read);
+    public static final CustomPacketPayload.Type<PresetPromptResponse> TYPE = new CustomPacketPayload.Type<>(
+            Identifier.fromNamespaceAndPath(Super_lead.MODID, "preset_prompt_response"));
+    public static final StreamCodec<RegistryFriendlyByteBuf, PresetPromptResponse> STREAM_CODEC = CustomPacketPayload
+            .codec(PresetPromptResponse::write, PresetPromptResponse::read);
 
-    @Override public Type<? extends CustomPacketPayload> type() { return TYPE; }
+    @Override
+    public Type<? extends CustomPacketPayload> type() {
+        return TYPE;
+    }
 
     private void write(RegistryFriendlyByteBuf buf) {
         buf.writeUtf(presetName);

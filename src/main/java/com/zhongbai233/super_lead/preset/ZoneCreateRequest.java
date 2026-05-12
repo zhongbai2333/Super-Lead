@@ -10,14 +10,15 @@ import net.minecraft.resources.Identifier;
 /** C→S: create a physics zone from the shears selection GUI. */
 public record ZoneCreateRequest(String name, String presetName, BlockPos from, BlockPos to)
         implements CustomPacketPayload {
-    public static final CustomPacketPayload.Type<ZoneCreateRequest> TYPE =
-            new CustomPacketPayload.Type<>(
-                    Identifier.fromNamespaceAndPath(Super_lead.MODID, "zone_create_request"));
-    public static final StreamCodec<RegistryFriendlyByteBuf, ZoneCreateRequest> STREAM_CODEC =
-            CustomPacketPayload.codec(ZoneCreateRequest::write, ZoneCreateRequest::read);
+    public static final CustomPacketPayload.Type<ZoneCreateRequest> TYPE = new CustomPacketPayload.Type<>(
+            Identifier.fromNamespaceAndPath(Super_lead.MODID, "zone_create_request"));
+    public static final StreamCodec<RegistryFriendlyByteBuf, ZoneCreateRequest> STREAM_CODEC = CustomPacketPayload
+            .codec(ZoneCreateRequest::write, ZoneCreateRequest::read);
 
     @Override
-    public Type<? extends CustomPacketPayload> type() { return TYPE; }
+    public Type<? extends CustomPacketPayload> type() {
+        return TYPE;
+    }
 
     private void write(RegistryFriendlyByteBuf buffer) {
         buffer.writeUtf(name);

@@ -9,15 +9,18 @@ import net.minecraft.client.Minecraft;
 
 /**
  * Client-side cache of currently active rope contacts (server-broadcast).
- * The render driver consults this before stepping each rope simulation so that the
+ * The render driver consults this before stepping each rope simulation so that
+ * the
  * same visual deflection appears on every observer.
  */
 public final class RopeContactsClient {
-    public record Contact(float t, float dx, float dy, float dz) {}
+    public record Contact(float t, float dx, float dy, float dz) {
+    }
 
     private static final Map<UUID, Contact> ACTIVE = new HashMap<>();
 
-    private RopeContactsClient() {}
+    private RopeContactsClient() {
+    }
 
     public static synchronized void apply(RopeContactPulse pulse) {
         ACTIVE.clear();
@@ -28,11 +31,13 @@ public final class RopeContactsClient {
         float pushZ = 0.0F;
         int pushContacts = 0;
         for (RopeContactPulse.Entry e : pulse.contacts()) {
-            // If a single rope receives multiple contacts in one snapshot, keep the deepest.
+            // If a single rope receives multiple contacts in one snapshot, keep the
+            // deepest.
             Contact existing = ACTIVE.get(e.ropeId());
             float depthSqrNew = e.dx() * e.dx() + e.dy() * e.dy() + e.dz() * e.dz();
             if (existing == null
-                    || depthSqrNew > existing.dx * existing.dx + existing.dy * existing.dy + existing.dz * existing.dz) {
+                    || depthSqrNew > existing.dx * existing.dx + existing.dy * existing.dy
+                            + existing.dz * existing.dz) {
                 ACTIVE.put(e.ropeId(), new Contact(e.t(), e.dx(), e.dy(), e.dz()));
             }
             if (localPlayer != null && localPlayer.equals(e.playerId())) {

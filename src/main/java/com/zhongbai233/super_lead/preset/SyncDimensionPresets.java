@@ -11,22 +11,24 @@ import net.minecraft.resources.Identifier;
 /**
  * S->C cache of preset packages used by ropes in the current dimension.
  *
- * <p>This deliberately carries preset names and override values only. Zone positions stay
+ * <p>
+ * This deliberately carries preset names and override values only. Zone
+ * positions stay
  * server-private unless an OP explicitly asks for the zone preview list.
  */
 public record SyncDimensionPresets(Map<String, Map<String, String>> presets) implements CustomPacketPayload {
-    public static final CustomPacketPayload.Type<SyncDimensionPresets> TYPE =
-            new CustomPacketPayload.Type<>(
-                    Identifier.fromNamespaceAndPath(Super_lead.MODID, "sync_dimension_presets"));
-    public static final StreamCodec<RegistryFriendlyByteBuf, SyncDimensionPresets> STREAM_CODEC =
-            CustomPacketPayload.codec(SyncDimensionPresets::write, SyncDimensionPresets::read);
+    public static final CustomPacketPayload.Type<SyncDimensionPresets> TYPE = new CustomPacketPayload.Type<>(
+            Identifier.fromNamespaceAndPath(Super_lead.MODID, "sync_dimension_presets"));
+    public static final StreamCodec<RegistryFriendlyByteBuf, SyncDimensionPresets> STREAM_CODEC = CustomPacketPayload
+            .codec(SyncDimensionPresets::write, SyncDimensionPresets::read);
 
     public SyncDimensionPresets {
         Map<String, Map<String, String>> copy = new LinkedHashMap<>();
         if (presets != null) {
             for (Map.Entry<String, Map<String, String>> entry : presets.entrySet()) {
                 String name = entry.getKey();
-                if (name == null || name.isBlank()) continue;
+                if (name == null || name.isBlank())
+                    continue;
                 copy.put(name, PresetPayloadCodecs.immutableCopy(entry.getValue()));
             }
         }

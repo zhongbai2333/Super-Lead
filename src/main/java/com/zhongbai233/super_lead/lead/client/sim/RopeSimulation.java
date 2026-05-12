@@ -39,7 +39,8 @@ public final class RopeSimulation extends RopeSimulationStepper {
             double sz = z[s + 1] - z[s];
             totalLen += Math.sqrt(sx * sx + sy * sy + sz * sz);
         }
-        if (totalLen < 1.0e-6D) return null;
+        if (totalLen < 1.0e-6D)
+            return null;
 
         double centerX = (box.minX + box.maxX) * 0.5D;
         double centerY = (box.minY + box.maxY) * 0.5D;
@@ -57,7 +58,10 @@ public final class RopeSimulation extends RopeSimulationStepper {
             double u = 0.0D;
             if (segLenSqr > 1.0e-9D) {
                 u = ((centerX - ax) * sx + (centerY - ay) * sy + (centerZ - az) * sz) / segLenSqr;
-                if (u < 0.0D) u = 0.0D; else if (u > 1.0D) u = 1.0D;
+                if (u < 0.0D)
+                    u = 0.0D;
+                else if (u > 1.0D)
+                    u = 1.0D;
             }
 
             double qx = ax, qy = ay, qz = az;
@@ -69,9 +73,13 @@ public final class RopeSimulation extends RopeSimulationStepper {
                 cx = clamp(qx, box.minX, box.maxX);
                 cy = clamp(qy, box.minY, box.maxY);
                 cz = clamp(qz, box.minZ, box.maxZ);
-                if (segLenSqr <= 1.0e-9D) break;
+                if (segLenSqr <= 1.0e-9D)
+                    break;
                 double next = ((cx - ax) * sx + (cy - ay) * sy + (cz - az) * sz) / segLenSqr;
-                if (next < 0.0D) next = 0.0D; else if (next > 1.0D) next = 1.0D;
+                if (next < 0.0D)
+                    next = 0.0D;
+                else if (next > 1.0D)
+                    next = 1.0D;
                 if (Math.abs(next - u) < 1.0e-6D) {
                     u = next;
                     qx = ax + sx * u;
@@ -99,9 +107,21 @@ public final class RopeSimulation extends RopeSimulationStepper {
                 double exit = toMinX;
                 rawNx = 1.0D;
                 rawNz = 0.0D;
-                if (toMaxX < exit) { exit = toMaxX; rawNx = -1.0D; rawNz = 0.0D; }
-                if (toMinZ < exit) { exit = toMinZ; rawNx = 0.0D; rawNz = 1.0D; }
-                if (toMaxZ < exit) { exit = toMaxZ; rawNx = 0.0D; rawNz = -1.0D; }
+                if (toMaxX < exit) {
+                    exit = toMaxX;
+                    rawNx = -1.0D;
+                    rawNz = 0.0D;
+                }
+                if (toMinZ < exit) {
+                    exit = toMinZ;
+                    rawNx = 0.0D;
+                    rawNz = 1.0D;
+                }
+                if (toMaxZ < exit) {
+                    exit = toMaxZ;
+                    rawNx = 0.0D;
+                    rawNz = -1.0D;
+                }
                 separation = -Math.max(0.0D, exit);
             } else {
                 rawNx = cx - qx;
@@ -112,7 +132,8 @@ public final class RopeSimulation extends RopeSimulationStepper {
                     rawNz = centerZ - qz;
                     nLen = Math.sqrt(rawNx * rawNx + rawNz * rawNz);
                 }
-                if (nLen < 1.0e-5D) continue;
+                if (nLen < 1.0e-5D)
+                    continue;
                 rawNx /= nLen;
                 rawNz /= nLen;
                 double dx = cx - qx;
@@ -125,7 +146,8 @@ public final class RopeSimulation extends RopeSimulationStepper {
             double horizontalLen = Math.sqrt(sx * sx + sz * sz);
             if (horizontalLen > 1.0e-5D) {
                 // Stable side normal for diagonal ropes: use the vector from the rope point to
-                // the player's centre, projected perpendicular to the rope's horizontal tangent.
+                // the player's centre, projected perpendicular to the rope's horizontal
+                // tangent.
                 // The nearest-face normal above is only a fallback; using it directly makes a
                 // diagonal rope alternately push X/Z as the sampled point crosses AABB faces.
                 double tx = sx / horizontalLen;
@@ -162,10 +184,76 @@ public final class RopeSimulation extends RopeSimulationStepper {
         return best;
     }
 
+    public SupportSample findPlayerSupportContact(AABB box, double radius) {
+        double supportRadius = Math.max(radius, 0.24D);
+        double supportHeight = Math.max(radius * 1.5D, 0.28D);
+        double totalLen = 0.0D;
+        for (int s = 0; s < segments; s++) {
+            double sx = x[s + 1] - x[s];
+            double sy = y[s + 1] - y[s];
+            double sz = z[s + 1] - z[s];
+            totalLen += Math.sqrt(sx * sx + sy * sy + sz * sz);
+        }
+        if (totalLen < 1.0e-6D)
+            return null;
+
+        double centerX = (box.minX + box.maxX) * 0.5D;
+        double centerZ = (box.minZ + box.maxZ) * 0.5D;
+        double walked = 0.0D;
+        SupportSample best = null;
+        double bestScore = Double.POSITIVE_INFINITY;
+
+        for (int s = 0; s < segments; s++) {
+            double ax = x[s], ay = y[s], az = z[s];
+            double bx = x[s + 1], by = y[s + 1], bz = z[s + 1];
+            double sx = bx - ax, sy = by - ay, sz = bz - az;
+            double segLenSqr = sx * sx + sy * sy + sz * sz;
+            double segLen = Math.sqrt(segLenSqr);
+            double u = 0.0D;
+            double horizLenSqr = sx * sx + sz * sz;
+            if (horizLenSqr > 1.0e-9D) {
+                u = ((centerX - ax) * sx + (centerZ - az) * sz) / horizLenSqr;
+                if (u < 0.0D)
+                    u = 0.0D;
+                else if (u > 1.0D)
+                    u = 1.0D;
+            }
+
+            double qx = ax + sx * u;
+            double qy = ay + sy * u;
+            double qz = az + sz * u;
+            double cx = clamp(qx, box.minX, box.maxX);
+            double cz = clamp(qz, box.minZ, box.maxZ);
+            double hx = qx - cx;
+            double hz = qz - cz;
+            double horizontal = Math.sqrt(hx * hx + hz * hz);
+            double verticalGap = box.minY - qy;
+            if (horizontal > supportRadius || verticalGap < -0.08D || verticalGap > supportHeight) {
+                walked += segLen;
+                continue;
+            }
+
+            double score = horizontal * horizontal + verticalGap * verticalGap * 0.35D;
+            if (score < bestScore) {
+                double t = (walked + segLen * u) / totalLen;
+                double depth = Math.max(0.0D, supportHeight - Math.max(verticalGap, horizontal));
+                best = new SupportSample(qx, qy, qz, t, depth);
+                bestScore = score;
+            }
+            walked += segLen;
+        }
+
+        return best;
+    }
+
     private static double clamp(double value, double min, double max) {
         return value < min ? min : (value > max ? max : value);
     }
 
     public record ContactSample(double x, double y, double z, double t,
-            double normalX, double normalZ, double depth) {}
+            double normalX, double normalZ, double depth) {
+    }
+
+    public record SupportSample(double x, double y, double z, double t, double depth) {
+    }
 }

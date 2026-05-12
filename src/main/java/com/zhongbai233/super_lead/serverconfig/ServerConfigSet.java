@@ -7,12 +7,15 @@ import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.resources.Identifier;
 
 public record ServerConfigSet(String key, String value) implements CustomPacketPayload {
-    public static final CustomPacketPayload.Type<ServerConfigSet> TYPE =
-            new CustomPacketPayload.Type<>(Identifier.fromNamespaceAndPath(Super_lead.MODID, "server_config_set"));
-    public static final StreamCodec<RegistryFriendlyByteBuf, ServerConfigSet> STREAM_CODEC =
-            CustomPacketPayload.codec(ServerConfigSet::write, ServerConfigSet::read);
+    public static final CustomPacketPayload.Type<ServerConfigSet> TYPE = new CustomPacketPayload.Type<>(
+            Identifier.fromNamespaceAndPath(Super_lead.MODID, "server_config_set"));
+    public static final StreamCodec<RegistryFriendlyByteBuf, ServerConfigSet> STREAM_CODEC = CustomPacketPayload
+            .codec(ServerConfigSet::write, ServerConfigSet::read);
 
-    @Override public Type<? extends CustomPacketPayload> type() { return TYPE; }
+    @Override
+    public Type<? extends CustomPacketPayload> type() {
+        return TYPE;
+    }
 
     private void write(RegistryFriendlyByteBuf buf) {
         buf.writeUtf(key);

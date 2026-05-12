@@ -11,11 +11,10 @@ import net.minecraft.world.phys.Vec3;
 public record UseConnectionAction(UUID connectionId, int actionOrdinal, boolean useOffhand,
         Vec3 hitPoint, double hitT)
         implements CustomPacketPayload {
-    public static final CustomPacketPayload.Type<UseConnectionAction> TYPE =
-            new CustomPacketPayload.Type<>(
-                    Identifier.fromNamespaceAndPath(Super_lead.MODID, "use_connection_action"));
-    public static final StreamCodec<RegistryFriendlyByteBuf, UseConnectionAction> STREAM_CODEC =
-            CustomPacketPayload.codec(UseConnectionAction::write, UseConnectionAction::read);
+    public static final CustomPacketPayload.Type<UseConnectionAction> TYPE = new CustomPacketPayload.Type<>(
+            Identifier.fromNamespaceAndPath(Super_lead.MODID, "use_connection_action"));
+    public static final StreamCodec<RegistryFriendlyByteBuf, UseConnectionAction> STREAM_CODEC = CustomPacketPayload
+            .codec(UseConnectionAction::write, UseConnectionAction::read);
 
     @Override
     public Type<? extends CustomPacketPayload> type() {

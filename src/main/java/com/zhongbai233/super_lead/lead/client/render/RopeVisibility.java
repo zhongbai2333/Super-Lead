@@ -10,21 +10,29 @@ import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 
 public final class RopeVisibility {
-    // Endpoint visibility samples used by the legacy whole-rope check. Kept for the far LOD
+    // Endpoint visibility samples used by the legacy whole-rope check. Kept for the
+    // far LOD
     // bucket where per-segment cost is not worth paying.
     private static final int OCCLUSION_SAMPLES = 5;
     private static final double MIN_RAY_DISTANCE_SQR = 0.25D * 0.25D;
-    // Distance buckets for occlusion-cache refresh interval. A rope inside the inner ring is
-    // re-tested every frame; outer rings reuse the cached visibility for several frames so far
-    // ropes don't pay the per-frame raycast cost. The cache is invalidated automatically when the
-    // rope's positions change (RopeSimulation.markBoundsDirty / prepareRender rebuild).
+    // Distance buckets for occlusion-cache refresh interval. A rope inside the
+    // inner ring is
+    // re-tested every frame; outer rings reuse the cached visibility for several
+    // frames so far
+    // ropes don't pay the per-frame raycast cost. The cache is invalidated
+    // automatically when the
+    // rope's positions change (RopeSimulation.markBoundsDirty / prepareRender
+    // rebuild).
     private static final double NEAR_DIST_SQR = 16.0D * 16.0D;
     private static final double MID_DIST_SQR = 32.0D * 32.0D;
     private static final double FAR_DIST_SQR = 64.0D * 64.0D;
-    // Beyond this distance segment-level occlusion is too expensive (one ray per segment) and
-    // visually unnoticeable; fall back to the cheaper whole-rope sample-based check.
+    // Beyond this distance segment-level occlusion is too expensive (one ray per
+    // segment) and
+    // visually unnoticeable; fall back to the cheaper whole-rope sample-based
+    // check.
     private static final double PER_SEGMENT_DIST_SQR = 48.0D * 48.0D;
-    // Margin added to per-segment AABBs so thick ropes don't get culled when the centerline
+    // Margin added to per-segment AABBs so thick ropes don't get culled when the
+    // centerline
     // sits just outside the frustum.
     private static final double SEGMENT_FRUSTUM_MARGIN = 0.25D;
     private static final double VISIBILITY_RAY_TARGET_BIAS = 0.06D;
@@ -33,11 +41,16 @@ public final class RopeVisibility {
     private static long frameSeq;
     private static double lastFrameCamX, lastFrameCamY, lastFrameCamZ;
 
-    private RopeVisibility() {}
+    private RopeVisibility() {
+    }
 
-    /** Called once per submit-event before any shouldRender calls. Bumps the frame counter and,
-     *  if the camera moved more than {@link #CAMERA_SHIFT_INVALIDATE_SQR}, advances enough so that
-     *  every cached entry is treated as stale. */
+    /**
+     * Called once per submit-event before any shouldRender calls. Bumps the frame
+     * counter and,
+     * if the camera moved more than {@link #CAMERA_SHIFT_INVALIDATE_SQR}, advances
+     * enough so that
+     * every cached entry is treated as stale.
+     */
     public static void beginFrame(Vec3 cameraPos) {
         double dx = cameraPos.x - lastFrameCamX;
         double dy = cameraPos.y - lastFrameCamY;
@@ -57,28 +70,33 @@ public final class RopeVisibility {
         if (frustum != null && !frustum.isVisible(renderBounds)) {
             return false;
         }
-        // Distance-based refresh interval. Far/static ropes reuse cached occlusion result.
+        // Distance-based refresh interval. Far/static ropes reuse cached occlusion
+        // result.
         double cx = (renderBounds.minX + renderBounds.maxX) * 0.5D - cameraPos.x;
         double cy = (renderBounds.minY + renderBounds.maxY) * 0.5D - cameraPos.y;
         double cz = (renderBounds.minZ + renderBounds.maxZ) * 0.5D - cameraPos.z;
         double dSqr = cx * cx + cy * cy + cz * cz;
         int interval = dSqr < NEAR_DIST_SQR ? 1
                 : dSqr < MID_DIST_SQR ? 2
-                : dSqr < FAR_DIST_SQR ? 4
-                : 8;
+                        : dSqr < FAR_DIST_SQR ? 4
+                                : 8;
         long cached = sim.visOcclusionFrame();
         if (cached != Long.MIN_VALUE && (frameSeq - cached) < interval) {
             return sim.visOcclusionResult();
         }
         boolean visible;
         if (dSqr < PER_SEGMENT_DIST_SQR) {
-            // Close-up: CPU line-of-sight culling is too coarse for ropes. A single block edge
-            // can cover the sampled centerline while half of the thick rendered segment is still
-            // visible. Let the render depth path handle block occlusion and only use the frustum
+            // Close-up: CPU line-of-sight culling is too coarse for ropes. A single block
+            // edge
+            // can cover the sampled centerline while half of the thick rendered segment is
+            // still
+            // visible. Let the render depth path handle block occlusion and only use the
+            // frustum
             // here, preserving partial visibility instead of dropping whole segments.
             visible = computePerSegmentFrustumVisibility(frustum, sim, partialTick);
         } else {
-            // Far ropes: cheap whole-rope test, mark mask as fully visible (or fully hidden).
+            // Far ropes: cheap whole-rope test, mark mask as fully visible (or fully
+            // hidden).
             sim.beginSegmentVisibility(0);
             visible = !isFullyOccluded(level, sourceEntity, cameraPos, renderBounds, sim, partialTick);
         }
@@ -87,7 +105,8 @@ public final class RopeVisibility {
     }
 
     /**
-     * Test each rope segment against the frustum, populating {@link RopeSimulation}'s
+     * Test each rope segment against the frustum, populating
+     * {@link RopeSimulation}'s
      * segment-visibility mask. Returns {@code true} if any segment is visible.
      */
     private static boolean computePerSegmentFrustumVisibility(
@@ -167,14 +186,20 @@ public final class RopeVisibility {
     }
 
     /**
-     * Voxel-DDA walk along the ray (camera → target) that treats only blocks satisfying
-     * {@link BlockState#canOcclude()} AND {@link BlockState#isSolidRender()} as occluders.
-     * This keeps glass, leaves, slabs/stairs (have non-empty outline shapes), trapdoors, doors,
-     * ice, slime, honey, beacons, sea lanterns, etc. transparent to rope visibility — the
-     * vanilla {@code ClipContext.Block.OUTLINE} clip would otherwise stop on every one of them
+     * Voxel-DDA walk along the ray (camera → target) that treats only blocks
+     * satisfying
+     * {@link BlockState#canOcclude()} AND {@link BlockState#isSolidRender()} as
+     * occluders.
+     * This keeps glass, leaves, slabs/stairs (have non-empty outline shapes),
+     * trapdoors, doors,
+     * ice, slime, honey, beacons, sea lanterns, etc. transparent to rope visibility
+     * — the
+     * vanilla {@code ClipContext.Block.OUTLINE} clip would otherwise stop on every
+     * one of them
      * because they have a full cube outline.
      * <p>
-     * The {@code sourceEntity} parameter is intentionally unused: rope visibility is purely a
+     * The {@code sourceEntity} parameter is intentionally unused: rope visibility
+     * is purely a
      * world-block test so it ignores entity hitboxes.
      */
     private static boolean rayHitsOpaque(Level level, double sx, double sy, double sz,
@@ -208,25 +233,30 @@ public final class RopeVisibility {
                 : (stepY < 0 ? (y - sy) / dy : Double.POSITIVE_INFINITY);
         double tMaxZ = stepZ > 0 ? ((z + 1) - sz) / dz
                 : (stepZ < 0 ? (z - sz) / dz : Double.POSITIVE_INFINITY);
-        // Hard cap: rope render distance is bounded so a few hundred steps is plenty even at
+        // Hard cap: rope render distance is bounded so a few hundred steps is plenty
+        // even at
         // the diagonal extreme; this guards against any pathological NaN-fuelled loop.
         for (int guard = 0; guard < 512; guard++) {
             if (tMaxX < tMaxY) {
                 if (tMaxX < tMaxZ) {
-                    if (tMaxX > 1.0D) return false;
+                    if (tMaxX > 1.0D)
+                        return false;
                     x += stepX;
                     tMaxX += tDeltaX;
                 } else {
-                    if (tMaxZ > 1.0D) return false;
+                    if (tMaxZ > 1.0D)
+                        return false;
                     z += stepZ;
                     tMaxZ += tDeltaZ;
                 }
             } else if (tMaxY < tMaxZ) {
-                if (tMaxY > 1.0D) return false;
+                if (tMaxY > 1.0D)
+                    return false;
                 y += stepY;
                 tMaxY += tDeltaY;
             } else {
-                if (tMaxZ > 1.0D) return false;
+                if (tMaxZ > 1.0D)
+                    return false;
                 z += stepZ;
                 tMaxZ += tDeltaZ;
             }
@@ -247,9 +277,12 @@ public final class RopeVisibility {
             return false;
         }
         BlockState state = level.getBlockState(pos);
-        if (state.isAir()) return false;
-        // canOcclude → "renders as a solid block face" (false for glass, leaves, slabs unless
-        // top half, etc.). isSolidRender → "fully opaque on every face". Combining them filters
+        if (state.isAir())
+            return false;
+        // canOcclude → "renders as a solid block face" (false for glass, leaves, slabs
+        // unless
+        // top half, etc.). isSolidRender → "fully opaque on every face". Combining them
+        // filters
         // out non-opaque shapes that nevertheless have a full collision/outline cube.
         return state.canOcclude() && state.isSolidRender();
     }

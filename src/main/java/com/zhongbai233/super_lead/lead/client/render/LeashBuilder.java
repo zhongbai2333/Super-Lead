@@ -15,33 +15,46 @@ public final class LeashBuilder {
     public static final int DEFAULT_HIGHLIGHT = 0x66FFEE84;
 
     private static final double HIGHLIGHT_RIBBON_DISTANCE_SQR = 24.0D * 24.0D;
-    private static double halfThickness() { return ClientTuning.THICKNESS_HALF.get(); }
-    private static double highlightHalfThickness() { return halfThickness() * 2.45D; }
+
+    private static double halfThickness() {
+        return ClientTuning.THICKNESS_HALF.get();
+    }
+
+    private static double highlightHalfThickness() {
+        return halfThickness() * 2.45D;
+    }
+
     private static double ribbonHalfWidth() {
         return halfThickness() * ClientTuning.RIBBON_WIDTH_FACTOR.get();
     }
+
     private static double highlightRibbonHalfWidth() {
         return highlightHalfThickness() * 1.35D;
     }
+
     private static double ribbonLodDistanceSqr() {
         double d = ClientTuning.LOD_RIBBON_DISTANCE.get();
         return d * d;
     }
+
     private static double stride2DistanceSqr() {
         double d = ClientTuning.LOD_STRIDE2_DISTANCE.get();
         return d * d;
     }
+
     private static double stride4DistanceSqr() {
         double d = ClientTuning.LOD_STRIDE4_DISTANCE.get();
         return d * d;
     }
+
     private static final float[] EMPTY_PULSES = new float[0];
     private static final double PULSE_SIGMA = 0.07D;
     private static final double PULSE_AMPLITUDE = 1.6D;
     private static final double FIRST_SEGMENT_AMPLITUDE = 0.9D;
     private static final double FIRST_SEGMENT_LENGTH = 0.45D;
 
-    private LeashBuilder() {}
+    private LeashBuilder() {
+    }
 
     public static void submit(
             SubmitNodeCollector collector,
@@ -118,28 +131,42 @@ public final class LeashBuilder {
     }
 
     private static final PoseStack BATCH_POSE = new PoseStack();
-    /** Render-thread-only. When non-null, all subsequent vertex() calls are diverted into this
-     *  sim's baked vertex stream instead of being written to the VertexConsumer. World coords
-     *  are baked because cameraPos is forced to origin during bake. */
+    /**
+     * Render-thread-only. When non-null, all subsequent vertex() calls are diverted
+     * into this
+     * sim's baked vertex stream instead of being written to the VertexConsumer.
+     * World coords
+     * are baked because cameraPos is forced to origin during bake.
+     */
     private static RopeSimulation activeBakeSim = null;
     private static double bakeCamOffsetX, bakeCamOffsetY, bakeCamOffsetZ;
 
-    // Diagnostic counters (reset by the caller's per-frame stat collector). Useful for
+    // Diagnostic counters (reset by the caller's per-frame stat collector). Useful
+    // for
     // verifying whether the static bake cache is actually engaging in stress tests.
     public static int cacheHits;
     public static int cacheMisses;
     public static int verticesEmitted;
-    public static void resetStats() { cacheHits = 0; cacheMisses = 0; verticesEmitted = 0; }
+
+    public static void resetStats() {
+        cacheHits = 0;
+        cacheMisses = 0;
+        verticesEmitted = 0;
+    }
 
     /**
-     * Submit all collected rope jobs in a single {@code submitCustomGeometry} call. Collapsing
-     * N per-rope submissions into one removes per-call render-node bookkeeping (sort key, lambda
+     * Submit all collected rope jobs in a single {@code submitCustomGeometry} call.
+     * Collapsing
+     * N per-rope submissions into one removes per-call render-node bookkeeping
+     * (sort key, lambda
      * dispatch, pose snapshot) and lets the driver upload one large vertex stream.
      */
     public static void flush(SubmitNodeCollector collector, Vec3 cameraPos, float partialTick,
             java.util.List<RopeJob> jobs) {
-        if (jobs.isEmpty()) return;
-        // Pre-prepare every sim's render snapshot OUTSIDE the lambda so prepareRender side
+        if (jobs.isEmpty())
+            return;
+        // Pre-prepare every sim's render snapshot OUTSIDE the lambda so prepareRender
+        // side
         // effects (basis-vector scratch invalidation) happen once per rope per frame.
         double[] totalLengths = new double[jobs.size()];
         for (int i = 0; i < jobs.size(); i++) {
@@ -152,7 +179,8 @@ public final class LeashBuilder {
         });
     }
 
-    private static void renderJob(VertexConsumer buffer, PoseStack.Pose poseState, Vec3 cameraPos, RopeJob job, double totalLength) {
+    private static void renderJob(VertexConsumer buffer, PoseStack.Pose poseState, Vec3 cameraPos, RopeJob job,
+            double totalLength) {
         RopeSimulation sim = job.sim;
         boolean glow = job.powered && (job.kind == LeadKind.REDSTONE || job.kind == LeadKind.ENERGY);
         int effectiveBlockA = glow ? 15 : job.blockA;
@@ -164,23 +192,28 @@ public final class LeashBuilder {
         double midDy = sim.renderY(mid) - cameraPos.y;
         double midDz = sim.renderZ(mid) - cameraPos.z;
         double midDistSqr = midDx * midDx + midDy * midDy + midDz * midDz;
-        // Global "flat 2D" toggle for low-end machines: forces the cheap ribbon path regardless
-        // of distance, mirroring vanilla's flat-leash look. Skips the static-bake fast path
+        // Global "flat 2D" toggle for low-end machines: forces the cheap ribbon path
+        // regardless
+        // of distance, mirroring vanilla's flat-leash look. Skips the static-bake fast
+        // path
         // because ribbon is already only a few verts per segment.
         boolean force2D = !ClientTuning.MODE_RENDER3D.get();
         boolean ribbonLod = force2D || midDistSqr > ribbonLodDistanceSqr();
         boolean cheapHighlight = ribbonLod || midDistSqr > HIGHLIGHT_RIBBON_DISTANCE_SQR;
-        // Pick render stride: 1 close, 2 medium, 4 far. Caps so ropes always have at least 4
+        // Pick render stride: 1 close, 2 medium, 4 far. Caps so ropes always have at
+        // least 4
         // segments rendered (otherwise sharp ropes look like polylines).
         int stride = midDistSqr > stride4DistanceSqr() ? 4
                 : midDistSqr > stride2DistanceSqr() ? 2
-                : 1;
+                        : 1;
         if (stride > 1) {
             int maxStride = Math.max(1, (nodeCount - 1) / 4);
-            if (stride > maxStride) stride = maxStride;
+            if (stride > maxStride)
+                stride = maxStride;
         }
 
-        // Static bake fast-path: any non-highlighted rope (3D box OR flat ribbon) reuses
+        // Static bake fast-path: any non-highlighted rope (3D box OR flat ribbon)
+        // reuses
         // baked world-space vertices until positions, light or material change. Ribbon
         // bakes additionally key on a coarse camera bin since the ribbon's side vector
         // depends on view direction; bin size of 4 blocks keeps re-bakes rare during
@@ -254,7 +287,8 @@ public final class LeashBuilder {
             } else {
                 renderSquare(buffer, poseState, cameraPos, sim, nodeCount, totalLength,
                         effectiveBlockA, effectiveBlockB, job.skyA, job.skyB,
-                        job.highlightColor, job.kind, job.powered, job.tier, job.pulsePositions, job.extractEnd, stride);
+                        job.highlightColor, job.kind, job.powered, job.tier, job.pulsePositions, job.extractEnd,
+                        stride);
             }
         }
     }
@@ -271,8 +305,10 @@ public final class LeashBuilder {
         float camX = (float) cameraPos.x;
         float camY = (float) cameraPos.y;
         float camZ = (float) cameraPos.z;
-        // Vector3f allocation + 4x4 matmul. Plus per-segment view-relative face culling:
-        // each baked square segment wrote 16 verts in 4 fixed-order quads (face 0 +side,
+        // Vector3f allocation + 4x4 matmul. Plus per-segment view-relative face
+        // culling:
+        // each baked square segment wrote 16 verts in 4 fixed-order quads (face 0
+        // +side,
         // 1 -up, 2 -side, 3 +up); we emit only the 2 faces whose outward normal points
         // toward the camera, halving emit-side addVertex calls.
         if (segCount > 0 && segCount * 16 == totalVerts) {
@@ -295,8 +331,8 @@ public final class LeashBuilder {
                 float dotS = dx * ssx[s] + dy * ssy[s] + dz * ssz[s];
                 float dotU = dx * sux[s] + dy * suy[s] + dz * suz[s];
                 int base = s * 16;
-                int sideBase = dotS < 0f ? base : base + 8;        // face 0 (+side) or face 2 (-side)
-                int upBase   = dotU < 0f ? base + 12 : base + 4;   // face 3 (+up) or face 1 (-up)
+                int sideBase = dotS < 0f ? base : base + 8; // face 0 (+side) or face 2 (-side)
+                int upBase = dotU < 0f ? base + 12 : base + 4; // face 3 (+up) or face 1 (-up)
                 emitBakedFace(buffer, sideBase, bx, by, bz, bc, bl, camX, camY, camZ);
                 emitBakedFace(buffer, upBase, bx, by, bz, bc, bl, camX, camY, camZ);
             }
@@ -356,14 +392,20 @@ public final class LeashBuilder {
 
         int last = nodeCount - 1;
         RopeSimulation bakeSim = activeBakeSim;
-        // When baking, we must emit every stripe so the cached vertex stream is complete and
-        // can be filtered at emit-time by the per-segment visibility mask. When NOT baking
-        // (e.g. highlight rendering), skip stripes the visibility pass already marked hidden.
+        // When baking, we must emit every stripe so the cached vertex stream is
+        // complete and
+        // can be filtered at emit-time by the per-segment visibility mask. When NOT
+        // baking
+        // (e.g. highlight rendering), skip stripes the visibility pass already marked
+        // hidden.
         boolean filterByMask = bakeSim == null && !sim.segVisAllVisible();
         int stripeIdx = 0;
-        // Emit one stripe per node-step (not per stride-step) so the alternating dark/light
-        // color pattern is invariant under LOD: stride=2 produces two stripes per geometric
-        // segment, stride=4 produces four. Frames are linearly interpolated between i and j;
+        // Emit one stripe per node-step (not per stride-step) so the alternating
+        // dark/light
+        // color pattern is invariant under LOD: stride=2 produces two stripes per
+        // geometric
+        // segment, stride=4 produces four. Frames are linearly interpolated between i
+        // and j;
         // we still save physics work by computing only stride-anchored frames upstream.
         for (int i = 0; i < last; i += stride) {
             int j = Math.min(i + stride, last);
@@ -604,7 +646,8 @@ public final class LeashBuilder {
         double dy = ey - sy;
         double dz = ez - sz;
         double length = Math.sqrt(dx * dx + dy * dy + dz * dz);
-        if (length < 1.0e-6D) return;
+        if (length < 1.0e-6D)
+            return;
         double invLength = 1.0D / length;
         double dirX = dx * invLength;
         double dirY = dy * invLength;
@@ -723,9 +766,13 @@ public final class LeashBuilder {
                 stripe, light0, light1, 3, highlightColor, kind, powered, tier);
     }
 
-    /** 4-block-cube quantization of camera position. Used as a ribbon-bake cache key so the
-     *  cache survives small camera motion but invalidates when the player walks far enough
-     *  for the camera-facing side vector to drift visibly. */
+    /**
+     * 4-block-cube quantization of camera position. Used as a ribbon-bake cache key
+     * so the
+     * cache survives small camera motion but invalidates when the player walks far
+     * enough
+     * for the camera-facing side vector to drift visibly.
+     */
     private static int cameraBin(Vec3 cameraPos) {
         int bx = (int) Math.floor(cameraPos.x * 0.25D);
         int by = (int) Math.floor(cameraPos.y * 0.25D);
@@ -751,7 +798,8 @@ public final class LeashBuilder {
                 bonus += PULSE_AMPLITUDE * Math.exp(-d * d);
             }
         }
-        // extractEnd: 1 = `from` end (start of rope), 2 = `to` end (end of rope), 0 = none.
+        // extractEnd: 1 = `from` end (start of rope), 2 = `to` end (end of rope), 0 =
+        // none.
         if (extractEnd == 1 && normalizedPos < FIRST_SEGMENT_LENGTH) {
             double f = 1.0D - (normalizedPos / FIRST_SEGMENT_LENGTH);
             bonus += FIRST_SEGMENT_AMPLITUDE * f * f;
@@ -777,7 +825,8 @@ public final class LeashBuilder {
             LeadKind kind,
             boolean powered,
             int tier) {
-        int color = highlightColor != NO_HIGHLIGHT ? highlightOverlayColor(face, highlightColor) : ropeColor(stripe, face, kind, powered, tier);
+        int color = highlightColor != NO_HIGHLIGHT ? highlightOverlayColor(face, highlightColor)
+                : ropeColor(stripe, face, kind, powered, tier);
         vertex(buffer, pose, p3x, p3y, p3z, color, light0);
         vertex(buffer, pose, p2x, p2y, p2z, color, light1);
         vertex(buffer, pose, p1x, p1y, p1z, color, light1);
@@ -849,13 +898,15 @@ public final class LeashBuilder {
         return (a << 24) | (r << 16) | (g << 8) | b;
     }
 
-    private static void vertex(VertexConsumer buffer, PoseStack.Pose pose, double x, double y, double z, int color, int light) {
+    private static void vertex(VertexConsumer buffer, PoseStack.Pose pose, double x, double y, double z, int color,
+            int light) {
         RopeSimulation bakeSim = activeBakeSim;
         if (bakeSim != null) {
             bakeSim.appendBakedVertex(x + bakeCamOffsetX, y + bakeCamOffsetY, z + bakeCamOffsetZ, color, light);
             return;
         }
-        // allocates a Vector3f and runs a 4x4 matmul per vertex. We already feed world-space
+        // allocates a Vector3f and runs a 4x4 matmul per vertex. We already feed
+        // world-space
         // (cam-relative) coords, so the matrix is pure waste.
         buffer.addVertex((float) x, (float) y, (float) z)
                 .setColor(color)

@@ -20,22 +20,25 @@ import net.neoforged.neoforge.client.event.AddSectionGeometryEvent;
 @EventBusSubscriber(modid = Super_lead.MODID, value = Dist.CLIENT)
 public final class RopeSectionMeshDriver {
 
-    private static final Identifier WHITE_SPRITE_ID =
-            Identifier.withDefaultNamespace("block/lightning_rod_on");
+    private static final Identifier WHITE_SPRITE_ID = Identifier.withDefaultNamespace("block/lightning_rod_on");
 
-    private RopeSectionMeshDriver() {}
+    private RopeSectionMeshDriver() {
+    }
 
     @SubscribeEvent
     public static void onAddSectionGeometry(AddSectionGeometryEvent event) {
-        if (!ClientTuning.MODE_CHUNK_MESH_STATIC_ROPES.get()) return;
+        if (!ClientTuning.MODE_CHUNK_MESH_STATIC_ROPES.get())
+            return;
 
         BlockPos origin = event.getSectionOrigin();
         long key = SectionPos.asLong(origin);
         List<RopeSectionSnapshot> snaps = StaticRopeChunkRegistry.get().snapshotsFor(key);
-        if (snaps.isEmpty()) return;
+        if (snaps.isEmpty())
+            return;
 
         TextureAtlasSprite sprite = whiteSprite();
-        if (sprite == null) return;
+        if (sprite == null)
+            return;
 
         final int ox = origin.getX();
         final int oy = origin.getY();
@@ -54,7 +57,8 @@ public final class RopeSectionMeshDriver {
 
     private static TextureAtlasSprite whiteSprite() {
         Minecraft mc = Minecraft.getInstance();
-        if (mc == null) return null;
+        if (mc == null)
+            return null;
         try {
             TextureAtlas atlas = mc.getAtlasManager().getAtlasOrThrow(AtlasIds.BLOCKS);
             return atlas.getSprite(WHITE_SPRITE_ID);
@@ -64,7 +68,7 @@ public final class RopeSectionMeshDriver {
     }
 
     private static void emit(VertexConsumer vc, RopeSectionSnapshot s,
-                              int ox, int oy, int oz, float u, float v) {
+            int ox, int oy, int oz, float u, float v) {
         int last = s.nodeCount - 1;
         final float NX = 0f, NY = 1f, NZ = 0f;
         int start = Math.max(0, Math.min(s.segmentStart, last));
@@ -90,7 +94,7 @@ public final class RopeSectionMeshDriver {
 
             // face 0 (+side)
             quad(vc, aPx, aPy, aPz, lightA, bPx, bPy, bPz, lightB, bQx, bQy, bQz, lightB, aQx, aQy, aQz, lightA,
-                    s.segmentColorARGB[colorBase    ], u, v, NX, NY, NZ);
+                    s.segmentColorARGB[colorBase], u, v, NX, NY, NZ);
             // face 1 (-up)
             quad(vc, aQx, aQy, aQz, lightA, bQx, bQy, bQz, lightB, bRx, bRy, bRz, lightB, aRx, aRy, aRz, lightA,
                     s.segmentColorARGB[colorBase + 1], u, v, NX, NY, NZ);
@@ -104,13 +108,14 @@ public final class RopeSectionMeshDriver {
     }
 
     private static void quad(VertexConsumer vc,
-                              float x0, float y0, float z0, int l0,
-                              float x1, float y1, float z1, int l1,
-                              float x2, float y2, float z2, int l2,
-                              float x3, float y3, float z3, int l3,
-                              int color, float u, float v,
-                              float nx, float ny, float nz) {
-        // Reversed winding (3,2,1,0) so the outward-facing normal matches Minecraft's CCW
+            float x0, float y0, float z0, int l0,
+            float x1, float y1, float z1, int l1,
+            float x2, float y2, float z2, int l2,
+            float x3, float y3, float z3, int l3,
+            int color, float u, float v,
+            float nx, float ny, float nz) {
+        // Reversed winding (3,2,1,0) so the outward-facing normal matches Minecraft's
+        // CCW
         // front-face convention; previously the inward faces were the visible ones.
         vertex(vc, x3, y3, z3, color, u, v, l3, nx, ny, nz);
         vertex(vc, x2, y2, z2, color, u, v, l2, nx, ny, nz);
@@ -119,7 +124,7 @@ public final class RopeSectionMeshDriver {
     }
 
     private static void vertex(VertexConsumer vc, float x, float y, float z, int color,
-                                float u, float v, int light, float nx, float ny, float nz) {
+            float u, float v, int light, float nx, float ny, float nz) {
         vc.addVertex(x, y, z)
                 .setColor(color)
                 .setUv(u, v)

@@ -31,7 +31,8 @@ public final class RopeDebugStats {
     public static volatile float pushZ;
     public static volatile float pushMagnitude;
 
-    private RopeDebugStats() {}
+    private RopeDebugStats() {
+    }
 
     public static void clear() {
         totalConnections = 0;

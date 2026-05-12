@@ -22,7 +22,8 @@ import net.neoforged.neoforge.client.event.RegisterClientCommandsEvent;
 
 @EventBusSubscriber(modid = Super_lead.MODID, value = Dist.CLIENT)
 public final class SuperLeadCommands {
-    private SuperLeadCommands() {}
+    private SuperLeadCommands() {
+    }
 
     @SubscribeEvent
     public static void onRegister(RegisterClientCommandsEvent event) {
@@ -53,18 +54,17 @@ public final class SuperLeadCommands {
         dispatcher.register(root);
     }
 
-    private static final SuggestionProvider<CommandSourceStack> SUGGEST_KEY =
-            (ctx, builder) -> SharedSuggestionProvider.suggest(
+    private static final SuggestionProvider<CommandSourceStack> SUGGEST_KEY = (ctx, builder) -> SharedSuggestionProvider
+            .suggest(
                     ClientTuning.allKeys().stream().map(key -> key.id), builder);
-    private static final SuggestionProvider<CommandSourceStack> SUGGEST_KEY_OR_ALL =
-            (ctx, builder) -> {
-                var stream = java.util.stream.Stream.concat(
-                        java.util.stream.Stream.of("all"),
-                        ClientTuning.allKeys().stream().map(key -> key.id));
-                return SharedSuggestionProvider.suggest(stream, builder);
-            };
-    private static final SuggestionProvider<CommandSourceStack> SUGGEST_GROUP =
-            (ctx, builder) -> SharedSuggestionProvider.suggest(ClientTuning.groups(), builder);
+    private static final SuggestionProvider<CommandSourceStack> SUGGEST_KEY_OR_ALL = (ctx, builder) -> {
+        var stream = java.util.stream.Stream.concat(
+                java.util.stream.Stream.of("all"),
+                ClientTuning.allKeys().stream().map(key -> key.id));
+        return SharedSuggestionProvider.suggest(stream, builder);
+    };
+    private static final SuggestionProvider<CommandSourceStack> SUGGEST_GROUP = (ctx,
+            builder) -> SharedSuggestionProvider.suggest(ClientTuning.groups(), builder);
 
     private static int list(CommandContext<CommandSourceStack> ctx) {
         ctx.getSource().sendSuccess(

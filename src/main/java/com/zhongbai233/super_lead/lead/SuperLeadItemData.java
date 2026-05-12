@@ -10,7 +10,8 @@ import net.minecraft.world.item.component.CustomData;
 public final class SuperLeadItemData {
     private static final String KIND_KEY = Super_lead.MODID + ".kind";
 
-    private SuperLeadItemData() {}
+    private SuperLeadItemData() {
+    }
 
     public static LeadKind kind(ItemStack stack) {
         if (!SuperLeadItems.isSuperLead(stack)) {

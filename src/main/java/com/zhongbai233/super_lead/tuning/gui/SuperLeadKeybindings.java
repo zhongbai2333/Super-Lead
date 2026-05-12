@@ -15,10 +15,10 @@ public final class SuperLeadKeybindings {
     public static final KeyMapping OPEN_CONFIG = new KeyMapping(
             "key.super_lead.open_config",
             InputConstants.UNKNOWN.getValue(),
-            KeyMapping.Category.MISC
-    );
+            KeyMapping.Category.MISC);
 
-    private SuperLeadKeybindings() {}
+    private SuperLeadKeybindings() {
+    }
 
     @SubscribeEvent
     public static void onRegister(RegisterKeyMappingsEvent event) {

@@ -20,23 +20,23 @@ public final class RopeSectionSnapshot {
     public final int segmentEndExclusive;
 
     public RopeSectionSnapshot(UUID connectionId,
-                                float[] x, float[] y, float[] z,
-                                float[] sx, float[] sy, float[] sz,
-                                float[] ux, float[] uy, float[] uz,
-                                int[] nodeLight,
-                                int[] segmentColorARGB) {
+            float[] x, float[] y, float[] z,
+            float[] sx, float[] sy, float[] sz,
+            float[] ux, float[] uy, float[] uz,
+            int[] nodeLight,
+            int[] segmentColorARGB) {
         this(connectionId, x, y, z, sx, sy, sz, ux, uy, uz,
                 nodeLight, segmentColorARGB, 0, Math.max(0, x.length - 1));
     }
 
     public RopeSectionSnapshot(UUID connectionId,
-                                float[] x, float[] y, float[] z,
-                                float[] sx, float[] sy, float[] sz,
-                                float[] ux, float[] uy, float[] uz,
-                                int[] nodeLight,
-                                int[] segmentColorARGB,
-                                int segmentStart,
-                                int segmentEndExclusive) {
+            float[] x, float[] y, float[] z,
+            float[] sx, float[] sy, float[] sz,
+            float[] ux, float[] uy, float[] uz,
+            int[] nodeLight,
+            int[] segmentColorARGB,
+            int segmentStart,
+            int segmentEndExclusive) {
         this.connectionId = connectionId;
         this.nodeCount = x.length;
         this.x = x;

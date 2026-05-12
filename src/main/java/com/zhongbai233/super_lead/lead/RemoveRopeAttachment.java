@@ -8,11 +8,10 @@ import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.resources.Identifier;
 
 public record RemoveRopeAttachment(UUID connectionId, UUID attachmentId) implements CustomPacketPayload {
-    public static final CustomPacketPayload.Type<RemoveRopeAttachment> TYPE =
-            new CustomPacketPayload.Type<>(
-                    Identifier.fromNamespaceAndPath(Super_lead.MODID, "remove_rope_attachment"));
-    public static final StreamCodec<RegistryFriendlyByteBuf, RemoveRopeAttachment> STREAM_CODEC =
-            CustomPacketPayload.codec(RemoveRopeAttachment::write, RemoveRopeAttachment::read);
+    public static final CustomPacketPayload.Type<RemoveRopeAttachment> TYPE = new CustomPacketPayload.Type<>(
+            Identifier.fromNamespaceAndPath(Super_lead.MODID, "remove_rope_attachment"));
+    public static final StreamCodec<RegistryFriendlyByteBuf, RemoveRopeAttachment> STREAM_CODEC = CustomPacketPayload
+            .codec(RemoveRopeAttachment::write, RemoveRopeAttachment::read);
 
     @Override
     public Type<? extends CustomPacketPayload> type() {

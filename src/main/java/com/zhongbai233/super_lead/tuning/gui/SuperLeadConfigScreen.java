@@ -333,7 +333,8 @@ public final class SuperLeadConfigScreen extends Screen {
     }
 
     private record ConfigRow(AbstractWidget widget, AbstractWidget input,
-            AbstractWidget reset, TuningKey<?> key, int baseY) {}
+            AbstractWidget reset, TuningKey<?> key, int baseY) {
+    }
 
     private static final class DoubleTuningSlider extends AbstractSliderButton {
         private final TuningKey<Double> key;

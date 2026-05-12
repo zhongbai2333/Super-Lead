@@ -51,7 +51,8 @@ record ServerPhysicsTuning(
 
     private static double parseDouble(String raw, TuningKey<Double> key, double fallback,
             boolean allowUncheckedFinite) {
-        if (raw == null) return fallback;
+        if (raw == null)
+            return fallback;
         try {
             double value = key.type.parse(raw);
             return key.type.validate(value)
@@ -62,7 +63,8 @@ record ServerPhysicsTuning(
     }
 
     private static double parseServerGravity(String raw) {
-        if (raw == null) return ClientTuning.GRAVITY.defaultValue;
+        if (raw == null)
+            return ClientTuning.GRAVITY.defaultValue;
         try {
             double clientGravity = ClientTuning.GRAVITY.type.parse(raw);
             return Double.isFinite(clientGravity) ? clientGravity : ClientTuning.GRAVITY.defaultValue;
@@ -72,7 +74,8 @@ record ServerPhysicsTuning(
     }
 
     private static boolean parseBool(String raw, boolean fallback) {
-        if (raw == null) return fallback;
+        if (raw == null)
+            return fallback;
         try {
             return ClientTuning.MODE_PHYSICS.type.parse(raw);
         } catch (RuntimeException ignored) {

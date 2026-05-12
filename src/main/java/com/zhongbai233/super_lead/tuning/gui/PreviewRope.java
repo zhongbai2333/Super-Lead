@@ -34,12 +34,17 @@ public final class PreviewRope {
     }
 
     public void setViewport(int x, int y, int w, int h) {
-        this.viewX = x; this.viewY = y; this.viewW = w; this.viewH = h;
+        this.viewX = x;
+        this.viewY = y;
+        this.viewW = w;
+        this.viewH = h;
         double margin = 0.10D;
         this.pxPerMeter = (w * (1.0D - 2.0D * margin)) / spanMeters;
     }
 
-    public void setColliderActive(boolean active) { this.colliderActive = active; }
+    public void setColliderActive(boolean active) {
+        this.colliderActive = active;
+    }
 
     public void setOverrides(Map<String, String> overrides, boolean defaultMissingOverrides) {
         Map<String, String> next = overrides == null || overrides.isEmpty()
@@ -55,7 +60,8 @@ public final class PreviewRope {
     }
 
     public void disturb() {
-        if (n < 3) return;
+        if (n < 3)
+            return;
         for (int i = 1; i < n - 1; i++) {
             double t = (double) i / (n - 1);
             double w = 4.0D * t * (1.0D - t);
@@ -64,11 +70,14 @@ public final class PreviewRope {
         }
     }
 
-    public void reset() { rebuildFromTuning(true); }
+    public void reset() {
+        rebuildFromTuning(true);
+    }
 
     private void rebuildFromTuning(boolean force) {
         long pe = ClientTuning.physicsEpoch();
-        if (!force && pe == lastPhysEpoch && overridesEpoch == lastOverridesEpoch) return;
+        if (!force && pe == lastPhysEpoch && overridesEpoch == lastOverridesEpoch)
+            return;
         lastPhysEpoch = pe;
         lastOverridesEpoch = overridesEpoch;
 
@@ -114,7 +123,11 @@ public final class PreviewRope {
         double target = restLen * slack;
 
         for (int i = 0; i < n; i++) {
-            if (pinned[i]) { px[i] = x[i]; py[i] = y[i]; continue; }
+            if (pinned[i]) {
+                px[i] = x[i];
+                py[i] = y[i];
+                continue;
+            }
             double vx = (x[i] - px[i]) * damping;
             double vy = (y[i] - py[i]) * damping;
             px[i] = x[i];
@@ -128,16 +141,18 @@ public final class PreviewRope {
                 double dx = x[i + 1] - x[i];
                 double dy = y[i + 1] - y[i];
                 double d = Math.sqrt(dx * dx + dy * dy);
-                if (d < 1.0e-9D) continue;
+                if (d < 1.0e-9D)
+                    continue;
                 double diff = (d - target) / d;
                 double wA = pinned[i] ? 0.0D : 1.0D;
                 double wB = pinned[i + 1] ? 0.0D : 1.0D;
                 double wSum = wA + wB;
-                if (wSum <= 0.0D) continue;
+                if (wSum <= 0.0D)
+                    continue;
                 double sA = wA / wSum;
                 double sB = wB / wSum;
-                x[i]     += dx * diff * sA;
-                y[i]     += dy * diff * sA;
+                x[i] += dx * diff * sA;
+                y[i] += dy * diff * sA;
                 x[i + 1] -= dx * diff * sB;
                 y[i + 1] -= dy * diff * sB;
             }
@@ -165,7 +180,8 @@ public final class PreviewRope {
     }
 
     public void render(GuiGraphicsExtractor gg) {
-        if (n < 2) return;
+        if (n < 2)
+            return;
         double margin = 0.10D;
         int left = (int) (viewX + viewW * margin);
         int top = (int) (viewY + viewH * 0.30D);
@@ -208,7 +224,8 @@ public final class PreviewRope {
         }
     }
 
-    private static void drawThickLine(GuiGraphicsExtractor gg, int x1, int y1, int x2, int y2, int thickness, int argb) {
+    private static void drawThickLine(GuiGraphicsExtractor gg, int x1, int y1, int x2, int y2, int thickness,
+            int argb) {
         int dx = x2 - x1;
         int dy = y2 - y1;
         int steps = Math.max(Math.abs(dx), Math.abs(dy));

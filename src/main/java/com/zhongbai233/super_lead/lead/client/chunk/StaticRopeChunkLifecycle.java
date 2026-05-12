@@ -18,10 +18,12 @@ public final class StaticRopeChunkLifecycle {
 
     private static boolean tuningHooked = false;
 
-    private StaticRopeChunkLifecycle() {}
+    private StaticRopeChunkLifecycle() {
+    }
 
     public static void ensureTuningHook() {
-        if (tuningHooked) return;
+        if (tuningHooked)
+            return;
         tuningHooked = true;
         ClientTuning.addListener((key, value) -> {
             if (key == ClientTuning.MODE_CHUNK_MESH_STATIC_ROPES

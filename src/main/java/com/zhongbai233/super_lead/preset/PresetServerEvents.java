@@ -9,7 +9,8 @@ import net.neoforged.neoforge.event.tick.ServerTickEvent;
 
 @EventBusSubscriber(modid = Super_lead.MODID)
 public final class PresetServerEvents {
-    private PresetServerEvents() {}
+    private PresetServerEvents() {
+    }
 
     @SubscribeEvent
     public static void onLogin(PlayerEvent.PlayerLoggedInEvent event) {

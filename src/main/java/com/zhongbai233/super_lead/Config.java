@@ -70,7 +70,8 @@ public final class Config {
     private static volatile int cachedStuckBreakTicks = 100;
     private static volatile boolean cachedAllowOpVisualPresets = true;
 
-    private Config() {}
+    private Config() {
+    }
 
     public static int energyTierMaxLevel() {
         return cachedTierMax;
@@ -134,8 +135,11 @@ public final class Config {
         cachedAllowOpVisualPresets = PRESETS_ALLOW_OP_VISUAL_PRESETS.get();
     }
 
-    /** Pull cached values from the underlying spec after a runtime mutation via
-     *  {@link ModConfigSpec.ConfigValue#set}. The spec persists to disk on world unload. */
+    /**
+     * Pull cached values from the underlying spec after a runtime mutation via
+     * {@link ModConfigSpec.ConfigValue#set}. The spec persists to disk on world
+     * unload.
+     */
     public static void refreshAfterRuntimeSet() {
         refresh();
     }
@@ -147,7 +151,8 @@ public final class Config {
         m.put("network.max_leash_distance", Double.toString(NETWORK_MAX_LEASH_DISTANCE.get()));
         m.put("network.item_tier_max", Integer.toString(NETWORK_ITEM_TIER_MAX.getAsInt()));
         m.put("network.fluid_tier_max", Integer.toString(NETWORK_FLUID_TIER_MAX.getAsInt()));
-        m.put("network.item_transfer_interval_ticks", Integer.toString(NETWORK_ITEM_TRANSFER_INTERVAL_TICKS.getAsInt()));
+        m.put("network.item_transfer_interval_ticks",
+                Integer.toString(NETWORK_ITEM_TRANSFER_INTERVAL_TICKS.getAsInt()));
         m.put("network.fluid_bucket_amount", Integer.toString(NETWORK_FLUID_BUCKET_AMOUNT.getAsInt()));
         m.put("network.stuck_break_ticks", Integer.toString(NETWORK_STUCK_BREAK_TICKS.getAsInt()));
         m.put("presets.allow_op_visual_presets", Boolean.toString(PRESETS_ALLOW_OP_VISUAL_PRESETS.get()));
@@ -158,15 +163,22 @@ public final class Config {
         try {
             switch (key) {
                 case "energy.tier_max_level" -> ENERGY_TIER_MAX_LEVEL.set(parseIntClamped(value, 0, 30));
-                case "energy.base_transfer_per_tick" -> ENERGY_BASE_TRANSFER.set(parseIntClamped(value, 1, Integer.MAX_VALUE));
-                case "network.max_leash_distance" -> NETWORK_MAX_LEASH_DISTANCE.set(parseDoubleClamped(value, 4.0D, 32.0D));
+                case "energy.base_transfer_per_tick" ->
+                    ENERGY_BASE_TRANSFER.set(parseIntClamped(value, 1, Integer.MAX_VALUE));
+                case "network.max_leash_distance" ->
+                    NETWORK_MAX_LEASH_DISTANCE.set(parseDoubleClamped(value, 4.0D, 32.0D));
                 case "network.item_tier_max" -> NETWORK_ITEM_TIER_MAX.set(parseIntClamped(value, 1, 12));
                 case "network.fluid_tier_max" -> NETWORK_FLUID_TIER_MAX.set(parseIntClamped(value, 1, 12));
-                case "network.item_transfer_interval_ticks" -> NETWORK_ITEM_TRANSFER_INTERVAL_TICKS.set(parseIntClamped(value, 1, 40));
-                case "network.fluid_bucket_amount" -> NETWORK_FLUID_BUCKET_AMOUNT.set(parseIntClamped(value, 100, 10000));
+                case "network.item_transfer_interval_ticks" ->
+                    NETWORK_ITEM_TRANSFER_INTERVAL_TICKS.set(parseIntClamped(value, 1, 40));
+                case "network.fluid_bucket_amount" ->
+                    NETWORK_FLUID_BUCKET_AMOUNT.set(parseIntClamped(value, 100, 10000));
                 case "network.stuck_break_ticks" -> NETWORK_STUCK_BREAK_TICKS.set(parseIntClamped(value, 20, 1200));
-                case "presets.allow_op_visual_presets" -> PRESETS_ALLOW_OP_VISUAL_PRESETS.set(Boolean.parseBoolean(value.trim()));
-                default -> { return false; }
+                case "presets.allow_op_visual_presets" ->
+                    PRESETS_ALLOW_OP_VISUAL_PRESETS.set(Boolean.parseBoolean(value.trim()));
+                default -> {
+                    return false;
+                }
             }
         } catch (RuntimeException e) {
             return false;
@@ -177,15 +189,19 @@ public final class Config {
 
     private static int parseIntClamped(String s, int lo, int hi) {
         int v = Integer.parseInt(s.trim());
-        if (v < lo) v = lo;
-        if (v > hi) v = hi;
+        if (v < lo)
+            v = lo;
+        if (v > hi)
+            v = hi;
         return v;
     }
 
     private static double parseDoubleClamped(String s, double lo, double hi) {
         double v = Double.parseDouble(s.trim());
-        if (v < lo) v = lo;
-        if (v > hi) v = hi;
+        if (v < lo)
+            v = lo;
+        if (v > hi)
+            v = hi;
         return v;
     }
 }

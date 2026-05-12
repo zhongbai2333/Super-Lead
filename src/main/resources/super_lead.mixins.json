@@ -6,6 +6,11 @@
   "mixins": [
     "SignalGetterMixin"
   ],
+  "client": [
+    "LevelRendererLightCoordsMixin",
+    "EntityRendererBlockLightMixin",
+    "StandingAndWallBlockItemAccessor"
+  ],
   "injectors": {
     "defaultRequire": 1
   },

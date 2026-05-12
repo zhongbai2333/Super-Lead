@@ -4,8 +4,11 @@ import java.util.Locale;
 
 public interface TuningType<T> {
     String format(T value);
+
     T parse(String value);
+
     boolean validate(T value);
+
     String describeRange();
 
     static TuningType<Double> doubleRange(double min, double max) {

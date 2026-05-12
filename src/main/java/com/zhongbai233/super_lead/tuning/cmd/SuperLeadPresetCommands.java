@@ -29,10 +29,10 @@ import net.neoforged.neoforge.event.RegisterCommandsEvent;
 
 @EventBusSubscriber(modid = Super_lead.MODID)
 public final class SuperLeadPresetCommands {
-    private SuperLeadPresetCommands() {}
+    private SuperLeadPresetCommands() {
+    }
 
-    private static final Permission.HasCommandLevel OP =
-            new Permission.HasCommandLevel(PermissionLevel.GAMEMASTERS);
+    private static final Permission.HasCommandLevel OP = new Permission.HasCommandLevel(PermissionLevel.GAMEMASTERS);
 
     @SubscribeEvent
     public static void onRegister(RegisterCommandsEvent event) {
@@ -70,14 +70,15 @@ public final class SuperLeadPresetCommands {
         MinecraftServer server = ctx.getSource().getServer();
         return SharedSuggestionProvider.suggest(RopePresetLibrary.forServer(server).list(), builder);
     };
-    private static final SuggestionProvider<CommandSourceStack> SUGGEST_KEY = (ctx, builder) ->
-            SharedSuggestionProvider.suggest(ClientTuning.allKeys().stream().map(k -> k.id), builder);
+    private static final SuggestionProvider<CommandSourceStack> SUGGEST_KEY = (ctx, builder) -> SharedSuggestionProvider
+            .suggest(ClientTuning.allKeys().stream().map(k -> k.id), builder);
 
     private static int list(CommandContext<CommandSourceStack> ctx) {
         MinecraftServer server = ctx.getSource().getServer();
         List<String> names = RopePresetLibrary.forServer(server).list();
         if (names.isEmpty()) {
-            ctx.getSource().sendSuccess(() -> Component.literal("No presets stored.").withStyle(ChatFormatting.GRAY), false);
+            ctx.getSource().sendSuccess(() -> Component.literal("No presets stored.").withStyle(ChatFormatting.GRAY),
+                    false);
             return 1;
         }
         ctx.getSource().sendSuccess(() -> Component.literal("Stored presets (" + names.size() + "):")
@@ -96,13 +97,14 @@ public final class SuperLeadPresetCommands {
             return 0;
         }
         RopePreset preset = opt.get();
-        ctx.getSource().sendSuccess(() -> Component.literal("Preset '" + name + "' (" + preset.overrides().size() + " keys):")
-                .withStyle(ChatFormatting.GOLD), false);
+        ctx.getSource()
+                .sendSuccess(() -> Component.literal("Preset '" + name + "' (" + preset.overrides().size() + " keys):")
+                        .withStyle(ChatFormatting.GOLD), false);
         for (Map.Entry<String, String> e : preset.overrides().entrySet()) {
-            ctx.getSource().sendSuccess(() ->
-                    Component.literal("  " + e.getKey() + " = ").withStyle(ChatFormatting.WHITE)
+            ctx.getSource()
+                    .sendSuccess(() -> Component.literal("  " + e.getKey() + " = ").withStyle(ChatFormatting.WHITE)
                             .append(Component.literal(e.getValue()).withStyle(ChatFormatting.LIGHT_PURPLE)),
-                    false);
+                            false);
         }
         return 1;
     }
@@ -117,7 +119,8 @@ public final class SuperLeadPresetCommands {
         Map<String, String> overrides = new LinkedHashMap<>();
         for (String part : pairs.split(",")) {
             String trimmed = part.trim();
-            if (trimmed.isEmpty()) continue;
+            if (trimmed.isEmpty())
+                continue;
             int eq = trimmed.indexOf('=');
             if (eq <= 0) {
                 ctx.getSource().sendFailure(Component.literal("Bad pair (need key=value): " + trimmed));
@@ -137,8 +140,9 @@ public final class SuperLeadPresetCommands {
             return 0;
         }
         PresetServerManager.refreshPresetUsage(ctx.getSource().getServer(), name);
-        ctx.getSource().sendSuccess(() -> Component.literal("Saved preset '" + name + "' with " + overrides.size() + " keys.")
-                .withStyle(ChatFormatting.GREEN), true);
+        ctx.getSource()
+                .sendSuccess(() -> Component.literal("Saved preset '" + name + "' with " + overrides.size() + " keys.")
+                        .withStyle(ChatFormatting.GREEN), true);
         return 1;
     }
 

@@ -17,35 +17,38 @@ import net.neoforged.neoforge.network.PacketDistributor;
 
 /** Server-side, per-player shears zone-selection session. */
 public final class PhysicsZoneSelectionManager {
-    private static final Permission.HasCommandLevel OP =
-            new Permission.HasCommandLevel(PermissionLevel.GAMEMASTERS);
+    private static final Permission.HasCommandLevel OP = new Permission.HasCommandLevel(PermissionLevel.GAMEMASTERS);
     private static final Map<UUID, Selection> SELECTIONS = new HashMap<>();
 
-    private PhysicsZoneSelectionManager() {}
+    private PhysicsZoneSelectionManager() {
+    }
 
     public static boolean isSelecting(ServerPlayer player) {
         return SELECTIONS.containsKey(player.getUUID());
     }
 
     public static void toggle(ServerPlayer player) {
-        if (isSelecting(player)) cancel(player);
-        else start(player);
+        if (isSelecting(player))
+            cancel(player);
+        else
+            start(player);
     }
 
     public static void start(ServerPlayer player) {
-        if (!canUse(player)) return;
+        if (!canUse(player))
+            return;
         SELECTIONS.put(player.getUUID(), new Selection(null));
         sync(player);
         player.sendSystemMessage(Component.literal(
                 "Super Lead: 区域选择已开启。拿剪刀 Shift+右键方块选择两个角。")
-            .withStyle(ChatFormatting.GREEN));
+                .withStyle(ChatFormatting.GREEN));
     }
 
     public static void cancel(ServerPlayer player) {
         SELECTIONS.remove(player.getUUID());
         sync(player);
         player.sendSystemMessage(Component.literal("Super Lead: 区域选择已取消。")
-            .withStyle(ChatFormatting.YELLOW));
+                .withStyle(ChatFormatting.YELLOW));
     }
 
     public static void clear(ServerPlayer player) {
@@ -59,9 +62,11 @@ public final class PhysicsZoneSelectionManager {
     }
 
     public static void handleClick(ServerPlayer player, BlockPos pos) {
-        if (!canUse(player)) return;
+        if (!canUse(player))
+            return;
         Selection selection = SELECTIONS.get(player.getUUID());
-        if (selection == null) return;
+        if (selection == null)
+            return;
         if (!player.getMainHandItem().is(Items.SHEARS) && !player.getOffhandItem().is(Items.SHEARS)) {
             return;
         }
@@ -80,8 +85,10 @@ public final class PhysicsZoneSelectionManager {
     }
 
     public static void createZone(ServerPlayer player, ZoneCreateRequest request) {
-        if (!canUse(player)) return;
-        if (!(player.level() instanceof ServerLevel level)) return;
+        if (!canUse(player))
+            return;
+        if (!(player.level() instanceof ServerLevel level))
+            return;
         String name = request.name() == null ? "" : request.name().trim();
         String preset = request.presetName() == null ? "" : request.presetName().trim();
         AABB area = areaFromCorners(request.from(), request.to());
@@ -109,12 +116,13 @@ public final class PhysicsZoneSelectionManager {
         BlockPos first = selection == null ? null : selection.first;
         boolean hasFirst = first != null;
         PacketDistributor.sendToPlayer(player, new ZoneSelectionState(active, hasFirst,
-            hasFirst ? first : BlockPos.ZERO));
+                hasFirst ? first : BlockPos.ZERO));
     }
 
     private static boolean canUse(ServerPlayer player) {
         return Config.allowOpVisualPresets() && player.permissions().hasPermission(OP);
     }
 
-    private record Selection(BlockPos first) {}
+    private record Selection(BlockPos first) {
+    }
 }

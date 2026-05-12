@@ -22,7 +22,9 @@ public final class PresetPromptScreen extends Screen {
     }
 
     @Override
-    public boolean isPauseScreen() { return false; }
+    public boolean isPauseScreen() {
+        return false;
+    }
 
     @Override
     protected void init() {
@@ -37,19 +39,23 @@ public final class PresetPromptScreen extends Screen {
     }
 
     private void reply(boolean accepted) {
-        if (replied) return;
+        if (replied)
+            return;
         replied = true;
         if (accepted) {
             PresetClientHandler.applyOverrides(overrides);
         }
         ClientPacketDistributor.sendToServer(new PresetPromptResponse(presetName, accepted));
-        if (this.minecraft != null) this.minecraft.setScreen(parent);
+        if (this.minecraft != null)
+            this.minecraft.setScreen(parent);
     }
 
     @Override
     public void onClose() {
-        if (!replied) reply(false);
-        else if (this.minecraft != null) this.minecraft.setScreen(parent);
+        if (!replied)
+            reply(false);
+        else if (this.minecraft != null)
+            this.minecraft.setScreen(parent);
     }
 
     @Override

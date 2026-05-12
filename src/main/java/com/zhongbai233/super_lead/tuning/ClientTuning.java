@@ -117,7 +117,8 @@ public final class ClientTuning {
             "render.maxDistance", "misc", 96.0D, 16.0D, 256.0D,
             "Distance beyond which ropes do not render or simulate.");
 
-    private ClientTuning() {}
+    private ClientTuning() {
+    }
 
     private static TuningKey<Double> registerD(String id, String group,
             double defaultValue, double min, double max, String description) {
@@ -152,11 +153,11 @@ public final class ClientTuning {
     }
 
     public static List<String> groups() {
-                LinkedHashSet<String> out = new LinkedHashSet<>();
+        LinkedHashSet<String> out = new LinkedHashSet<>();
         for (TuningKey<?> key : KEYS.values()) {
-                        out.add(key.group);
+            out.add(key.group);
         }
-                return List.copyOf(out);
+        return List.copyOf(out);
     }
 
     public static long renderEpoch() {

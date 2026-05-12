@@ -38,7 +38,9 @@ public final class ZoneCreateScreen extends Screen {
     }
 
     @Override
-    public boolean isPauseScreen() { return false; }
+    public boolean isPauseScreen() {
+        return false;
+    }
 
     @Override
     protected void init() {
@@ -52,7 +54,8 @@ public final class ZoneCreateScreen extends Screen {
             if (presetBox != null && presetBox.getValue().isBlank() && !presets.isEmpty()) {
                 presetBox.setValue(presets.get(0));
             }
-            if (changed) this.rebuildWidgets();
+            if (changed)
+                this.rebuildWidgets();
         });
         if (PresetClientHandler.lastPresetList() != null) {
             presets = new ArrayList<>(PresetClientHandler.lastPresetList());
@@ -64,7 +67,10 @@ public final class ZoneCreateScreen extends Screen {
         nameBox.setMaxLength(32);
         nameBox.setHint(Component.translatable("super_lead.zone.create.name"));
         nameBox.setValue(nameDraft);
-        nameBox.setResponder(s -> { nameDraft = s; error = ""; });
+        nameBox.setResponder(s -> {
+            nameDraft = s;
+            error = "";
+        });
         addRenderableWidget(nameBox);
 
         presetBox = new EditBox(this.font, x + PADDING, y + 88, W - PADDING * 2, 18,
@@ -72,7 +78,10 @@ public final class ZoneCreateScreen extends Screen {
         presetBox.setMaxLength(32);
         presetBox.setHint(Component.translatable("super_lead.zone.create.preset"));
         presetBox.setValue(!presetDraft.isBlank() ? presetDraft : (!presets.isEmpty() ? presets.get(0) : ""));
-        presetBox.setResponder(s -> { presetDraft = s; error = ""; });
+        presetBox.setResponder(s -> {
+            presetDraft = s;
+            error = "";
+        });
         addRenderableWidget(presetBox);
 
         int btnY = y + 142;
@@ -94,7 +103,8 @@ public final class ZoneCreateScreen extends Screen {
 
     private void requestPresetList() {
         long now = System.currentTimeMillis();
-        if (now - lastPresetRequestMs < 500L) return;
+        if (now - lastPresetRequestMs < 500L)
+            return;
         lastPresetRequestMs = now;
         ClientPacketDistributor.sendToServer(PresetListRequest.INSTANCE);
     }
@@ -112,14 +122,16 @@ public final class ZoneCreateScreen extends Screen {
         }
         ClientPacketDistributor.sendToServer(new ZoneCreateRequest(name, preset, from, to));
         ZoneSelectionClient.clearCreatePreview();
-        if (this.minecraft != null) this.minecraft.setScreen(parent);
+        if (this.minecraft != null)
+            this.minecraft.setScreen(parent);
     }
 
     @Override
     public void onClose() {
         PresetClientHandler.setListListener(null);
         ZoneSelectionClient.clearCreatePreview();
-        if (this.minecraft != null) this.minecraft.setScreen(parent);
+        if (this.minecraft != null)
+            this.minecraft.setScreen(parent);
     }
 
     @Override
@@ -130,10 +142,14 @@ public final class ZoneCreateScreen extends Screen {
         int y = this.height / 2 - 86;
         graphics.fill(x, y, x + W, y + 176, 0xE0202428);
         graphics.text(this.font, this.title, x + PADDING, y + 8, 0xFFFFD24F);
-        graphics.text(this.font, Component.literal(areaText()).withStyle(ChatFormatting.GRAY), x + PADDING, y + 22, 0xFFAAAAAA);
-        graphics.text(this.font, Component.translatable("super_lead.zone.create.name"), x + PADDING, y + 38, 0xFFE8E8E8);
-        graphics.text(this.font, Component.translatable("super_lead.zone.create.preset"), x + PADDING, y + 78, 0xFFE8E8E8);
-        if (!error.isEmpty()) graphics.text(this.font, Component.literal(error), x + PADDING, y + 166, 0xFFFF6060);
+        graphics.text(this.font, Component.literal(areaText()).withStyle(ChatFormatting.GRAY), x + PADDING, y + 22,
+                0xFFAAAAAA);
+        graphics.text(this.font, Component.translatable("super_lead.zone.create.name"), x + PADDING, y + 38,
+                0xFFE8E8E8);
+        graphics.text(this.font, Component.translatable("super_lead.zone.create.preset"), x + PADDING, y + 78,
+                0xFFE8E8E8);
+        if (!error.isEmpty())
+            graphics.text(this.font, Component.literal(error), x + PADDING, y + 166, 0xFFFF6060);
     }
 
     private String areaText() {

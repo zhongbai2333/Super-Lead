@@ -61,7 +61,9 @@ public final class PresetEditScreen extends Screen {
     }
 
     @Override
-    public boolean isPauseScreen() { return false; }
+    public boolean isPauseScreen() {
+        return false;
+    }
 
     @Override
     protected void init() {
@@ -69,12 +71,14 @@ public final class PresetEditScreen extends Screen {
         if (groups == null) {
             groups = new ArrayList<>(ClientTuning.groups());
         }
-        if (activeTab >= groups.size()) activeTab = 0;
+        if (activeTab >= groups.size())
+            activeTab = 0;
         preview.setViewport(0, 0, this.width, this.height);
         preview.setOverrides(overrides, true);
 
         PresetClientHandler.setDetailsListener(resp -> {
-            if (!resp.name().equals(presetName)) return;
+            if (!resp.name().equals(presetName))
+                return;
             applyDetails(resp, true);
         });
         PresetDetailsResponse cached = PresetClientHandler.lastDetails();
@@ -111,7 +115,8 @@ public final class PresetEditScreen extends Screen {
 
     private void rebuildBody(int startY) {
         rows.clear();
-        if (groups == null || groups.isEmpty()) return;
+        if (groups == null || groups.isEmpty())
+            return;
         String group = groups.get(activeTab);
         bodyTop = startY;
         bodyBottom = this.height - PADDING;
@@ -129,7 +134,8 @@ public final class PresetEditScreen extends Screen {
 
         int baseY = startY;
         for (TuningKey<?> key : ClientTuning.allKeys()) {
-            if (!key.group.equals(group)) continue;
+            if (!key.group.equals(group))
+                continue;
             int y = baseY - scrollOffset;
             AbstractWidget widget = buildWidget(key, sliderX, y, sliderW);
             AbstractWidget input = buildInput(key, inputX, y, INPUT_W);
@@ -173,7 +179,8 @@ public final class PresetEditScreen extends Screen {
             overrides.clear();
             loaded = true;
             preview.setOverrides(overrides, true);
-            if (rebuild) this.rebuildWidgets();
+            if (rebuild)
+                this.rebuildWidgets();
             return;
         }
         if (loaded && overrides.equals(response.overrides())) {
@@ -183,11 +190,13 @@ public final class PresetEditScreen extends Screen {
         overrides.putAll(response.overrides());
         loaded = true;
         preview.setOverrides(overrides, true);
-        if (rebuild) this.rebuildWidgets();
+        if (rebuild)
+            this.rebuildWidgets();
     }
 
     private boolean isInteractingWithBodyControls() {
-        if (pointerDownInBody) return true;
+        if (pointerDownInBody)
+            return true;
         for (Row row : rows) {
             if (row.input instanceof EditBox box && box.isFocused()) {
                 return true;
@@ -309,17 +318,28 @@ public final class PresetEditScreen extends Screen {
     }
 
     private static double parseDouble(String raw, double fallback) {
-        if (raw == null) return fallback;
-        try { return Double.parseDouble(raw.trim()); } catch (RuntimeException e) { return fallback; }
+        if (raw == null)
+            return fallback;
+        try {
+            return Double.parseDouble(raw.trim());
+        } catch (RuntimeException e) {
+            return fallback;
+        }
     }
 
     private static int parseInt(String raw, int fallback) {
-        if (raw == null) return fallback;
-        try { return Integer.parseInt(raw.trim()); } catch (RuntimeException e) { return fallback; }
+        if (raw == null)
+            return fallback;
+        try {
+            return Integer.parseInt(raw.trim());
+        } catch (RuntimeException e) {
+            return fallback;
+        }
     }
 
     private static boolean parseBool(String raw, boolean fallback) {
-        if (raw == null) return fallback;
+        if (raw == null)
+            return fallback;
         return Boolean.parseBoolean(raw.trim());
     }
 
@@ -365,7 +385,8 @@ public final class PresetEditScreen extends Screen {
     @Override
     public void onClose() {
         PresetClientHandler.setDetailsListener(null);
-        if (this.minecraft != null) this.minecraft.setScreen(parent);
+        if (this.minecraft != null)
+            this.minecraft.setScreen(parent);
     }
 
     @Override
@@ -393,14 +414,16 @@ public final class PresetEditScreen extends Screen {
                     this.width / 2, this.height / 2, 0xFFAAAAAA);
             return;
         }
-        if (groups != null && !groups.isEmpty()) renderRows(graphics);
+        if (groups != null && !groups.isEmpty())
+            renderRows(graphics);
         renderScrollbar(graphics);
     }
 
     private void renderRows(GuiGraphicsExtractor graphics) {
         for (Row row : rows) {
             AbstractWidget w = row.widget;
-            if (!w.visible) continue;
+            if (!w.visible)
+                continue;
             TuningKey<?> key = row.key;
             int rowY = w.getY() + (w.getHeight() - this.font.lineHeight) / 2;
             Component label = Component.translatableWithFallback(
@@ -443,7 +466,8 @@ public final class PresetEditScreen extends Screen {
 
     private void renderScrollbar(GuiGraphicsExtractor graphics) {
         int viewport = bodyBottom - bodyTop;
-        if (contentHeight <= viewport || viewport <= 0) return;
+        if (contentHeight <= viewport || viewport <= 0)
+            return;
         int trackX = this.width - PADDING - SCROLLBAR_W;
         graphics.fill(trackX, bodyTop, trackX + SCROLLBAR_W, bodyBottom, 0x60000000);
         int thumbH = Math.max(16, viewport * viewport / contentHeight);
@@ -453,7 +477,8 @@ public final class PresetEditScreen extends Screen {
     }
 
     private String truncate(String value, int maxWidth) {
-        if (this.font.width(value) <= maxWidth) return value;
+        if (this.font.width(value) <= maxWidth)
+            return value;
         String e = "...";
         int eW = this.font.width(e);
         StringBuilder out = new StringBuilder();
@@ -461,7 +486,8 @@ public final class PresetEditScreen extends Screen {
         for (int i = 0; i < value.length(); i++) {
             String ch = String.valueOf(value.charAt(i));
             int cw = this.font.width(ch);
-            if (w + cw + eW > maxWidth) break;
+            if (w + cw + eW > maxWidth)
+                break;
             out.append(ch);
             w += cw;
         }
@@ -486,7 +512,8 @@ public final class PresetEditScreen extends Screen {
         Minecraft.getInstance().setScreen(new PresetEditScreen(parent, name));
     }
 
-    private record Row(AbstractWidget widget, AbstractWidget input, AbstractWidget reset, TuningKey<?> key, int baseY) {}
+    private record Row(AbstractWidget widget, AbstractWidget input, AbstractWidget reset, TuningKey<?> key, int baseY) {
+    }
 
     private static final class PresetDoubleSlider extends AbstractSliderButton {
         private final DoubleTuningType type;
@@ -501,7 +528,10 @@ public final class PresetEditScreen extends Screen {
             this.sink = sink;
         }
 
-        @Override protected void updateMessage() { setMessage(Component.empty()); }
+        @Override
+        protected void updateMessage() {
+            setMessage(Component.empty());
+        }
 
         @Override
         protected void applyValue() {
@@ -529,7 +559,10 @@ public final class PresetEditScreen extends Screen {
             this.sink = sink;
         }
 
-        @Override protected void updateMessage() { setMessage(Component.empty()); }
+        @Override
+        protected void updateMessage() {
+            setMessage(Component.empty());
+        }
 
         @Override
         protected void applyValue() {

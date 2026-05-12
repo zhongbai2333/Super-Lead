@@ -8,7 +8,9 @@ abstract class RopeSimulationRenderCache extends RopeSimulationCore {
         super(a, b, seed, tight, tuning);
     }
 
-    /** Prepare and cache interpolated render nodes. Returns cumulative rope length. */
+    /**
+     * Prepare and cache interpolated render nodes. Returns cumulative rope length.
+     */
     public double prepareRender(float partialTick) {
         if (renderCacheValid
                 && (isSettled() || Float.floatToIntBits(renderCachePartialTick) == Float.floatToIntBits(partialTick))) {
@@ -33,46 +35,95 @@ abstract class RopeSimulationRenderCache extends RopeSimulationCore {
         renderTotalLength = renderLengths[nodes - 1];
         renderCachePartialTick = partialTick;
         renderCacheValid = true;
-        // Render positions just changed; basis-vector scratch and occlusion cache are stale.
+        // Render positions just changed; basis-vector scratch and occlusion cache are
+        // stale.
         frameScratchValid = false;
         visOcclusionFrame = Long.MIN_VALUE;
         return renderTotalLength;
     }
 
-    public double renderX(int i) { return renderX[i]; }
-    public double renderY(int i) { return renderY[i]; }
-    public double renderZ(int i) { return renderZ[i]; }
-    public double renderLength(int i) { return renderLengths[i]; }
+    public double renderX(int i) {
+        return renderX[i];
+    }
+
+    public double renderY(int i) {
+        return renderY[i];
+    }
+
+    public double renderZ(int i) {
+        return renderZ[i];
+    }
+
+    public double renderLength(int i) {
+        return renderLengths[i];
+    }
+
     public AABB renderBounds(float partialTick) {
         prepareRender(partialTick);
         double nx0 = renderX[0], nx1 = renderX[0];
         double ny0 = renderY[0], ny1 = renderY[0];
         double nz0 = renderZ[0], nz1 = renderZ[0];
         for (int i = 1; i < nodes; i++) {
-            double vx = renderX[i]; if (vx < nx0) nx0 = vx; else if (vx > nx1) nx1 = vx;
-            double vy = renderY[i]; if (vy < ny0) ny0 = vy; else if (vy > ny1) ny1 = vy;
-            double vz = renderZ[i]; if (vz < nz0) nz0 = vz; else if (vz > nz1) nz1 = vz;
+            double vx = renderX[i];
+            if (vx < nx0)
+                nx0 = vx;
+            else if (vx > nx1)
+                nx1 = vx;
+            double vy = renderY[i];
+            if (vy < ny0)
+                ny0 = vy;
+            else if (vy > ny1)
+                ny1 = vy;
+            double vz = renderZ[i];
+            if (vz < nz0)
+                nz0 = vz;
+            else if (vz > nz1)
+                nz1 = vz;
         }
         return new AABB(nx0, ny0, nz0, nx1, ny1, nz1);
     }
 
-    // Render-side scratch accessors --------------------------------------------------------------
-    public double[] frameSideX() { return frameSideX; }
-    public double[] frameSideY() { return frameSideY; }
-    public double[] frameSideZ() { return frameSideZ; }
-    public double[] frameUpX() { return frameUpX; }
-    public double[] frameUpY() { return frameUpY; }
-    public double[] frameUpZ() { return frameUpZ; }
+    // Render-side scratch accessors
+    // --------------------------------------------------------------
+    public double[] frameSideX() {
+        return frameSideX;
+    }
+
+    public double[] frameSideY() {
+        return frameSideY;
+    }
+
+    public double[] frameSideZ() {
+        return frameSideZ;
+    }
+
+    public double[] frameUpX() {
+        return frameUpX;
+    }
+
+    public double[] frameUpY() {
+        return frameUpY;
+    }
+
+    public double[] frameUpZ() {
+        return frameUpZ;
+    }
 
     /**
-     * Lazily allocate / validate per-frame basis-vector scratch arrays. Returns {@code true} if
-     * the caller must (re)build them, {@code false} if the previously-built scratch is still
+     * Lazily allocate / validate per-frame basis-vector scratch arrays. Returns
+     * {@code true} if
+     * the caller must (re)build them, {@code false} if the previously-built scratch
+     * is still
      * valid for these parameters and can be reused.
      */
     public boolean acquireFrameScratch(double baseThickness, int pulsesHash) {
         if (frameSideX == null || frameSideX.length < nodes) {
-            frameSideX = new double[nodes]; frameSideY = new double[nodes]; frameSideZ = new double[nodes];
-            frameUpX = new double[nodes];   frameUpY = new double[nodes];   frameUpZ = new double[nodes];
+            frameSideX = new double[nodes];
+            frameSideY = new double[nodes];
+            frameSideZ = new double[nodes];
+            frameUpX = new double[nodes];
+            frameUpY = new double[nodes];
+            frameUpZ = new double[nodes];
             frameScratchValid = false;
         }
         if (frameScratchValid
@@ -86,9 +137,16 @@ abstract class RopeSimulationRenderCache extends RopeSimulationCore {
         return true;
     }
 
-    // Render-side occlusion cache accessors ------------------------------------------------------
-    public long visOcclusionFrame() { return visOcclusionFrame; }
-    public boolean visOcclusionResult() { return visOcclusionResult; }
+    // Render-side occlusion cache accessors
+    // ------------------------------------------------------
+    public long visOcclusionFrame() {
+        return visOcclusionFrame;
+    }
+
+    public boolean visOcclusionResult() {
+        return visOcclusionResult;
+    }
+
     public void setVisOcclusionCache(long frame, boolean result) {
         this.visOcclusionFrame = frame;
         this.visOcclusionResult = result;
@@ -96,7 +154,8 @@ abstract class RopeSimulationRenderCache extends RopeSimulationCore {
 
     /**
      * Reset the per-segment visibility mask and ensure the backing array can hold
-     * {@code segmentCount} bits. A non-zero segment count activates mask filtering; callers then
+     * {@code segmentCount} bits. A non-zero segment count activates mask filtering;
+     * callers then
      * mark visible segments explicitly with {@link #setSegmentVisible}.
      */
     public void beginSegmentVisibility(int segmentCount) {
@@ -109,13 +168,15 @@ abstract class RopeSimulationRenderCache extends RopeSimulationCore {
         if (segVisMask == null || segVisMask.length < words) {
             segVisMask = new long[words];
         } else {
-            for (int i = 0; i < words; i++) segVisMask[i] = 0L;
+            for (int i = 0; i < words; i++)
+                segVisMask[i] = 0L;
         }
     }
 
     /** Mark segment {@code s} (0-based) as visible/hidden. */
     public void setSegmentVisible(int s, boolean visible) {
-        if (s < 0 || s >= segVisBitCount) return;
+        if (s < 0 || s >= segVisBitCount)
+            return;
         if (visible) {
             segVisMask[s >>> 6] |= 1L << (s & 63);
         } else {
@@ -123,21 +184,36 @@ abstract class RopeSimulationRenderCache extends RopeSimulationCore {
         }
     }
 
-    /** True if every segment in the current mask is visible (or no mask was computed). */
-    public boolean segVisAllVisible() { return segVisAllVisible; }
+    /**
+     * True if every segment in the current mask is visible (or no mask was
+     * computed).
+     */
+    public boolean segVisAllVisible() {
+        return segVisAllVisible;
+    }
 
-    /** True if segment {@code s} is visible. Returns true when no mask is active. */
+    /**
+     * True if segment {@code s} is visible. Returns true when no mask is active.
+     */
     public boolean isSegmentVisible(int s) {
-        if (segVisAllVisible) return true;
-        if (s < 0 || s >= segVisBitCount) return true;
+        if (segVisAllVisible)
+            return true;
+        if (s < 0 || s >= segVisBitCount)
+            return true;
         return (segVisMask[s >>> 6] & (1L << (s & 63))) != 0L;
     }
 
-    // Static baked vertex cache (Pillar A) ------------------------------------------------------
-    /** Returns true if the cache is populated and matches the supplied key. The cache is
-     *  auto-invalidated by {@link #markBoundsDirty()} (called at the end of any non-skipped
-     *  {@code step()}), so cache-hit always means "positions, light and material identical
-     *  to the last bake". */
+    // Static baked vertex cache (Pillar A)
+    // ------------------------------------------------------
+    /**
+     * Returns true if the cache is populated and matches the supplied key. The
+     * cache is
+     * auto-invalidated by {@link #markBoundsDirty()} (called at the end of any
+     * non-skipped
+     * {@code step()}), so cache-hit always means "positions, light and material
+     * identical
+     * to the last bake".
+     */
     public boolean tryUseBake(int nodeCountKey, boolean ribbonLodKey,
             int blockA, int blockB, int skyA, int skyB,
             int kindOrdinal, boolean powered, int tier, int pulsesHash, int cameraBin) {
@@ -154,7 +230,9 @@ abstract class RopeSimulationRenderCache extends RopeSimulationCore {
                 && bakedCameraBin == cameraBin;
     }
 
-    /** Begin a fresh bake. Re-allocates only when the current arrays are too small. */
+    /**
+     * Begin a fresh bake. Re-allocates only when the current arrays are too small.
+     */
     public void beginBake(int expectedVertices) {
         if (bakedX == null || bakedX.length < expectedVertices) {
             int n = Math.max(64, expectedVertices);
@@ -233,8 +311,10 @@ abstract class RopeSimulationRenderCache extends RopeSimulationCore {
             int kindOrdinal, boolean powered, int tier, int pulsesHash, int cameraBin) {
         bakedNodeCount = nodeCountKey;
         bakedRibbonLod = ribbonLodKey;
-        bakedBlockA = blockA; bakedBlockB = blockB;
-        bakedSkyA = skyA; bakedSkyB = skyB;
+        bakedBlockA = blockA;
+        bakedBlockB = blockB;
+        bakedSkyA = skyA;
+        bakedSkyB = skyB;
         bakedKindOrdinal = kindOrdinal;
         bakedPowered = powered;
         bakedTier = tier;
@@ -243,20 +323,67 @@ abstract class RopeSimulationRenderCache extends RopeSimulationCore {
         bakedValid = true;
     }
 
-    public int bakedCount() { return bakedCount; }
-    public float[] bakedX() { return bakedX; }
-    public float[] bakedY() { return bakedY; }
-    public float[] bakedZ() { return bakedZ; }
-    public int[] bakedColor() { return bakedColor; }
-    public int[] bakedLight() { return bakedLight; }
-    public int bakedSegmentCount() { return bakedSegmentCount; }
-    public float[] bakedSegMidX() { return bakedSegMidX; }
-    public float[] bakedSegMidY() { return bakedSegMidY; }
-    public float[] bakedSegMidZ() { return bakedSegMidZ; }
-    public float[] bakedSegSideX() { return bakedSegSideX; }
-    public float[] bakedSegSideY() { return bakedSegSideY; }
-    public float[] bakedSegSideZ() { return bakedSegSideZ; }
-    public float[] bakedSegUpX() { return bakedSegUpX; }
-    public float[] bakedSegUpY() { return bakedSegUpY; }
-    public float[] bakedSegUpZ() { return bakedSegUpZ; }
+    public int bakedCount() {
+        return bakedCount;
+    }
+
+    public float[] bakedX() {
+        return bakedX;
+    }
+
+    public float[] bakedY() {
+        return bakedY;
+    }
+
+    public float[] bakedZ() {
+        return bakedZ;
+    }
+
+    public int[] bakedColor() {
+        return bakedColor;
+    }
+
+    public int[] bakedLight() {
+        return bakedLight;
+    }
+
+    public int bakedSegmentCount() {
+        return bakedSegmentCount;
+    }
+
+    public float[] bakedSegMidX() {
+        return bakedSegMidX;
+    }
+
+    public float[] bakedSegMidY() {
+        return bakedSegMidY;
+    }
+
+    public float[] bakedSegMidZ() {
+        return bakedSegMidZ;
+    }
+
+    public float[] bakedSegSideX() {
+        return bakedSegSideX;
+    }
+
+    public float[] bakedSegSideY() {
+        return bakedSegSideY;
+    }
+
+    public float[] bakedSegSideZ() {
+        return bakedSegSideZ;
+    }
+
+    public float[] bakedSegUpX() {
+        return bakedSegUpX;
+    }
+
+    public float[] bakedSegUpY() {
+        return bakedSegUpY;
+    }
+
+    public float[] bakedSegUpZ() {
+        return bakedSegUpZ;
+    }
 }

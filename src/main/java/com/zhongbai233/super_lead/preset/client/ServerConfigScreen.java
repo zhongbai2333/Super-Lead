@@ -52,7 +52,9 @@ public final class ServerConfigScreen extends Screen {
     }
 
     @Override
-    public boolean isPauseScreen() { return false; }
+    public boolean isPauseScreen() {
+        return false;
+    }
 
     @Override
     protected void init() {
@@ -88,7 +90,8 @@ public final class ServerConfigScreen extends Screen {
         // listener for preset list
         PresetClientHandler.setListListener(list -> {
             this.presets = new ArrayList<>(list);
-            if (selectedPreset >= presets.size()) selectedPreset = -1;
+            if (selectedPreset >= presets.size())
+                selectedPreset = -1;
             this.rebuildWidgets();
         });
         if (PresetClientHandler.lastPresetList() != null) {
@@ -108,44 +111,62 @@ public final class ServerConfigScreen extends Screen {
 
     private void requestList() {
         long now = System.currentTimeMillis();
-        if (now - lastListMs < 200) return;
+        if (now - lastListMs < 200)
+            return;
         lastListMs = now;
         ClientPacketDistributor.sendToServer(PresetListRequest.INSTANCE);
     }
 
     private void requestZones() {
         long now = System.currentTimeMillis();
-        if (now - lastZoneListMs < 200) return;
+        if (now - lastZoneListMs < 200)
+            return;
         lastZoneListMs = now;
         ClientPacketDistributor.sendToServer(ZoneListRequest.INSTANCE);
     }
 
-    private enum FieldKind { INT, DOUBLE, BOOL }
+    private enum FieldKind {
+        INT, DOUBLE, BOOL
+    }
 
     private record FieldDef(String id, String label, FieldKind kind,
-                             double min, double max, String defaultVal) {}
+            double min, double max, String defaultVal) {
+    }
 
     private static final FieldDef[] SERVER_FIELDS = {
-            new FieldDef("energy.tier_max_level", "super_lead.server_config.field.energy.tier_max_level", FieldKind.INT, 0, 30, "30"),
-            new FieldDef("energy.base_transfer_per_tick", "super_lead.server_config.field.energy.base_transfer", FieldKind.INT, 1, 16384, "256"),
-            new FieldDef("network.max_leash_distance", "super_lead.server_config.field.network.max_leash_distance", FieldKind.DOUBLE, 4.0, 32.0, "12.0"),
-            new FieldDef("network.item_tier_max", "super_lead.server_config.field.network.item_tier_max", FieldKind.INT, 1, 12, "6"),
-            new FieldDef("network.fluid_tier_max", "super_lead.server_config.field.network.fluid_tier_max", FieldKind.INT, 1, 12, "4"),
-            new FieldDef("network.item_transfer_interval_ticks", "super_lead.server_config.field.network.item_transfer_interval", FieldKind.INT, 1, 40, "4"),
-            new FieldDef("network.fluid_bucket_amount", "super_lead.server_config.field.network.fluid_bucket_amount", FieldKind.INT, 100, 10000, "1000"),
-            new FieldDef("network.stuck_break_ticks", "super_lead.server_config.field.network.stuck_break_ticks", FieldKind.INT, 20, 1200, "100"),
-            new FieldDef("presets.allow_op_visual_presets", "super_lead.server_config.field.presets.allow_op_visual_presets", FieldKind.BOOL, 0, 1, "true"),
+            new FieldDef("energy.tier_max_level", "super_lead.server_config.field.energy.tier_max_level", FieldKind.INT,
+                    0, 30, "30"),
+            new FieldDef("energy.base_transfer_per_tick", "super_lead.server_config.field.energy.base_transfer",
+                    FieldKind.INT, 1, 16384, "256"),
+            new FieldDef("network.max_leash_distance", "super_lead.server_config.field.network.max_leash_distance",
+                    FieldKind.DOUBLE, 4.0, 32.0, "12.0"),
+            new FieldDef("network.item_tier_max", "super_lead.server_config.field.network.item_tier_max", FieldKind.INT,
+                    1, 12, "6"),
+            new FieldDef("network.fluid_tier_max", "super_lead.server_config.field.network.fluid_tier_max",
+                    FieldKind.INT, 1, 12, "4"),
+            new FieldDef("network.item_transfer_interval_ticks",
+                    "super_lead.server_config.field.network.item_transfer_interval", FieldKind.INT, 1, 40, "4"),
+            new FieldDef("network.fluid_bucket_amount", "super_lead.server_config.field.network.fluid_bucket_amount",
+                    FieldKind.INT, 100, 10000, "1000"),
+            new FieldDef("network.stuck_break_ticks", "super_lead.server_config.field.network.stuck_break_ticks",
+                    FieldKind.INT, 20, 1200, "100"),
+            new FieldDef("presets.allow_op_visual_presets",
+                    "super_lead.server_config.field.presets.allow_op_visual_presets", FieldKind.BOOL, 0, 1, "true"),
     };
 
-    /** Optimistic local overrides applied immediately after the user edits a slider/toggle,
-     *  before the server's snapshot echo arrives. */
+    /**
+     * Optimistic local overrides applied immediately after the user edits a
+     * slider/toggle,
+     * before the server's snapshot echo arrives.
+     */
     private final Map<String, String> overrides = new HashMap<>();
 
     private void buildServerTab() {
         // ensure we have a snapshot listener and request fresh data
         ServerConfigClient.setListener(map -> {
             // server-confirmed snapshot — drop optimistic overrides for keys it covers
-            for (String k : map.keySet()) overrides.remove(k);
+            for (String k : map.keySet())
+                overrides.remove(k);
             this.rebuildWidgets();
         });
         ClientPacketDistributor.sendToServer(ServerConfigRequest.INSTANCE);
@@ -193,23 +214,30 @@ public final class ServerConfigScreen extends Screen {
                 int min = (int) def.min();
                 int max = (int) def.max();
                 int cur;
-                try { cur = Integer.parseInt(current); } catch (RuntimeException e) { cur = min; }
+                try {
+                    cur = Integer.parseInt(current);
+                } catch (RuntimeException e) {
+                    cur = min;
+                }
                 cur = Mth.clamp(cur, min, max);
                 double t = max == min ? 0.0 : (double) (cur - min) / (double) (max - min);
                 final FieldDef capture = def;
-                return new ServerIntSlider(x, y, w, h, min, max, t, v ->
-                        sendValue(capture.id(), Integer.toString(v)));
+                return new ServerIntSlider(x, y, w, h, min, max, t, v -> sendValue(capture.id(), Integer.toString(v)));
             }
             case DOUBLE -> {
                 double min = def.min();
                 double max = def.max();
                 double cur;
-                try { cur = Double.parseDouble(current); } catch (RuntimeException e) { cur = min; }
+                try {
+                    cur = Double.parseDouble(current);
+                } catch (RuntimeException e) {
+                    cur = min;
+                }
                 cur = Mth.clamp(cur, min, max);
                 double t = max == min ? 0.0 : (cur - min) / (max - min);
                 final FieldDef capture = def;
-                return new ServerDoubleSlider(x, y, w, h, min, max, t, v ->
-                        sendValue(capture.id(), Double.toString(v)));
+                return new ServerDoubleSlider(x, y, w, h, min, max, t,
+                        v -> sendValue(capture.id(), Double.toString(v)));
             }
         }
         throw new IllegalStateException("unreachable");
@@ -223,9 +251,11 @@ public final class ServerConfigScreen extends Screen {
 
     private String currentValue(String key) {
         String v = overrides.get(key);
-        if (v != null) return v;
+        if (v != null)
+            return v;
         Map<String, String> last = ServerConfigClient.last();
-        if (last != null && last.containsKey(key)) return last.get(key);
+        if (last != null && last.containsKey(key))
+            return last.get(key);
         return serverFieldValue(key);
     }
 
@@ -238,7 +268,10 @@ public final class ServerConfigScreen extends Screen {
         int btnY = bodyTop;
         int refreshW = Math.min(80, listW / 2 - 2);
         Button refresh = Button.builder(Component.translatable("super_lead.preset.op_screen.refresh"),
-                b -> { lastListMs = 0; requestList(); })
+                b -> {
+                    lastListMs = 0;
+                    requestList();
+                })
                 .bounds(PADDING, btnY, refreshW, 14).build();
         addRenderableWidget(refresh);
 
@@ -250,7 +283,10 @@ public final class ServerConfigScreen extends Screen {
         box.setMaxLength(32);
         box.setHint(Component.translatable("super_lead.preset.op_screen.new_name_hint"));
         box.setValue(newNameDraft);
-        box.setResponder(s -> { newNameDraft = s; newNameError = ""; });
+        box.setResponder(s -> {
+            newNameDraft = s;
+            newNameError = "";
+        });
         addRenderableWidget(box);
 
         Button create = Button.builder(Component.translatable("super_lead.preset.op_screen.create"),
@@ -268,7 +304,10 @@ public final class ServerConfigScreen extends Screen {
             boolean sel = i == selectedPreset;
             Button row = Button.builder(
                     Component.literal((sel ? "▶ " : "  ") + name),
-                    b -> { selectedPreset = idx; rebuildWidgets(); })
+                    b -> {
+                        selectedPreset = idx;
+                        rebuildWidgets();
+                    })
                     .bounds(PADDING, yReal, listW, ROW_H - 2).build();
             row.visible = yReal >= btnY && yReal + ROW_H <= bodyBottom;
             row.active = row.visible;
@@ -290,7 +329,8 @@ public final class ServerConfigScreen extends Screen {
                     Component.translatable("super_lead.preset.op_screen.delete"),
                     b -> {
                         // Send delete via command rather than a new payload to keep scope tight.
-                        if (this.minecraft != null && this.minecraft.player != null && this.minecraft.player.connection != null) {
+                        if (this.minecraft != null && this.minecraft.player != null
+                                && this.minecraft.player.connection != null) {
                             this.minecraft.player.connection.sendCommand("superlead preset delete " + name);
                         }
                     })
@@ -307,11 +347,15 @@ public final class ServerConfigScreen extends Screen {
 
         int btnY = bodyTop;
         addRenderableWidget(Button.builder(Component.translatable("super_lead.zone.manage.refresh"),
-                b -> { lastZoneListMs = 0; requestZones(); })
+                b -> {
+                    lastZoneListMs = 0;
+                    requestZones();
+                })
                 .bounds(PADDING, btnY, 80, 14).build());
         addRenderableWidget(Button.builder(Component.translatable("super_lead.zone.manage.select_tool"),
                 b -> {
-                    if (this.minecraft != null && this.minecraft.player != null && this.minecraft.player.connection != null) {
+                    if (this.minecraft != null && this.minecraft.player != null
+                            && this.minecraft.player.connection != null) {
                         ZoneSelectionClient.clearManagedPreview();
                         this.minecraft.player.connection.sendCommand("superlead zone select");
                         closeToGame();
@@ -325,7 +369,8 @@ public final class ServerConfigScreen extends Screen {
             SyncPhysicsZones.Entry zone = zones.get(i);
             int yReal = y - scrollOffset;
             boolean sel = i == selectedZone;
-            Button row = Button.builder(Component.literal((sel ? "▶ " : "  ") + zone.name() + " -> " + zone.presetName()), b -> {
+            Button row = Button
+                    .builder(Component.literal((sel ? "▶ " : "  ") + zone.name() + " -> " + zone.presetName()), b -> {
                         selectedZone = idx;
                         ZoneSelectionClient.previewZone(zone);
                         rebuildWidgets();
@@ -351,7 +396,8 @@ public final class ServerConfigScreen extends Screen {
             dy += 22;
             addRenderableWidget(Button.builder(Component.translatable("super_lead.zone.manage.delete"),
                     b -> {
-                        if (this.minecraft != null && this.minecraft.player != null && this.minecraft.player.connection != null) {
+                        if (this.minecraft != null && this.minecraft.player != null
+                                && this.minecraft.player.connection != null) {
                             this.minecraft.player.connection.sendCommand("superlead zone remove " + zone.name());
                             selectedZone = -1;
                             ZoneSelectionClient.clearManagedPreview();
@@ -381,7 +427,8 @@ public final class ServerConfigScreen extends Screen {
         super.tick();
         if (activeTab == 2 && lastZoneEpoch != PhysicsZonesClient.epoch()) {
             lastZoneEpoch = PhysicsZonesClient.epoch();
-            if (selectedZone >= PhysicsZonesClient.zones().size()) selectedZone = -1;
+            if (selectedZone >= PhysicsZonesClient.zones().size())
+                selectedZone = -1;
             rebuildWidgets();
         }
     }
@@ -405,12 +452,14 @@ public final class ServerConfigScreen extends Screen {
     @Override
     public void onClose() {
         detachListeners();
-        if (this.minecraft != null) this.minecraft.setScreen(parent);
+        if (this.minecraft != null)
+            this.minecraft.setScreen(parent);
     }
 
     private void closeToGame() {
         detachListeners();
-        if (this.minecraft != null) this.minecraft.setScreen(null);
+        if (this.minecraft != null)
+            this.minecraft.setScreen(null);
     }
 
     private void detachListeners() {
@@ -506,7 +555,8 @@ public final class ServerConfigScreen extends Screen {
             int detailX = PADDING + listW + 12;
             int y = bodyTop + 86;
             graphics.text(this.font, Component.literal(formatZoneArea(z)), detailX, y, 0xFFAAAAAA);
-            graphics.text(this.font, Component.translatable("super_lead.zone.manage.hint"), detailX, y + 14, 0xFF8090A0);
+            graphics.text(this.font, Component.translatable("super_lead.zone.manage.hint"), detailX, y + 14,
+                    0xFF8090A0);
         }
     }
 

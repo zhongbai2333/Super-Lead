@@ -9,33 +9,61 @@ import net.minecraft.network.codec.ByteBufCodecs;
 import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.world.item.ItemStack;
 
-public record RopeAttachment(UUID id, double t, ItemStack stack, boolean displayAsBlock) {
+public record RopeAttachment(UUID id, double t, ItemStack stack, boolean displayAsBlock, int frontSide) {
     public static final Codec<RopeAttachment> CODEC = RecordCodecBuilder.create(instance -> instance.group(
-                    UUIDUtil.CODEC.fieldOf("id").forGetter(RopeAttachment::id),
-                    Codec.DOUBLE.fieldOf("t").forGetter(a -> Double.valueOf(a.t())),
-                    ItemStack.CODEC.fieldOf("stack").forGetter(RopeAttachment::stack),
-                    Codec.BOOL.optionalFieldOf("display_as_block", Boolean.TRUE).forGetter(a -> Boolean.valueOf(a.displayAsBlock())))
-            .apply(instance, (id, t, stack, asBlock) -> new RopeAttachment(id, t.doubleValue(), stack, asBlock.booleanValue())));
+            UUIDUtil.CODEC.fieldOf("id").forGetter(RopeAttachment::id),
+            Codec.DOUBLE.fieldOf("t").forGetter(a -> Double.valueOf(a.t())),
+            ItemStack.CODEC.fieldOf("stack").forGetter(RopeAttachment::stack),
+            Codec.BOOL.optionalFieldOf("display_as_block", Boolean.TRUE)
+                    .forGetter(a -> Boolean.valueOf(a.displayAsBlock())),
+            Codec.INT.optionalFieldOf("front_side", 1).forGetter(a -> Integer.valueOf(a.frontSide())))
+            .apply(instance, (id, t, stack, asBlock, frontSide) -> new RopeAttachment(id, t.doubleValue(), stack,
+                    asBlock.booleanValue(), frontSide.intValue())));
 
     public static final StreamCodec<RegistryFriendlyByteBuf, RopeAttachment> STREAM_CODEC = StreamCodec.composite(
             UUIDUtil.STREAM_CODEC, RopeAttachment::id,
             ByteBufCodecs.DOUBLE, a -> Double.valueOf(a.t()),
             ItemStack.STREAM_CODEC, RopeAttachment::stack,
             ByteBufCodecs.BOOL, a -> Boolean.valueOf(a.displayAsBlock()),
-            (id, t, stack, asBlock) -> new RopeAttachment(id, t.doubleValue(), stack, asBlock.booleanValue()));
+            ByteBufCodecs.VAR_INT, a -> Integer.valueOf(a.frontSide()),
+            (id, t, stack, asBlock, frontSide) -> new RopeAttachment(id, t.doubleValue(), stack,
+                    asBlock.booleanValue(), frontSide.intValue()));
 
     public RopeAttachment {
-        if (Double.isNaN(t)) t = 0.5D;
+        if (Double.isNaN(t))
+            t = 0.5D;
         t = Math.max(0.02D, Math.min(0.98D, t));
         stack = stack.copyWithCount(1);
+        frontSide = normalizeFrontSide(frontSide);
     }
 
     public static RopeAttachment create(double t, ItemStack stack) {
+        return create(t, stack, 1);
+    }
+
+    public static RopeAttachment create(double t, ItemStack stack, int frontSide) {
         boolean asBlock = RopeAttachmentItems.isBlockItem(stack);
-        return new RopeAttachment(UUID.randomUUID(), t, stack, asBlock);
+        return new RopeAttachment(UUID.randomUUID(), t, stack, asBlock, frontSide);
     }
 
     public RopeAttachment withDisplayAsBlock(boolean asBlock) {
-        return new RopeAttachment(id, t, stack, asBlock);
+        return new RopeAttachment(id, t, stack, asBlock, frontSide);
+    }
+
+    public RopeAttachment withStack(ItemStack stack) {
+        return new RopeAttachment(id, t, stack, displayAsBlock, frontSide);
+    }
+
+    public static int normalizeFrontSide(int frontSide) {
+        if (frontSide == 0) {
+            return 1;
+        }
+        if (frontSide > 3) {
+            return 3;
+        }
+        if (frontSide < -3) {
+            return -3;
+        }
+        return frontSide;
     }
 }

@@ -11,11 +11,10 @@ import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.resources.Identifier;
 
 public record SyncConnections(List<LeadConnection> connections) implements CustomPacketPayload {
-    public static final CustomPacketPayload.Type<SyncConnections> TYPE =
-            new CustomPacketPayload.Type<>(
-                    Identifier.fromNamespaceAndPath(Super_lead.MODID, "sync_connections"));
-    public static final StreamCodec<RegistryFriendlyByteBuf, SyncConnections> STREAM_CODEC =
-            CustomPacketPayload.codec(SyncConnections::write, SyncConnections::read);
+    public static final CustomPacketPayload.Type<SyncConnections> TYPE = new CustomPacketPayload.Type<>(
+            Identifier.fromNamespaceAndPath(Super_lead.MODID, "sync_connections"));
+    public static final StreamCodec<RegistryFriendlyByteBuf, SyncConnections> STREAM_CODEC = CustomPacketPayload
+            .codec(SyncConnections::write, SyncConnections::read);
 
     public SyncConnections {
         connections = List.copyOf(connections);
@@ -51,6 +50,10 @@ public record SyncConnections(List<LeadConnection> connections) implements Custo
         buffer.writeVarInt(connection.tier());
         buffer.writeVarInt(connection.extractAnchor());
         buffer.writeUtf(connection.physicsPreset(), 64);
+        buffer.writeBoolean(connection.adventurePlaced());
+        if (connection.adventurePlaced()) {
+            buffer.writeUUID(connection.adventureOwner());
+        }
         buffer.writeVarInt(connection.attachments().size());
         for (RopeAttachment attachment : connection.attachments()) {
             RopeAttachment.STREAM_CODEC.encode(buffer, attachment);
@@ -66,12 +69,16 @@ public record SyncConnections(List<LeadConnection> connections) implements Custo
         int tier = buffer.readVarInt();
         int extract = buffer.readVarInt();
         String physicsPreset = buffer.readUtf(64);
+        UUID adventureOwner = buffer.readBoolean()
+                ? buffer.readUUID()
+                : LeadConnection.NO_ADVENTURE_OWNER;
         int attachCount = buffer.readVarInt();
         ArrayList<RopeAttachment> attachments = new ArrayList<>(attachCount);
         for (int j = 0; j < attachCount; j++) {
             attachments.add(RopeAttachment.STREAM_CODEC.decode(buffer));
         }
-        return new LeadConnection(id, from, to, kind, power, tier, extract, attachments, physicsPreset);
+        return new LeadConnection(id, from, to, kind, power, tier, extract, attachments, physicsPreset,
+                adventureOwner);
     }
 
     private static void writeAnchor(RegistryFriendlyByteBuf buffer, LeadAnchor anchor) {

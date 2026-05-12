@@ -9,14 +9,19 @@ import net.minecraft.resources.Identifier;
 
 public record PresetDetailsResponse(String name, boolean exists, Map<String, String> overrides)
         implements CustomPacketPayload {
-    public static final CustomPacketPayload.Type<PresetDetailsResponse> TYPE =
-            new CustomPacketPayload.Type<>(Identifier.fromNamespaceAndPath(Super_lead.MODID, "preset_details_response"));
-    public static final StreamCodec<RegistryFriendlyByteBuf, PresetDetailsResponse> STREAM_CODEC =
-            CustomPacketPayload.codec(PresetDetailsResponse::write, PresetDetailsResponse::read);
+    public static final CustomPacketPayload.Type<PresetDetailsResponse> TYPE = new CustomPacketPayload.Type<>(
+            Identifier.fromNamespaceAndPath(Super_lead.MODID, "preset_details_response"));
+    public static final StreamCodec<RegistryFriendlyByteBuf, PresetDetailsResponse> STREAM_CODEC = CustomPacketPayload
+            .codec(PresetDetailsResponse::write, PresetDetailsResponse::read);
 
-    public PresetDetailsResponse { overrides = PresetPayloadCodecs.immutableCopy(overrides); }
+    public PresetDetailsResponse {
+        overrides = PresetPayloadCodecs.immutableCopy(overrides);
+    }
 
-    @Override public Type<? extends CustomPacketPayload> type() { return TYPE; }
+    @Override
+    public Type<? extends CustomPacketPayload> type() {
+        return TYPE;
+    }
 
     private void write(RegistryFriendlyByteBuf buf) {
         buf.writeUtf(name);

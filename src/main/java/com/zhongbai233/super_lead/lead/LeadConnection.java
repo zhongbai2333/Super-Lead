@@ -9,21 +9,29 @@ import java.util.UUID;
 import net.minecraft.core.UUIDUtil;
 
 public record LeadConnection(UUID id, LeadAnchor from, LeadAnchor to, LeadKind kind, int power, int tier,
-                             int extractAnchor, List<RopeAttachment> attachments, String physicsPreset) {
+        int extractAnchor, List<RopeAttachment> attachments, String physicsPreset,
+        UUID adventureOwner) {
     public static final String NO_PHYSICS_PRESET = "";
+    public static final UUID NO_ADVENTURE_OWNER = new UUID(0L, 0L);
 
     public static final Codec<LeadConnection> CODEC = RecordCodecBuilder.create(instance -> instance.group(
-                    UUIDUtil.CODEC.fieldOf("id").forGetter(LeadConnection::id),
-                    LeadAnchor.CODEC.fieldOf("from").forGetter(LeadConnection::from),
-                    LeadAnchor.CODEC.fieldOf("to").forGetter(LeadConnection::to),
-                    LeadKind.CODEC.optionalFieldOf("kind", LeadKind.NORMAL).forGetter(LeadConnection::kind),
-                    Codec.INT.optionalFieldOf("power", 0).forGetter(LeadConnection::power),
-                    Codec.INT.optionalFieldOf("tier", 0).forGetter(LeadConnection::tier),
-                    Codec.INT.optionalFieldOf("extract", 0).forGetter(LeadConnection::extractAnchor),
-                    RopeAttachment.CODEC.listOf().optionalFieldOf("attachments", List.of()).forGetter(LeadConnection::attachments),
-                    Codec.STRING.optionalFieldOf("physicsPreset", NO_PHYSICS_PRESET).forGetter(LeadConnection::physicsPreset))
-                    .apply(instance, (id, from, to, kind, power, tier, extract, attachments, physicsPreset) ->
-                            new LeadConnection(id, from, to, kind, power, tier, extract, attachments, physicsPreset)));
+            UUIDUtil.CODEC.fieldOf("id").forGetter(LeadConnection::id),
+            LeadAnchor.CODEC.fieldOf("from").forGetter(LeadConnection::from),
+            LeadAnchor.CODEC.fieldOf("to").forGetter(LeadConnection::to),
+            LeadKind.CODEC.optionalFieldOf("kind", LeadKind.NORMAL).forGetter(LeadConnection::kind),
+            Codec.INT.optionalFieldOf("power", 0).forGetter(LeadConnection::power),
+            Codec.INT.optionalFieldOf("tier", 0).forGetter(LeadConnection::tier),
+            Codec.INT.optionalFieldOf("extract", 0).forGetter(LeadConnection::extractAnchor),
+            RopeAttachment.CODEC.listOf().optionalFieldOf("attachments", List.of())
+                    .forGetter(LeadConnection::attachments),
+            Codec.STRING.optionalFieldOf("physicsPreset", NO_PHYSICS_PRESET).forGetter(LeadConnection::physicsPreset),
+            UUIDUtil.CODEC.optionalFieldOf("adventureOwner", NO_ADVENTURE_OWNER)
+                    .forGetter(LeadConnection::adventureOwner))
+            .apply(instance,
+                    (id, from, to, kind, power, tier, extract, attachments, physicsPreset,
+                            adventureOwner) -> new LeadConnection(id, from, to, kind, power, tier, extract, attachments,
+                                    physicsPreset,
+                                    adventureOwner)));
 
     public LeadConnection {
         power = Math.max(0, Math.min(15, power));
@@ -31,6 +39,7 @@ public record LeadConnection(UUID id, LeadAnchor from, LeadAnchor to, LeadKind k
         extractAnchor = Math.max(0, Math.min(2, extractAnchor));
         attachments = attachments == null ? List.of() : List.copyOf(attachments);
         physicsPreset = normalizePhysicsPreset(physicsPreset);
+        adventureOwner = adventureOwner == null ? NO_ADVENTURE_OWNER : adventureOwner;
     }
 
     public static LeadConnection create(LeadAnchor from, LeadAnchor to) {
@@ -38,7 +47,12 @@ public record LeadConnection(UUID id, LeadAnchor from, LeadAnchor to, LeadKind k
     }
 
     public static LeadConnection create(LeadAnchor from, LeadAnchor to, LeadKind kind) {
-        return new LeadConnection(UUID.randomUUID(), from, to, kind, 0, 0, 0, List.of(), NO_PHYSICS_PRESET);
+        return new LeadConnection(UUID.randomUUID(), from, to, kind, 0, 0, 0, List.of(), NO_PHYSICS_PRESET,
+                NO_ADVENTURE_OWNER);
+    }
+
+    public boolean adventurePlaced() {
+        return !NO_ADVENTURE_OWNER.equals(adventureOwner);
     }
 
     public boolean powered() {
@@ -51,23 +65,28 @@ public record LeadConnection(UUID id, LeadAnchor from, LeadAnchor to, LeadKind k
         int newPower = (kind == LeadKind.REDSTONE || kind == LeadKind.ENERGY) ? power : 0;
         boolean keepsExtract = kind == LeadKind.ITEM || kind == LeadKind.FLUID;
         int newExtract = keepsExtract ? extractAnchor : 0;
-        return new LeadConnection(id, from, to, kind, newPower, newTier, newExtract, attachments, physicsPreset);
+        return new LeadConnection(id, from, to, kind, newPower, newTier, newExtract, attachments, physicsPreset,
+                adventureOwner);
     }
 
     public LeadConnection withPower(int power) {
-        return new LeadConnection(id, from, to, kind, power, tier, extractAnchor, attachments, physicsPreset);
+        return new LeadConnection(id, from, to, kind, power, tier, extractAnchor, attachments, physicsPreset,
+                adventureOwner);
     }
 
     public LeadConnection withTier(int tier) {
-        return new LeadConnection(id, from, to, kind, power, tier, extractAnchor, attachments, physicsPreset);
+        return new LeadConnection(id, from, to, kind, power, tier, extractAnchor, attachments, physicsPreset,
+                adventureOwner);
     }
 
     public LeadConnection withExtractAnchor(int extractAnchor) {
-        return new LeadConnection(id, from, to, kind, power, tier, extractAnchor, attachments, physicsPreset);
+        return new LeadConnection(id, from, to, kind, power, tier, extractAnchor, attachments, physicsPreset,
+                adventureOwner);
     }
 
     public LeadConnection withAttachments(List<RopeAttachment> attachments) {
-        return new LeadConnection(id, from, to, kind, power, tier, extractAnchor, attachments, physicsPreset);
+        return new LeadConnection(id, from, to, kind, power, tier, extractAnchor, attachments, physicsPreset,
+                adventureOwner);
     }
 
     public LeadConnection withPhysicsPreset(String physicsPreset) {
@@ -75,7 +94,17 @@ public record LeadConnection(UUID id, LeadAnchor from, LeadAnchor to, LeadKind k
         if (normalized.equals(this.physicsPreset)) {
             return this;
         }
-        return new LeadConnection(id, from, to, kind, power, tier, extractAnchor, attachments, normalized);
+        return new LeadConnection(id, from, to, kind, power, tier, extractAnchor, attachments, normalized,
+                adventureOwner);
+    }
+
+    public LeadConnection withAdventureOwner(UUID adventureOwner) {
+        UUID normalized = adventureOwner == null ? NO_ADVENTURE_OWNER : adventureOwner;
+        if (normalized.equals(this.adventureOwner)) {
+            return this;
+        }
+        return new LeadConnection(id, from, to, kind, power, tier, extractAnchor, attachments, physicsPreset,
+                normalized);
     }
 
     public LeadConnection addAttachment(RopeAttachment attachment) {
@@ -86,20 +115,28 @@ public record LeadConnection(UUID id, LeadAnchor from, LeadAnchor to, LeadKind k
     }
 
     public LeadConnection removeAttachment(UUID attachmentId) {
-        if (attachments.isEmpty()) return this;
+        if (attachments.isEmpty())
+            return this;
         List<RopeAttachment> list = new ArrayList<>(attachments.size());
         for (RopeAttachment a : attachments) {
-            if (!a.id().equals(attachmentId)) list.add(a);
+            if (!a.id().equals(attachmentId))
+                list.add(a);
         }
-        if (list.size() == attachments.size()) return this;
+        if (list.size() == attachments.size())
+            return this;
         return withAttachments(list);
     }
 
-    /** Flip the {@code displayAsBlock} flag of {@code attachmentId}. No-op when the attachment
-     *  does not exist or its stack is not a BlockItem (since item form is the only available
-     *  shape for non-block items). */
+    /**
+     * Flip the {@code displayAsBlock} flag of {@code attachmentId}. No-op when the
+     * attachment
+     * does not exist or its stack is not a BlockItem (since item form is the only
+     * available
+     * shape for non-block items).
+     */
     public LeadConnection toggleAttachmentForm(UUID attachmentId) {
-        if (attachments.isEmpty()) return this;
+        if (attachments.isEmpty())
+            return this;
         List<RopeAttachment> list = new ArrayList<>(attachments.size());
         boolean changed = false;
         for (RopeAttachment a : attachments) {
@@ -113,9 +150,12 @@ public record LeadConnection(UUID id, LeadAnchor from, LeadAnchor to, LeadKind k
         return changed ? withAttachments(list) : this;
     }
 
-    /** Returns the resource extraction anchor, or null when extraction is disabled. */
+    /**
+     * Returns the resource extraction anchor, or null when extraction is disabled.
+     */
     public LeadAnchor extractSource() {
-        if (kind != LeadKind.ITEM && kind != LeadKind.FLUID) return null;
+        if (kind != LeadKind.ITEM && kind != LeadKind.FLUID)
+            return null;
         return switch (extractAnchor) {
             case 1 -> from;
             case 2 -> to;
@@ -123,9 +163,12 @@ public record LeadConnection(UUID id, LeadAnchor from, LeadAnchor to, LeadKind k
         };
     }
 
-    /** Returns the resource insertion anchor, or null when extraction is disabled. */
+    /**
+     * Returns the resource insertion anchor, or null when extraction is disabled.
+     */
     public LeadAnchor extractTarget() {
-        if (kind != LeadKind.ITEM && kind != LeadKind.FLUID) return null;
+        if (kind != LeadKind.ITEM && kind != LeadKind.FLUID)
+            return null;
         return switch (extractAnchor) {
             case 1 -> to;
             case 2 -> from;
@@ -133,7 +176,10 @@ public record LeadConnection(UUID id, LeadAnchor from, LeadAnchor to, LeadKind k
         };
     }
 
-    /** Speed multiplier: tier 0 = 1x, each tier doubles; saturates at Integer.MAX_VALUE. */
+    /**
+     * Speed multiplier: tier 0 = 1x, each tier doubles; saturates at
+     * Integer.MAX_VALUE.
+     */
     public int speedMultiplier() {
         if (tier <= 0) {
             return 1;

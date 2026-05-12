@@ -11,11 +11,10 @@ import net.minecraft.resources.Identifier;
 
 public record SyncConnectionChanges(List<UUID> removed, List<LeadConnection> upserts)
         implements CustomPacketPayload {
-    public static final CustomPacketPayload.Type<SyncConnectionChanges> TYPE =
-            new CustomPacketPayload.Type<>(
-                    Identifier.fromNamespaceAndPath(Super_lead.MODID, "sync_connection_changes"));
-    public static final StreamCodec<RegistryFriendlyByteBuf, SyncConnectionChanges> STREAM_CODEC =
-            CustomPacketPayload.codec(SyncConnectionChanges::write, SyncConnectionChanges::read);
+    public static final CustomPacketPayload.Type<SyncConnectionChanges> TYPE = new CustomPacketPayload.Type<>(
+            Identifier.fromNamespaceAndPath(Super_lead.MODID, "sync_connection_changes"));
+    public static final StreamCodec<RegistryFriendlyByteBuf, SyncConnectionChanges> STREAM_CODEC = CustomPacketPayload
+            .codec(SyncConnectionChanges::write, SyncConnectionChanges::read);
 
     public SyncConnectionChanges {
         removed = List.copyOf(removed);
