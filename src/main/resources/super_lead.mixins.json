@@ -9,7 +9,10 @@
   "client": [
     "LevelRendererLightCoordsMixin",
     "EntityRendererBlockLightMixin",
-    "StandingAndWallBlockItemAccessor"
+    "StandingAndWallBlockItemAccessor",
+    "ZiplineFirstPersonItemMixin",
+    "ZiplineHeldItemLayerMixin",
+    "ZiplineHumanoidModelMixin"
   ],
   "injectors": {
     "defaultRequire": 1

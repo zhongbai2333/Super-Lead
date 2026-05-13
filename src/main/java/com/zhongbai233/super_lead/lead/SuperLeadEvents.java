@@ -1,8 +1,11 @@
 package com.zhongbai233.super_lead.lead;
 
 import com.zhongbai233.super_lead.Super_lead;
+import java.util.Optional;
+import net.minecraft.ChatFormatting;
 import net.minecraft.core.Direction;
 import net.minecraft.core.component.DataComponents;
+import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.InteractionHand;
@@ -12,7 +15,6 @@ import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.Level;
-import net.minecraft.world.level.block.FenceBlock;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.event.entity.player.PlayerEvent;
@@ -29,10 +31,23 @@ public final class SuperLeadEvents {
     public static void onRightClickBlock(PlayerInteractEvent.RightClickBlock event) {
         ItemStack stack = event.getItemStack();
 
+        if (tryUseZoneSelectionTool(event)) {
+            return;
+        }
+
+        if (ZiplineController.isChain(stack) && tryStartZipline(event)) {
+            return;
+        }
+
         // Sneak-gated rope-targeting actions: cut, upgrade, extract toggle, remove
         // attachment.
         if (event.getEntity().isShiftKeyDown()) {
             if (stack.is(Items.SHEARS) && tryUseConnectionAction(event)) {
+                return;
+            }
+            if (isSeedItem(stack) && tryBoostRopePerch(event)) {
+                event.setCanceled(true);
+                event.setCancellationResult(InteractionResult.SUCCESS);
                 return;
             }
             if (stack.is(Items.HOPPER) && tryToggleItemExtract(event)) {
@@ -91,6 +106,58 @@ public final class SuperLeadEvents {
 
         event.setCanceled(true);
         event.setCancellationResult(result);
+    }
+
+    private static boolean tryUseZoneSelectionTool(PlayerInteractEvent.RightClickBlock event) {
+        if (!event.getLevel().isClientSide())
+            return false;
+        if (!event.getEntity().isShiftKeyDown())
+            return false;
+        if (!event.getItemStack().is(Items.SHEARS))
+            return false;
+        if (!com.zhongbai233.super_lead.preset.client.ZoneSelectionClient.tryHandleBlockClick(
+                event.getEntity(), event.getHand(), event.getPos())) {
+            return false;
+        }
+        event.setCanceled(true);
+        event.setCancellationResult(InteractionResult.SUCCESS);
+        return true;
+    }
+
+    private static boolean tryStartZipline(PlayerInteractEvent.RightClickBlock event) {
+        if (!ZiplineController.isChain(event.getItemStack()))
+            return false;
+        if (event.getLevel().isClientSide()) {
+            if (!com.zhongbai233.super_lead.lead.client.SuperLeadClientEvents
+                    .trySendStartZipline(event.getHand())) {
+                return false;
+            }
+            event.setCanceled(true);
+            event.setCancellationResult(InteractionResult.SUCCESS);
+            return true;
+        }
+        if (event.getLevel() instanceof ServerLevel serverLevel
+                && SuperLeadNetwork.hasClientPickCompatibleConnectionInView(serverLevel, event.getEntity(),
+                        connection -> ZiplineController.canRideConnection(serverLevel, connection))) {
+            event.setCanceled(true);
+            event.setCancellationResult(InteractionResult.SUCCESS);
+            return true;
+        }
+        return false;
+    }
+
+    private static boolean tryStartZiplineItem(PlayerInteractEvent.RightClickItem event) {
+        if (!event.getLevel().isClientSide())
+            return false;
+        return com.zhongbai233.super_lead.lead.client.SuperLeadClientEvents
+                .trySendStartZipline(event.getHand());
+    }
+
+    private static void tryStartZiplineEmpty(PlayerInteractEvent.RightClickEmpty event) {
+        if (!event.getLevel().isClientSide())
+            return;
+        com.zhongbai233.super_lead.lead.client.SuperLeadClientEvents
+                .trySendStartZipline(event.getHand());
     }
 
     private static boolean tryToggleItemExtract(PlayerInteractEvent.RightClickBlock event) {
@@ -178,6 +245,19 @@ public final class SuperLeadEvents {
         ItemStack stack = event.getItemStack();
         boolean shift = event.getEntity().isShiftKeyDown();
 
+        if (ZiplineController.isChain(stack) && tryStartZiplineItem(event)) {
+            event.setCanceled(true);
+            event.setCancellationResult(InteractionResult.SUCCESS);
+            return;
+        }
+
+        // Seed rope boost also works when right-clicking in the air.
+        if (shift && isSeedItem(stack) && tryBoostRopePerchItem(event)) {
+            event.setCanceled(true);
+            event.setCancellationResult(InteractionResult.SUCCESS);
+            return;
+        }
+
         // Connection actions (shears, redstone, energy, item, fluid) all require sneak
         // now so
         // they don't conflict with attachment placement.
@@ -226,6 +306,10 @@ public final class SuperLeadEvents {
             return;
         ItemStack stack = event.getItemStack();
         boolean shift = event.getEntity().isShiftKeyDown();
+        if (ZiplineController.isChain(stack)) {
+            tryStartZiplineEmpty(event);
+            return;
+        }
         if (shift) {
             if (stack.isEmpty()) {
                 tryRemoveRopeAttachment(event.getEntity(), event.getLevel());
@@ -424,10 +508,12 @@ public final class SuperLeadEvents {
                 clearLeashingState(stack);
                 result = InteractionResult.FAIL;
             } else {
-                SuperLeadNetwork.connect(level, first, anchor, kind, player);
+                LeadConnection created = SuperLeadNetwork.connect(level, first, anchor, kind, player);
                 SuperLeadNetwork.clearPendingAnchor(player);
                 clearLeashingState(stack);
-                if (!level.isClientSide() && !player.isCreative()) {
+                if (created == null) {
+                    result = InteractionResult.FAIL;
+                } else if (!level.isClientSide() && !player.isCreative()) {
                     stack.shrink(1);
                 }
             }
@@ -466,6 +552,8 @@ public final class SuperLeadEvents {
                 SuperLeadNetwork.tickItem(serverLevel);
                 SuperLeadNetwork.tickFluid(serverLevel);
                 RopeContactTracker.tickRopeContacts(serverLevel);
+                ParrotRopePerchController.tick(serverLevel);
+                ZiplineController.tick(serverLevel);
             }
         }
     }
@@ -473,6 +561,7 @@ public final class SuperLeadEvents {
     @SubscribeEvent
     public static void onPlayerLoggedIn(PlayerEvent.PlayerLoggedInEvent event) {
         if (event.getEntity() instanceof ServerPlayer player) {
+            ZiplineController.stopEverywhere(player);
             SuperLeadPayloads.sendToPlayer(player);
         }
     }
@@ -480,7 +569,15 @@ public final class SuperLeadEvents {
     @SubscribeEvent
     public static void onPlayerChangedDimension(PlayerEvent.PlayerChangedDimensionEvent event) {
         if (event.getEntity() instanceof ServerPlayer player) {
+            ZiplineController.stopEverywhere(player);
             SuperLeadPayloads.sendToPlayer(player);
+        }
+    }
+
+    @SubscribeEvent
+    public static void onPlayerLoggedOut(PlayerEvent.PlayerLoggedOutEvent event) {
+        if (event.getEntity() instanceof ServerPlayer player) {
+            ZiplineController.stopEverywhere(player);
         }
     }
 
@@ -563,9 +660,40 @@ public final class SuperLeadEvents {
     }
 
     private static LeadAnchor createAnchor(PlayerInteractEvent.RightClickBlock event) {
-        Direction face = event.getLevel().getBlockState(event.getPos()).getBlock() instanceof FenceBlock
-                ? Direction.UP
-                : event.getHitVec().getDirection();
+        Direction face = LeadAnchor.knotFace(event.getLevel().getBlockState(event.getPos()),
+            event.getHitVec().getDirection());
         return new LeadAnchor(event.getPos().immutable(), face);
+    }
+
+    private static boolean isSeedItem(ItemStack stack) {
+        return stack.is(Items.WHEAT_SEEDS) || stack.is(Items.MELON_SEEDS)
+                || stack.is(Items.PUMPKIN_SEEDS) || stack.is(Items.BEETROOT_SEEDS)
+                || stack.is(Items.TORCHFLOWER_SEEDS) || stack.is(Items.PITCHER_POD);
+    }
+
+    private static boolean tryBoostRopePerch(PlayerInteractEvent.RightClickBlock event) {
+        return tryBoostRopePerch(event.getLevel(), event.getEntity(), event.getItemStack());
+    }
+
+    private static boolean tryBoostRopePerchItem(PlayerInteractEvent.RightClickItem event) {
+        return tryBoostRopePerch(event.getLevel(), event.getEntity(), event.getItemStack());
+    }
+
+    private static boolean tryBoostRopePerch(Level level, Player player, ItemStack stack) {
+        if (!(level instanceof ServerLevel serverLevel))
+            return false;
+        if (!SuperLeadNetwork.canModifyRopes(player))
+            return false;
+        Optional<LeadConnection> opt = SuperLeadNetwork.findConnectionInView(serverLevel, player, 0.95D);
+        if (opt.isEmpty())
+            return false;
+        if (!player.isCreative()) {
+            stack.shrink(1);
+        }
+        ParrotRopePerchController.boostRope(serverLevel, opt.get().id());
+        player.sendSystemMessage(
+                Component.literal("Seeds scattered on the rope! Parrots will find it more attractive.")
+                        .withStyle(ChatFormatting.GREEN));
+        return true;
     }
 }

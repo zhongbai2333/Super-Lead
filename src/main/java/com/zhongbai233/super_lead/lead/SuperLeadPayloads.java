@@ -47,6 +47,7 @@ public final class SuperLeadPayloads {
                 .playToClient(ItemPulse.TYPE, ItemPulse.STREAM_CODEC, SuperLeadPayloads::handleItemPulse)
                 .playToClient(RopeContactPulse.TYPE, RopeContactPulse.STREAM_CODEC,
                         SuperLeadPayloads::handleRopeContactPulse)
+                .playToClient(SyncZiplines.TYPE, SyncZiplines.STREAM_CODEC, SuperLeadPayloads::handleSyncZiplines)
                 .playToClient(PresetPromptOpen.TYPE, PresetPromptOpen.STREAM_CODEC,
                         SuperLeadPayloads::handlePresetPromptOpen)
                 .playToClient(PresetApplyOverrides.TYPE, PresetApplyOverrides.STREAM_CODEC,
@@ -69,6 +70,8 @@ public final class SuperLeadPayloads {
                         SuperLeadPayloads::handleServerConfigSnapshot)
                 .playToServer(UseConnectionAction.TYPE, UseConnectionAction.STREAM_CODEC,
                         SuperLeadPayloads::handleUseConnectionAction)
+                .playToServer(StartZipline.TYPE, StartZipline.STREAM_CODEC,
+                    SuperLeadPayloads::handleStartZipline)
                 .playToServer(ClientRopeContactReport.TYPE, ClientRopeContactReport.STREAM_CODEC,
                         SuperLeadPayloads::handleClientRopeContactReport)
                 .playToServer(AddRopeAttachment.TYPE, AddRopeAttachment.STREAM_CODEC,
@@ -191,12 +194,34 @@ public final class SuperLeadPayloads {
         }
     }
 
+    private static void handleSyncZiplines(SyncZiplines payload, IPayloadContext context) {
+        if (context.player().level().isClientSide()) {
+            com.zhongbai233.super_lead.lead.client.render.ZiplineClientState.apply(payload);
+        }
+    }
+
     private static void handleClientRopeContactReport(ClientRopeContactReport payload, IPayloadContext context) {
         if (!(context.player() instanceof ServerPlayer player))
             return;
         if (!(player.level() instanceof ServerLevel level))
             return;
         RopeContactTracker.acceptClientContact(level, player, payload);
+    }
+
+    private static void handleStartZipline(StartZipline payload, IPayloadContext context) {
+        if (!(context.player() instanceof ServerPlayer player))
+            return;
+        if (!(player.level() instanceof ServerLevel level))
+            return;
+        net.minecraft.world.InteractionHand hand = payload.useOffhand()
+                ? net.minecraft.world.InteractionHand.OFF_HAND
+                : net.minecraft.world.InteractionHand.MAIN_HAND;
+        if (!ZiplineController.isChain(player.getItemInHand(hand)))
+            return;
+        java.util.Optional<LeadConnection> opt = SuperLeadNetwork.findConnectionById(level, payload.connectionId());
+        if (opt.isEmpty())
+            return;
+        ZiplineController.start(level, player, opt.get(), payload.hitPoint(), payload.hitT());
     }
 
     private static void handleSyncPhysicsZones(SyncPhysicsZones payload, IPayloadContext context) {
@@ -275,8 +300,10 @@ public final class SuperLeadPayloads {
         net.minecraft.world.phys.Vec3 particlePos = null;
         for (RopeAttachment a : connection.attachments()) {
             if (a.id().equals(payload.attachmentId())) {
-                net.minecraft.world.phys.Vec3 from = connection.from().attachmentPoint(level);
-                net.minecraft.world.phys.Vec3 to = connection.to().attachmentPoint(level);
+            LeadEndpointLayout.Endpoints endpoints = LeadEndpointLayout.endpoints(level, connection,
+                SuperLeadNetwork.connections(level));
+            net.minecraft.world.phys.Vec3 from = endpoints.from();
+            net.minecraft.world.phys.Vec3 to = endpoints.to();
                 double dist = from.distanceTo(to);
                 double sag = Math.min(0.70D, dist * 0.055D);
                 particlePos = from.lerp(to, a.t())

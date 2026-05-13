@@ -21,11 +21,15 @@ public record ClientRopeContactReport(
         float pointY,
         float pointZ,
         float normalX,
+        float normalY,
         float normalZ,
+        float tangentX,
+        float tangentY,
+        float tangentZ,
         float inputX,
         float inputZ,
         float depth,
-        boolean support) implements CustomPacketPayload {
+        float slack) implements CustomPacketPayload {
     public static final CustomPacketPayload.Type<ClientRopeContactReport> TYPE = new CustomPacketPayload.Type<>(
             Identifier.fromNamespaceAndPath(Super_lead.MODID, "client_rope_contact_report"));
     public static final StreamCodec<RegistryFriendlyByteBuf, ClientRopeContactReport> STREAM_CODEC = CustomPacketPayload
@@ -43,11 +47,15 @@ public record ClientRopeContactReport(
         buffer.writeFloat(pointY);
         buffer.writeFloat(pointZ);
         buffer.writeFloat(normalX);
+        buffer.writeFloat(normalY);
         buffer.writeFloat(normalZ);
+        buffer.writeFloat(tangentX);
+        buffer.writeFloat(tangentY);
+        buffer.writeFloat(tangentZ);
         buffer.writeFloat(inputX);
         buffer.writeFloat(inputZ);
         buffer.writeFloat(depth);
-        buffer.writeBoolean(support);
+        buffer.writeFloat(slack);
     }
 
     private static ClientRopeContactReport read(RegistryFriendlyByteBuf buffer) {
@@ -62,6 +70,10 @@ public record ClientRopeContactReport(
                 buffer.readFloat(),
                 buffer.readFloat(),
                 buffer.readFloat(),
-                buffer.readBoolean());
+                buffer.readFloat(),
+                buffer.readFloat(),
+                buffer.readFloat(),
+                buffer.readFloat(),
+                buffer.readFloat());
     }
 }

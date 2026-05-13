@@ -9,6 +9,7 @@ import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import com.mojang.brigadier.suggestion.SuggestionProvider;
 import com.zhongbai233.super_lead.Super_lead;
+import com.zhongbai233.super_lead.lead.ParrotRopePerchController;
 import com.zhongbai233.super_lead.preset.PhysicsZone;
 import com.zhongbai233.super_lead.preset.PhysicsZoneSavedData;
 import com.zhongbai233.super_lead.preset.PhysicsZoneSelectionManager;
@@ -51,32 +52,36 @@ public final class SuperLeadZoneCommands {
     public static void onRegister(RegisterCommandsEvent event) {
         CommandDispatcher<CommandSourceStack> dispatcher = event.getDispatcher();
         LiteralArgumentBuilder<CommandSourceStack> root = Commands.literal("superlead")
-                .requires(src -> src.permissions().hasPermission(OP))
-                .then(Commands.literal("zone")
-                        .then(Commands.literal("list").executes(SuperLeadZoneCommands::list))
-                        .then(Commands.literal("select").executes(SuperLeadZoneCommands::select))
-                        .then(Commands.literal("cancel").executes(SuperLeadZoneCommands::cancelSelect))
-                        .then(Commands.literal("add")
-                                .then(Commands.argument("name", StringArgumentType.word())
-                                        .then(Commands.argument("preset", StringArgumentType.word())
-                                                .suggests(SUGGEST_PRESET)
-                                                .then(Commands.argument("from", BlockPosArgument.blockPos())
-                                                        .then(Commands.argument("to", BlockPosArgument.blockPos())
-                                                                .executes(SuperLeadZoneCommands::add))))))
-                        .then(Commands.literal("remove")
-                                .then(Commands.argument("name", StringArgumentType.word())
-                                        .suggests(SUGGEST_ZONE)
-                                        .executes(SuperLeadZoneCommands::remove)))
-                        .then(Commands.literal("adventure")
-                                .then(Commands.argument("name", StringArgumentType.word())
-                                        .suggests(SUGGEST_ZONE)
-                                        .then(Commands.argument("allow", BoolArgumentType.bool())
-                                                .then(Commands.argument("limit", IntegerArgumentType.integer(0))
-                                                        .executes(SuperLeadZoneCommands::setAdventureRules)))))
-                        .then(Commands.literal("clearAdventure")
-                                .then(Commands.argument("name", StringArgumentType.word())
-                                        .suggests(SUGGEST_ZONE)
-                                        .executes(SuperLeadZoneCommands::clearAdventureRopes))));
+                .requires(src -> src.permissions().hasPermission(OP));
+
+        LiteralArgumentBuilder<CommandSourceStack> zoneNode = Commands.literal("zone")
+                .then(Commands.literal("list").executes(SuperLeadZoneCommands::list))
+                .then(Commands.literal("select").executes(SuperLeadZoneCommands::select))
+                .then(Commands.literal("cancel").executes(SuperLeadZoneCommands::cancelSelect))
+                .then(Commands.literal("add")
+                        .then(Commands.argument("name", StringArgumentType.word())
+                                .then(Commands.argument("preset", StringArgumentType.word())
+                                        .suggests(SUGGEST_PRESET)
+                                        .then(Commands.argument("from", BlockPosArgument.blockPos())
+                                                .then(Commands.argument("to", BlockPosArgument.blockPos())
+                                                        .executes(SuperLeadZoneCommands::add))))))
+                .then(Commands.literal("remove")
+                        .then(Commands.argument("name", StringArgumentType.word())
+                                .suggests(SUGGEST_ZONE)
+                                .executes(SuperLeadZoneCommands::remove)))
+                .then(Commands.literal("adventure")
+                        .then(Commands.argument("name", StringArgumentType.word())
+                                .suggests(SUGGEST_ZONE)
+                                .then(Commands.argument("allow", BoolArgumentType.bool())
+                                        .then(Commands.argument("limit", IntegerArgumentType.integer(0))
+                                                .executes(SuperLeadZoneCommands::setAdventureRules)))))
+                .then(Commands.literal("clearAdventure")
+                        .then(Commands.argument("name", StringArgumentType.word())
+                                .suggests(SUGGEST_ZONE)
+                                .executes(SuperLeadZoneCommands::clearAdventureRopes)));
+
+        root.then(zoneNode);
+        root.then(Commands.literal("parrotperch").executes(SuperLeadZoneCommands::parrotPerch));
         dispatcher.register(root);
     }
 
@@ -180,5 +185,20 @@ public final class SuperLeadZoneCommands {
                 "Removed " + removed + " adventure rope(s) from zone '" + name + "'.")
                 .withStyle(ChatFormatting.GREEN), true);
         return removed;
+    }
+
+    private static int parrotPerch(CommandContext<CommandSourceStack> ctx) {
+        ServerLevel level = ctx.getSource().getLevel();
+        boolean ok = ParrotRopePerchController.forcePerchNearby(level,
+                ctx.getSource().getPosition(), 10.0D);
+        if (ok) {
+            ctx.getSource().sendSuccess(
+                    () -> Component.literal("Forced a nearby parrot to perch on a sync-zone rope.")
+                            .withStyle(ChatFormatting.GREEN),
+                    true);
+            return 1;
+        }
+        ctx.getSource().sendFailure(Component.literal("No suitable parrot + rope pair found nearby."));
+        return 0;
     }
 }

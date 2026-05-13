@@ -111,6 +111,28 @@ abstract class RopeSimulationCore {
     protected final double[] renderY;
     protected final double[] renderZ;
     protected final double[] renderLengths;
+    // Collision/render proxy curve. This is a smoothed, arc-length-resampled and
+    // distance-projected representation of the raw solver nodes. It deliberately
+    // keeps the same node count as the physical rope so existing rendering,
+    // attachment and particle code can keep indexing through nodeCount().
+    protected final double[] proxyX;
+    protected final double[] proxyY;
+    protected final double[] proxyZ;
+    protected final double[] proxyLengths;
+    protected final double[] proxySourceX;
+    protected final double[] proxySourceY;
+    protected final double[] proxySourceZ;
+    protected final double[] proxyWorkX;
+    protected final double[] proxyWorkY;
+    protected final double[] proxyWorkZ;
+    protected boolean collisionProxyValid;
+    protected double collisionProxyTotalLength;
+    /**
+     * When true, rendering and player-contact sampling use the smoothed proxy
+     * curve. When false (default), rendering uses raw tick-interpolated solver
+     * nodes. Set after construction for ropes inside a synced physics zone.
+     */
+    protected boolean useCollisionProxy;
     protected boolean renderCacheValid;
     protected float renderCachePartialTick;
     protected double renderTotalLength;
@@ -176,6 +198,7 @@ abstract class RopeSimulationCore {
     protected boolean bakedPowered;
     protected int bakedTier;
     protected int bakedPulsesHash;
+    protected int bakedColorHash;
     /**
      * Camera-position quantization bin used by ribbon bakes (whose side vector is
      * camera
@@ -183,6 +206,7 @@ abstract class RopeSimulationCore {
      * camera.
      */
     protected int bakedCameraBin;
+    protected double bakedHalfThickness;
     // Explicit velocity.
     protected final double[] entityPushAccum;
     protected final double[] vx;
@@ -328,6 +352,16 @@ abstract class RopeSimulationCore {
         renderY = new double[nodes];
         renderZ = new double[nodes];
         renderLengths = new double[nodes];
+        proxyX = new double[nodes];
+        proxyY = new double[nodes];
+        proxyZ = new double[nodes];
+        proxyLengths = new double[nodes];
+        proxySourceX = new double[nodes];
+        proxySourceY = new double[nodes];
+        proxySourceZ = new double[nodes];
+        proxyWorkX = new double[nodes];
+        proxyWorkY = new double[nodes];
+        proxyWorkZ = new double[nodes];
         vx = new double[nodes];
         vy = new double[nodes];
         vz = new double[nodes];
@@ -475,6 +509,7 @@ abstract class RopeSimulationCore {
 
         precomputeReady = false;
         blockCache.reset();
+        this.useCollisionProxy = other.useCollisionProxy;
         markBoundsDirty();
         if (other.segAabb != null) {
             if (segAabb == null || segAabb.length < other.segAabb.length) {
@@ -536,6 +571,38 @@ abstract class RopeSimulationCore {
 
     public double currentZ(int i) {
         return z[i];
+    }
+
+    protected double prepareCollisionProxy() {
+        if (collisionProxyValid) {
+            return collisionProxyTotalLength;
+        }
+        collisionProxyTotalLength = RopeCollisionProxy.rebuild(nodes,
+                x, y, z, desiredProxyLength(x[0], y[0], z[0], x[nodes - 1], y[nodes - 1], z[nodes - 1]),
+                proxyX, proxyY, proxyZ, proxyLengths,
+                proxyWorkX, proxyWorkY, proxyWorkZ);
+        collisionProxyValid = true;
+        return collisionProxyTotalLength;
+    }
+
+    protected double prepareRenderProxy(float partialTick) {
+        for (int i = 0; i < nodes; i++) {
+            proxySourceX[i] = xLastTick[i] + (x[i] - xLastTick[i]) * partialTick;
+            proxySourceY[i] = yLastTick[i] + (y[i] - yLastTick[i]) * partialTick;
+            proxySourceZ[i] = zLastTick[i] + (z[i] - zLastTick[i]) * partialTick;
+        }
+        return RopeCollisionProxy.rebuild(nodes,
+                proxySourceX, proxySourceY, proxySourceZ,
+                desiredProxyLength(proxySourceX[0], proxySourceY[0], proxySourceZ[0],
+                        proxySourceX[nodes - 1], proxySourceY[nodes - 1], proxySourceZ[nodes - 1]),
+                renderX, renderY, renderZ, renderLengths,
+                proxyWorkX, proxyWorkY, proxyWorkZ);
+    }
+
+    private double desiredProxyLength(double ax, double ay, double az, double bx, double by, double bz) {
+        Vec3 a = new Vec3(ax, ay, az);
+        Vec3 b = new Vec3(bx, by, bz);
+        return a.distanceTo(b) * slackFactor(a, b);
     }
 
     public boolean boundsOverlap(RopeSimulation other, double margin) {
@@ -753,6 +820,7 @@ abstract class RopeSimulationCore {
 
     protected void markBoundsDirty() {
         boundsDirty = true;
+        collisionProxyValid = false;
         renderCacheValid = false;
         frameScratchValid = false;
         visOcclusionFrame = Long.MIN_VALUE;

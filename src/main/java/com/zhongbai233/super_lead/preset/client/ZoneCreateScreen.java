@@ -9,6 +9,7 @@ import net.minecraft.ChatFormatting;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.components.CycleButton;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.core.BlockPos;
@@ -18,13 +19,14 @@ import net.neoforged.neoforge.client.network.ClientPacketDistributor;
 public final class ZoneCreateScreen extends Screen {
     private static final int W = 260;
     private static final int PADDING = 8;
+    private static final int DIALOG_H = 152;
 
     private final Screen parent;
     private final BlockPos from;
     private final BlockPos to;
     private List<String> presets = new ArrayList<>();
     private EditBox nameBox;
-    private EditBox presetBox;
+    private CycleButton<String> presetCycle;
     private String error = "";
     private String nameDraft = "";
     private String presetDraft = "";
@@ -45,15 +47,12 @@ public final class ZoneCreateScreen extends Screen {
     @Override
     protected void init() {
         int x = (this.width - W) / 2;
-        int y = this.height / 2 - 86;
+        int y = this.height / 2 - DIALOG_H / 2;
 
         PresetClientHandler.setListListener(list -> {
             List<String> next = new ArrayList<>(list);
             boolean changed = !next.equals(this.presets);
             this.presets = next;
-            if (presetBox != null && presetBox.getValue().isBlank() && !presets.isEmpty()) {
-                presetBox.setValue(presets.get(0));
-            }
             if (changed)
                 this.rebuildWidgets();
         });
@@ -73,32 +72,27 @@ public final class ZoneCreateScreen extends Screen {
         });
         addRenderableWidget(nameBox);
 
-        presetBox = new EditBox(this.font, x + PADDING, y + 88, W - PADDING * 2, 18,
-                Component.translatable("super_lead.zone.create.preset"));
-        presetBox.setMaxLength(32);
-        presetBox.setHint(Component.translatable("super_lead.zone.create.preset"));
-        presetBox.setValue(!presetDraft.isBlank() ? presetDraft : (!presets.isEmpty() ? presets.get(0) : ""));
-        presetBox.setResponder(s -> {
-            presetDraft = s;
-            error = "";
-        });
-        addRenderableWidget(presetBox);
+        // Preset dropdown
+        List<String> options = presets.isEmpty() ? List.of("") : new ArrayList<>(presets);
+        if (presetDraft.isBlank() || !options.contains(presetDraft))
+            presetDraft = options.get(0);
+        presetCycle = CycleButton.<String>builder(
+                s -> Component.literal(s.isEmpty() ? "—" : s),
+                presetDraft)
+                .withValues(options)
+                .create(x + PADDING, y + 88, W - PADDING * 2, 20,
+                        Component.translatable("super_lead.zone.create.preset"),
+                        (btn, val) -> {
+                            presetDraft = val;
+                            error = "";
+                        });
+        addRenderableWidget(presetCycle);
 
-        int btnY = y + 142;
+        int btnY = y + DIALOG_H - 40;
         addRenderableWidget(Button.builder(Component.translatable("super_lead.zone.create.create"), b -> submit())
                 .bounds(x + PADDING, btnY, 90, 20).build());
         addRenderableWidget(Button.builder(Component.translatable("super_lead.config.close"), b -> onClose())
                 .bounds(x + W - PADDING - 70, btnY, 70, 20).build());
-
-        int px = x + PADDING;
-        int py = y + 112;
-        int maxButtons = Math.min(4, presets.size());
-        for (int i = 0; i < maxButtons; i++) {
-            String preset = presets.get(i);
-            addRenderableWidget(Button.builder(Component.literal(preset), b -> presetBox.setValue(preset))
-                    .bounds(px, py, Math.min(70, this.font.width(preset) + 12), 16).build());
-            px += 74;
-        }
     }
 
     private void requestPresetList() {
@@ -111,7 +105,7 @@ public final class ZoneCreateScreen extends Screen {
 
     private void submit() {
         String name = nameBox.getValue().trim();
-        String preset = presetBox.getValue().trim();
+        String preset = presetCycle != null ? presetCycle.getValue() : presetDraft;
         if (!RopePresetLibrary.isValidName(name)) {
             error = Component.translatable("super_lead.zone.create.invalid_name").getString();
             return;
@@ -139,8 +133,8 @@ public final class ZoneCreateScreen extends Screen {
         graphics.fill(0, 0, this.width, this.height, 0xC0000000);
         super.extractRenderState(graphics, mouseX, mouseY, partialTick);
         int x = (this.width - W) / 2;
-        int y = this.height / 2 - 86;
-        graphics.fill(x, y, x + W, y + 176, 0xE0202428);
+        int y = this.height / 2 - DIALOG_H / 2;
+        graphics.fill(x, y, x + W, y + DIALOG_H, 0xF0303840);
         graphics.text(this.font, this.title, x + PADDING, y + 8, 0xFFFFD24F);
         graphics.text(this.font, Component.literal(areaText()).withStyle(ChatFormatting.GRAY), x + PADDING, y + 22,
                 0xFFAAAAAA);
@@ -149,7 +143,7 @@ public final class ZoneCreateScreen extends Screen {
         graphics.text(this.font, Component.translatable("super_lead.zone.create.preset"), x + PADDING, y + 78,
                 0xFFE8E8E8);
         if (!error.isEmpty())
-            graphics.text(this.font, Component.literal(error), x + PADDING, y + 166, 0xFFFF6060);
+            graphics.text(this.font, Component.literal(error), x + PADDING, y + DIALOG_H - 12, 0xFFFF6060);
     }
 
     private String areaText() {

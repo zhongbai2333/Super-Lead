@@ -1,11 +1,15 @@
 package com.zhongbai233.super_lead.lead.client.render;
 
 import com.mojang.blaze3d.vertex.PoseStack;
+import com.zhongbai233.super_lead.data.BlockProperty;
+import com.zhongbai233.super_lead.data.BlockPropertyRegistry;
 import com.zhongbai233.super_lead.lead.LeadConnection;
 import com.zhongbai233.super_lead.lead.RopeAttachment;
 import com.zhongbai233.super_lead.lead.client.sim.RopeSimulation;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.UUID;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
@@ -20,6 +24,7 @@ import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.level.LightLayer;
 import net.minecraft.world.level.BlockGetter;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.Property;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import net.minecraft.world.phys.shapes.VoxelShape;
@@ -28,27 +33,17 @@ import org.joml.Quaternionf;
 import org.joml.Vector3f;
 
 public final class RopeAttachmentRenderer {
-    // Length of the thin hanger "string" between the rope and the top of the
-    // attachment.
-    private static final double HANGER_LENGTH = 0.20D;
-    // Half-distance between the two suspension strings, measured ALONG the rope
-    // axis.
-    // Two strings spaced this far apart give the item a visible support span;
-    // combined
-    // with the rope-pitch tilt rotation the item appears physically suspended.
-    private static final double HANGER_HALF_SPACING = 0.18D;
     // Half-block render scale so attachments look like a small placed block.
     private static final float BLOCK_RENDER_SCALE = 0.50F;
     private static final float SIGN_RENDER_SCALE = 1.0F;
-    private static final double ITEM_HANG_OFFSET = HANGER_LENGTH + 0.20D;
     private static final float ITEM_SCALE = 0.85F;
     // Half-thickness of the hanger string and its dark color.
     private static final float HANGER_HALF_THICKNESS = 0.012F;
     private static final int HANGER_COLOR = 0xFF1F1A14;
-    private static final double INSERT_BOTTOM_AREA_MAX = 0.18D;
-    private static final double INSERT_MIN_HEIGHT = 0.35D;
     private static final double PIERCED_LIFT_OFFSET = 0.5D / 16.0D;
     private static final double MIN_HANGER_HALF_SPACING = 0.035D;
+    private static final double PIERCE_MIN_HEIGHT = 0.35D;
+    private static final double PIERCE_MAX_FOOTPRINT = 0.18D;
 
     private RopeAttachmentRenderer() {
     }
@@ -230,8 +225,8 @@ public final class RopeAttachmentRenderer {
             double px, double py, double pz, HangFrame frame,
             BlockPos lightPos, int packedLight,
             int tintColor, float scaleMul, boolean ghost) {
-        boolean asBlockItem = displayAsBlock
-                && com.zhongbai233.super_lead.lead.RopeAttachmentItems.isBlockItem(stack);
+        BlockProperty attachmentProperty = propertyForStack(stack);
+        boolean asBlockItem = shouldRenderAsBlock(stack, displayAsBlock, attachmentProperty);
         // BlockEntity-rendered blocks (signs, shulker boxes, chests, banners, ...) only
         // have
         // a partial static model; submitMovingBlock would render an empty post for
@@ -241,14 +236,11 @@ public final class RopeAttachmentRenderer {
         // the full item display model.
         boolean useMovingBlock = asBlockItem && !needsItemFallback(stack);
 
-        AttachmentLayout layout = attachmentLayout(level, lightPos, stack, displayAsBlock, frontSide);
+        AttachmentLayout layout = attachmentLayout(level, lightPos, stack, asBlockItem, frontSide,
+                attachmentProperty);
 
-        // Suspension strings: two parallel lines from offset rope points to the
-        // computed
-        // top contact on the model. Thin-stem models (torch/sign post) are pierced by
-        // the
-        // rope instead, so they do not get dangling strings.
-        if (!layout.pierced() && layout.hangerLength() > 1.0e-6D) {
+        // Suspension strings
+        if (attachmentProperty.hangerOn() && !layout.pierced() && layout.hangerLength() > 1.0e-6D) {
             double offX = frame.rdx * layout.hangerHalfSpacing();
             double offY = frame.rdy * layout.hangerHalfSpacing();
             double offZ = frame.rdz * layout.hangerHalfSpacing();
@@ -270,13 +262,13 @@ public final class RopeAttachmentRenderer {
 
         if (asBlockItem && isSignBlock(stack)
                 && submitSignBlockEntity(collector, cameraPos, level, mc, stack, frontSide,
-                        frame.tilt, cx, cy, cz, bodyScale, lightPos, packedLight)) {
+                        attachmentProperty, frame.tilt, cx, cy, cz, bodyScale, lightPos, packedLight)) {
             return;
         }
 
         if (useMovingBlock
                 && submitBlockForm(collector, cameraPos, level, stack, redstonePowered,
-                        frontSide, frame.tilt, cx, cy, cz, bodyScale, lightPos)) {
+                        frontSide, attachmentProperty, frame.tilt, cx, cy, cz, bodyScale, lightPos)) {
             return;
         }
 
@@ -346,20 +338,14 @@ public final class RopeAttachmentRenderer {
             net.minecraft.world.item.ItemStack stack,
             boolean powered,
             int frontSide,
+            BlockProperty attachmentProperty,
             Quaternionf tilt,
             double cx, double cy, double cz,
             float blockScale,
             BlockPos lightPos) {
         if (!(stack.getItem() instanceof BlockItem blockItem))
             return false;
-        BlockState state = blockItem.getBlock().defaultBlockState();
-        state = orientBlockState(state, frontSide);
-        // Lanterns on ropes should render with the hanging chain model (top loop +
-        // chain).
-        if (state.hasProperty(net.minecraft.world.level.block.state.properties.BlockStateProperties.HANGING)) {
-            state = state.setValue(net.minecraft.world.level.block.state.properties.BlockStateProperties.HANGING,
-                    Boolean.TRUE);
-        }
+        BlockState state = configuredBlockState(blockItem, frontSide, attachmentProperty);
         if (powered) {
             if (state.hasProperty(net.minecraft.world.level.block.state.properties.BlockStateProperties.LIT)) {
                 // Redstone torches default to LIT=true → powered means extinguish (LIT=false).
@@ -449,6 +435,7 @@ public final class RopeAttachmentRenderer {
             Minecraft mc,
             net.minecraft.world.item.ItemStack stack,
             int frontSide,
+            BlockProperty attachmentProperty,
             Quaternionf tilt,
             double cx, double cy, double cz,
             float blockScale,
@@ -456,12 +443,11 @@ public final class RopeAttachmentRenderer {
             int packedLight) {
         if (!(stack.getItem() instanceof BlockItem blockItem))
             return false;
-        BlockState state = signRenderBlockState(blockItem);
+        BlockState state = signRenderBlockState(blockItem, frontSide, attachmentProperty);
         if (state == null)
             return false;
         if (!(state.getBlock() instanceof net.minecraft.world.level.block.SignBlock))
             return false;
-        state = orientBlockState(state, frontSide);
 
         net.minecraft.world.level.block.entity.SignBlockEntity sign = state
                 .getBlock() instanceof net.minecraft.world.level.block.HangingSignBlock
@@ -509,18 +495,84 @@ public final class RopeAttachmentRenderer {
                 && blockItem.getBlock() instanceof net.minecraft.world.level.block.SignBlock;
     }
 
-    private static boolean isHangingSignBlock(net.minecraft.world.item.ItemStack stack) {
-        return stack.getItem() instanceof net.minecraft.world.item.HangingSignItem
-                || (stack.getItem() instanceof BlockItem blockItem
-                        && blockItem.getBlock() instanceof net.minecraft.world.level.block.HangingSignBlock);
+    private static BlockProperty propertyForStack(net.minecraft.world.item.ItemStack stack) {
+        if (stack.getItem() instanceof BlockItem blockItem) {
+            return BlockPropertyRegistry.get(blockItem.getBlock());
+        }
+        return BlockProperty.DEFAULTS;
     }
 
-    private static BlockState signRenderBlockState(BlockItem blockItem) {
+    private static boolean shouldRenderAsBlock(net.minecraft.world.item.ItemStack stack, boolean displayAsBlock,
+            BlockProperty property) {
+        if (!(stack.getItem() instanceof BlockItem)) {
+            return false;
+        }
+        String mode = property.modelMode();
+        if (BlockProperty.MODEL_MODE_ITEM.equals(mode)) {
+            return false;
+        }
+        if (BlockProperty.MODEL_MODE_BLOCK.equals(mode)) {
+            return true;
+        }
+        return displayAsBlock;
+    }
+
+    private static BlockState signRenderBlockState(BlockItem blockItem, int frontSide, BlockProperty property) {
         net.minecraft.world.level.block.Block block = blockItem.getBlock();
         if (!(block instanceof net.minecraft.world.level.block.SignBlock)) {
             return null;
         }
-        return block.defaultBlockState();
+        return configuredBlockState(blockItem, frontSide, property);
+    }
+
+    private static BlockState configuredBlockState(BlockItem blockItem, int frontSide, BlockProperty property) {
+        BlockState state = orientBlockState(blockItem.getBlock().defaultBlockState(), frontSide);
+        // Lanterns on ropes should default to the hanging chain model. A model_state
+        // override can still set hanging=false for the standing style.
+        if (state.hasProperty(net.minecraft.world.level.block.state.properties.BlockStateProperties.HANGING)
+                && !hasConfiguredState(property, "hanging")) {
+            state = state.setValue(net.minecraft.world.level.block.state.properties.BlockStateProperties.HANGING,
+                    Boolean.TRUE);
+        }
+        return applyConfiguredState(state, property);
+    }
+
+    private static boolean hasConfiguredState(BlockProperty property, String name) {
+        return property != null && property.modelState().containsKey(name);
+    }
+
+    private static BlockState applyConfiguredState(BlockState state, BlockProperty property) {
+        if (property == null || property.modelState().isEmpty()) {
+            return state;
+        }
+        for (Map.Entry<String, String> entry : property.modelState().entrySet()) {
+            state = applyConfiguredStateValue(state, entry.getKey(), entry.getValue());
+        }
+        return state;
+    }
+
+    @SuppressWarnings({ "rawtypes", "unchecked" })
+    private static BlockState applyConfiguredStateValue(BlockState state, String key, String rawValue) {
+        if (key == null || rawValue == null) {
+            return state;
+        }
+        String propertyName = key.trim().toLowerCase(Locale.ROOT);
+        String valueName = rawValue.trim().toLowerCase(Locale.ROOT);
+        if (propertyName.isEmpty() || valueName.isEmpty()) {
+            return state;
+        }
+        for (Property<?> property : state.getProperties()) {
+            if (!property.getName().equals(propertyName)) {
+                continue;
+            }
+            Property rawProperty = (Property) property;
+            java.util.Optional value = rawProperty.getValue(valueName);
+            if (value.isPresent()) {
+                return state.setValue(rawProperty, (Comparable) value.get());
+            }
+            return state;
+        }
+        return state;
     }
 
     private static BlockState orientBlockState(BlockState state, int frontSide) {
@@ -614,7 +666,7 @@ public final class RopeAttachmentRenderer {
             double bx, double by, double bz) {
         HangFrame frame = computeFrame(ax, ay, az, bx, by, bz);
         AttachmentLayout layout = attachmentLayout(level, BlockPos.containing(px, py, pz), stack, displayAsBlock,
-                frontSide);
+                frontSide, propertyForStack(stack));
         return new Vec3(
                 px + frame.dropX * layout.centerDropOffset(),
                 py + frame.dropY * layout.centerDropOffset(),
@@ -622,77 +674,64 @@ public final class RopeAttachmentRenderer {
     }
 
     private static AttachmentLayout attachmentLayout(BlockGetter level, BlockPos pos,
-            net.minecraft.world.item.ItemStack stack, boolean displayAsBlock, int frontSide) {
+            net.minecraft.world.item.ItemStack stack, boolean displayAsBlock, int frontSide,
+            BlockProperty bp) {
         boolean asBlockItem = displayAsBlock
                 && com.zhongbai233.super_lead.lead.RopeAttachmentItems.isBlockItem(stack);
-        if (!asBlockItem) {
-            return AttachmentLayout.hanging(ITEM_HANG_OFFSET, HANGER_LENGTH, HANGER_HALF_SPACING, BLOCK_RENDER_SCALE);
-        }
-
+        asBlockItem = shouldRenderAsBlock(stack, displayAsBlock, bp);
         float bodyScale = isSignBlock(stack) ? SIGN_RENDER_SCALE : BLOCK_RENDER_SCALE;
-        ShapeProfile shape = shapeProfile(level, pos, stack, frontSide);
 
-        // Plain signs have a thin post and need readable text, so keep them full-size
-        // and
-        // pierced by the rope. Hanging signs should stay below the rope.
-        if (isSignBlock(stack) && isHangingSignBlock(stack)) {
-            return hangingSignLayout(shape, bodyScale);
+        // Pierced decision: explicit JSON value > shape-based heuristic
+        boolean pierced;
+        if (bp.attachPierced() != null) {
+            pierced = bp.attachPierced();
+        } else {
+            pierced = asBlockItem && shouldPierce(shapeProfile(level, pos, stack, frontSide, bp));
         }
-        if (isSignBlock(stack)) {
+
+        if (pierced) {
+            ShapeProfile shape = shapeProfile(level, pos, stack, frontSide, bp);
             double bottomY = shape.valid() ? shape.minY() : 0.0D;
             return AttachmentLayout.pierced(bodyScale * (bottomY - 0.5D) - PIERCED_LIFT_OFFSET, bodyScale);
         }
 
-        // Lanterns (and soul lanterns) have a narrow top loop designed for hanging;
-        // they should always dangle below the rope with the HANGING chain model.
-        if (stack.getItem() instanceof BlockItem bi
-                && bi.getBlock() instanceof net.minecraft.world.level.block.LanternBlock) {
-            return hangingSignLayout(shape, bodyScale);
+        if (!asBlockItem) {
+            double offset = bp.mountAbove() ? -bp.mountOffset() : bp.hangOffset();
+            return AttachmentLayout.hanging(offset, bp.hangerLen(), bp.hangerSpc(), BLOCK_RENDER_SCALE);
         }
 
-        if (shape.valid() && shouldPierce(shape)) {
-            return AttachmentLayout.pierced(bodyScale * (shape.minY() - 0.5D) - PIERCED_LIFT_OFFSET, bodyScale);
+        ShapeProfile shape = shapeProfile(level, pos, stack, frontSide, bp);
+
+        if (bp.mountAbove()) {
+            return AttachmentLayout.hanging(-bp.mountOffset(), 0.0D, 0.0D, bodyScale);
         }
 
-        return hangingBlockLayout(shape, bodyScale);
-    }
-
-    private static AttachmentLayout hangingSignLayout(ShapeProfile shape, float bodyScale) {
-        // Vanilla hanging signs have the chain attachment plate near the top of the
-        // rope on the plate above the chains; aim at the chain top instead so the
-        // chains
-        // visually grip the rope rather than the model's top edge sitting on it.
-        double centerDropOffset = bodyScale * 0.5D;
-        return AttachmentLayout.hanging(centerDropOffset, 0.0D, 0.0D, bodyScale);
-    }
-
-    private static AttachmentLayout hangingBlockLayout(ShapeProfile shape, float bodyScale) {
-        double topY = shape.valid() ? shape.maxY() : 1.0D;
-        // Keep the body at the stable hanging position; adjust the two thin strings
-        // instead
-        // so short/flat models (comparator/repeater) are not pulled upward.
-        double centerDropOffset = HANGER_LENGTH + bodyScale * 0.5D;
-        double hangerLength = Math.max(0.02D, centerDropOffset - bodyScale * (topY - 0.5D));
-        double halfSpacing = HANGER_HALF_SPACING;
+        double centerDropOffset = bp.hangOffset();
+        double hl = Math.max(0.0D, bp.hangerLen());
+        double halfSpacing = bp.hangerSpc();
         if (shape.valid()) {
-            double horizontalWidth = Math.max(shape.maxX() - shape.minX(), shape.maxZ() - shape.minZ());
-            halfSpacing = Math.min(halfSpacing,
-                    Math.max(MIN_HANGER_HALF_SPACING, horizontalWidth * bodyScale * 0.42D));
+            double hw = Math.max(shape.maxX() - shape.minX(), shape.maxZ() - shape.minZ());
+            halfSpacing = Math.min(halfSpacing, Math.max(MIN_HANGER_HALF_SPACING, hw * bodyScale * 0.42D));
         }
-        return AttachmentLayout.hanging(centerDropOffset, hangerLength, halfSpacing, bodyScale);
+        return AttachmentLayout.hanging(centerDropOffset, hl, halfSpacing, bodyScale);
     }
 
+    /**
+     * Shape heuristic: tall block with small bottom footprint → rope pierces
+     * through it.
+     */
     private static boolean shouldPierce(ShapeProfile shape) {
-        return shape.height() >= INSERT_MIN_HEIGHT
-                && shape.bottomFootprintArea() <= INSERT_BOTTOM_AREA_MAX;
+        return shape.valid()
+                && shape.height() >= PIERCE_MIN_HEIGHT
+                && shape.bottomFootprintArea() <= PIERCE_MAX_FOOTPRINT;
     }
 
     private static ShapeProfile shapeProfile(BlockGetter level, BlockPos pos,
-            net.minecraft.world.item.ItemStack stack, int frontSide) {
+            net.minecraft.world.item.ItemStack stack, int frontSide, BlockProperty property) {
         if (!(stack.getItem() instanceof BlockItem blockItem) || level == null) {
             return ShapeProfile.INVALID;
         }
-        BlockState state = orientBlockState(blockItem.getBlock().defaultBlockState(), frontSide);
+        BlockState state = configuredBlockState(blockItem, frontSide, property);
         VoxelShape shape = state.getShape(level, pos == null ? BlockPos.ZERO : pos);
         if (shape.isEmpty()) {
             shape = state.getCollisionShape(level, pos == null ? BlockPos.ZERO : pos);

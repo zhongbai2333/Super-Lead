@@ -19,6 +19,10 @@ public interface TuningType<T> {
         return new IntTuningType(min, max);
     }
 
+    static TuningType<Integer> colorRgb() {
+        return new ColorTuningType();
+    }
+
     static TuningType<Boolean> bool() {
         return BOOL;
     }

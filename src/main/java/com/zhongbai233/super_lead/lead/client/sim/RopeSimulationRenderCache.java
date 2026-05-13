@@ -16,23 +16,27 @@ abstract class RopeSimulationRenderCache extends RopeSimulationCore {
                 && (isSettled() || Float.floatToIntBits(renderCachePartialTick) == Float.floatToIntBits(partialTick))) {
             return renderTotalLength;
         }
-        renderX[0] = xLastTick[0] + (x[0] - xLastTick[0]) * partialTick;
-        renderY[0] = yLastTick[0] + (y[0] - yLastTick[0]) * partialTick;
-        renderZ[0] = zLastTick[0] + (z[0] - zLastTick[0]) * partialTick;
-        renderLengths[0] = 0.0D;
-        for (int i = 1; i < nodes; i++) {
-            double rx = xLastTick[i] + (x[i] - xLastTick[i]) * partialTick;
-            double ry = yLastTick[i] + (y[i] - yLastTick[i]) * partialTick;
-            double rz = zLastTick[i] + (z[i] - zLastTick[i]) * partialTick;
-            renderX[i] = rx;
-            renderY[i] = ry;
-            renderZ[i] = rz;
-            double dx = rx - renderX[i - 1];
-            double dy = ry - renderY[i - 1];
-            double dz = rz - renderZ[i - 1];
-            renderLengths[i] = renderLengths[i - 1] + Math.sqrt(dx * dx + dy * dy + dz * dz);
+        if (useCollisionProxy) {
+            renderTotalLength = prepareRenderProxy(partialTick);
+        } else {
+            renderX[0] = xLastTick[0] + (x[0] - xLastTick[0]) * partialTick;
+            renderY[0] = yLastTick[0] + (y[0] - yLastTick[0]) * partialTick;
+            renderZ[0] = zLastTick[0] + (z[0] - zLastTick[0]) * partialTick;
+            renderLengths[0] = 0.0D;
+            for (int i = 1; i < nodes; i++) {
+                double rx = xLastTick[i] + (x[i] - xLastTick[i]) * partialTick;
+                double ry = yLastTick[i] + (y[i] - yLastTick[i]) * partialTick;
+                double rz = zLastTick[i] + (z[i] - zLastTick[i]) * partialTick;
+                renderX[i] = rx;
+                renderY[i] = ry;
+                renderZ[i] = rz;
+                double dx = rx - renderX[i - 1];
+                double dy = ry - renderY[i - 1];
+                double dz = rz - renderZ[i - 1];
+                renderLengths[i] = renderLengths[i - 1] + Math.sqrt(dx * dx + dy * dy + dz * dz);
+            }
+            renderTotalLength = renderLengths[nodes - 1];
         }
-        renderTotalLength = renderLengths[nodes - 1];
         renderCachePartialTick = partialTick;
         renderCacheValid = true;
         // Render positions just changed; basis-vector scratch and occlusion cache are
@@ -216,7 +220,8 @@ abstract class RopeSimulationRenderCache extends RopeSimulationCore {
      */
     public boolean tryUseBake(int nodeCountKey, boolean ribbonLodKey,
             int blockA, int blockB, int skyA, int skyB,
-            int kindOrdinal, boolean powered, int tier, int pulsesHash, int cameraBin) {
+            int kindOrdinal, boolean powered, int tier, int pulsesHash, int colorHash, int cameraBin,
+            double halfThickness) {
         return bakedValid
                 && renderStable
                 && bakedNodeCount == nodeCountKey
@@ -227,7 +232,9 @@ abstract class RopeSimulationRenderCache extends RopeSimulationCore {
                 && bakedPowered == powered
                 && bakedTier == tier
                 && bakedPulsesHash == pulsesHash
-                && bakedCameraBin == cameraBin;
+                && bakedColorHash == colorHash
+                && bakedCameraBin == cameraBin
+                && Double.doubleToLongBits(bakedHalfThickness) == Double.doubleToLongBits(halfThickness);
     }
 
     /**
@@ -308,7 +315,8 @@ abstract class RopeSimulationRenderCache extends RopeSimulationCore {
     /** Finalise bake by stamping the cache key fields. */
     public void completeBake(int nodeCountKey, boolean ribbonLodKey,
             int blockA, int blockB, int skyA, int skyB,
-            int kindOrdinal, boolean powered, int tier, int pulsesHash, int cameraBin) {
+            int kindOrdinal, boolean powered, int tier, int pulsesHash, int colorHash, int cameraBin,
+            double halfThickness) {
         bakedNodeCount = nodeCountKey;
         bakedRibbonLod = ribbonLodKey;
         bakedBlockA = blockA;
@@ -319,7 +327,9 @@ abstract class RopeSimulationRenderCache extends RopeSimulationCore {
         bakedPowered = powered;
         bakedTier = tier;
         bakedPulsesHash = pulsesHash;
+        bakedColorHash = colorHash;
         bakedCameraBin = cameraBin;
+        bakedHalfThickness = halfThickness;
         bakedValid = true;
     }
 

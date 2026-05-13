@@ -1,6 +1,7 @@
 package com.zhongbai233.super_lead.lead.client.render;
 
 import com.zhongbai233.super_lead.lead.LeadConnection;
+import com.zhongbai233.super_lead.lead.LeadEndpointLayout;
 import com.zhongbai233.super_lead.lead.RopeAttachment;
 import com.zhongbai233.super_lead.lead.client.sim.RopeSimulation;
 import java.util.HashMap;
@@ -62,7 +63,7 @@ public final class RopeDynamicLights {
                 continue;
             }
             RopeSimulation sim = simLookup == null ? null : simLookup.apply(connection.id());
-            addConnectionLights(level, cameraPos, connection, sim, partialTick, desired);
+            addConnectionLights(level, cameraPos, connections, connection, sim, partialTick, desired);
         }
 
         apply(level, desired);
@@ -132,8 +133,8 @@ public final class RopeDynamicLights {
         return ids;
     }
 
-    private static void addConnectionLights(ClientLevel level, Vec3 cameraPos, LeadConnection connection,
-            RopeSimulation sim, float partialTick, Map<BlockPos, Source> desired) {
+    private static void addConnectionLights(ClientLevel level, Vec3 cameraPos, List<LeadConnection> connections,
+            LeadConnection connection, RopeSimulation sim, float partialTick, Map<BlockPos, Source> desired) {
         boolean redstonePowered = connection.kind() == com.zhongbai233.super_lead.lead.LeadKind.REDSTONE
                 && connection.powered();
         if (sim != null) {
@@ -146,8 +147,9 @@ public final class RopeDynamicLights {
             return;
         }
 
-        Vec3 a = connection.from().attachmentPoint(level);
-        Vec3 b = connection.to().attachmentPoint(level);
+        LeadEndpointLayout.Endpoints endpoints = LeadEndpointLayout.endpoints(level, connection, connections);
+        Vec3 a = endpoints.from();
+        Vec3 b = endpoints.to();
         double len = a.distanceTo(b);
         if (len <= 1.0e-6D)
             return;

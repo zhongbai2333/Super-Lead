@@ -120,10 +120,11 @@ abstract class RopeSimulationStepper extends RopeSimulationContactConstraints {
         // walk through it because no constraint loop runs at all.
         boolean entityNearby = !entityBoxes.isEmpty();
         boolean serverPullActive = hasFreshServerNodes(currentTick);
-        boolean awake = endpointMoved || blockChanged || neighborAwake || entityNearby || !isSettled()
+        boolean forceActive = !forceFields.isEmpty();
+        boolean awake = endpointMoved || blockChanged || neighborAwake || entityNearby || forceActive || !isSettled()
                 || hasExternalContact(currentTick) || serverPullActive;
         if (endpointMoved || blockChanged || neighborAwake || entityNearby || hasExternalContact(currentTick)
-                || serverPullActive) {
+                || serverPullActive || forceActive) {
             settledTicks = 0;
         }
 

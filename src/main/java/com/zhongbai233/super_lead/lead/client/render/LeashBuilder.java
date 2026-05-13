@@ -4,6 +4,7 @@ import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
 import com.zhongbai233.super_lead.lead.LeadKind;
 import com.zhongbai233.super_lead.lead.client.sim.RopeSimulation;
+import com.zhongbai233.super_lead.lead.client.sim.RopeTuning;
 import com.zhongbai233.super_lead.tuning.ClientTuning;
 import net.minecraft.client.renderer.SubmitNodeCollector;
 import net.minecraft.client.renderer.rendertype.RenderTypes;
@@ -16,20 +17,28 @@ public final class LeashBuilder {
 
     private static final double HIGHLIGHT_RIBBON_DISTANCE_SQR = 24.0D * 24.0D;
 
-    private static double halfThickness() {
-        return ClientTuning.THICKNESS_HALF.get();
+    private static double halfThickness(RopeTuning tuning) {
+        return effectiveTuning(tuning).halfThickness();
     }
 
-    private static double highlightHalfThickness() {
-        return halfThickness() * 2.45D;
+    private static double highlightHalfThickness(RopeTuning tuning) {
+        return halfThickness(tuning) * 2.45D;
     }
 
-    private static double ribbonHalfWidth() {
-        return halfThickness() * ClientTuning.RIBBON_WIDTH_FACTOR.get();
+    private static double ribbonHalfWidth(RopeTuning tuning) {
+        RopeTuning effective = effectiveTuning(tuning);
+        return effective.halfThickness() * effective.ribbonWidthFactor();
     }
 
-    private static double highlightRibbonHalfWidth() {
-        return highlightHalfThickness() * 1.35D;
+    private static double highlightRibbonHalfWidth(RopeTuning tuning) {
+        return highlightHalfThickness(tuning) * 1.35D;
+    }
+
+    private static RopeTuning effectiveTuning(RopeTuning tuning) {
+        if (tuning != null) {
+            return tuning;
+        }
+        return activeColorTuning != null ? activeColorTuning : RopeTuning.localDefaults();
     }
 
     private static double ribbonLodDistanceSqr() {
@@ -139,6 +148,7 @@ public final class LeashBuilder {
      * are baked because cameraPos is forced to origin during bake.
      */
     private static RopeSimulation activeBakeSim = null;
+    private static RopeTuning activeColorTuning = null;
     private static double bakeCamOffsetX, bakeCamOffsetY, bakeCamOffsetZ;
 
     // Diagnostic counters (reset by the caller's per-frame stat collector). Useful
@@ -181,6 +191,18 @@ public final class LeashBuilder {
 
     private static void renderJob(VertexConsumer buffer, PoseStack.Pose poseState, Vec3 cameraPos, RopeJob job,
             double totalLength) {
+        RopeTuning previousTuning = activeColorTuning;
+        RopeTuning tuning = job.sim.tuning();
+        activeColorTuning = tuning;
+        try {
+            renderJobWithPalette(buffer, poseState, cameraPos, job, totalLength, tuning);
+        } finally {
+            activeColorTuning = previousTuning;
+        }
+    }
+
+    private static void renderJobWithPalette(VertexConsumer buffer, PoseStack.Pose poseState, Vec3 cameraPos,
+            RopeJob job, double totalLength, RopeTuning tuning) {
         RopeSimulation sim = job.sim;
         boolean glow = job.powered && (job.kind == LeadKind.REDSTONE || job.kind == LeadKind.ENERGY);
         int effectiveBlockA = glow ? 15 : job.blockA;
@@ -224,10 +246,13 @@ public final class LeashBuilder {
             int kindOrd = job.kind.ordinal()
                     | (stride << 8)
                     | (ribbonLod ? (1 << 16) : 0);
+            int colorHash = tuning.colorHashFor(job.kind);
             int cameraBin = ribbonLod ? cameraBin(cameraPos) : 0;
+            double curHalfThickness = ribbonLod ? ribbonHalfWidth(tuning) : halfThickness(tuning);
             if (sim.tryUseBake(nodeCount, ribbonLod,
                     effectiveBlockA, effectiveBlockB, job.skyA, job.skyB,
-                    kindOrd, job.powered, job.tier, pulsesHash, cameraBin)) {
+                    kindOrd, job.powered, job.tier, pulsesHash, colorHash, cameraBin,
+                    curHalfThickness)) {
                 cacheHits++;
                 emitBaked(buffer, poseState, cameraPos, sim);
                 return;
@@ -259,7 +284,8 @@ public final class LeashBuilder {
             }
             sim.completeBake(nodeCount, ribbonLod,
                     effectiveBlockA, effectiveBlockB, job.skyA, job.skyB,
-                    kindOrd, job.powered, job.tier, pulsesHash, cameraBin);
+                    kindOrd, job.powered, job.tier, pulsesHash, colorHash, cameraBin,
+                    curHalfThickness);
             emitBaked(buffer, poseState, cameraPos, sim);
             return;
         }
@@ -376,7 +402,9 @@ public final class LeashBuilder {
             float[] pulsePositions,
             int extractEnd,
             int stride) {
-        double baseThickness = highlightColor != NO_HIGHLIGHT ? highlightHalfThickness() : halfThickness();
+        double baseThickness = highlightColor != NO_HIGHLIGHT
+                ? highlightHalfThickness(activeColorTuning)
+                : halfThickness(activeColorTuning);
         int pulsesHash = pulsesHash(pulsePositions, extractEnd);
         boolean rebuild = sim.acquireFrameScratch(baseThickness, pulsesHash);
         double[] sideX = sim.frameSideX();
@@ -675,7 +703,9 @@ public final class LeashBuilder {
 
         double midLength = (lengthStart + lengthEnd) * 0.5D;
         double midNorm = midLength / totalLength;
-        double halfWidth = (highlightColor != NO_HIGHLIGHT ? highlightRibbonHalfWidth() : ribbonHalfWidth())
+        double halfWidth = (highlightColor != NO_HIGHLIGHT
+                ? highlightRibbonHalfWidth(activeColorTuning)
+                : ribbonHalfWidth(activeColorTuning))
                 * thicknessMultiplier(midNorm, pulsePositions, extractEnd);
         double scale = halfWidth / Math.sqrt(sideLenSqr);
         sideX *= scale;
@@ -834,6 +864,13 @@ public final class LeashBuilder {
     }
 
     public static int ropeColor(int stripe, int face, LeadKind kind, boolean powered, int tier) {
+        RopeTuning tuning = activeColorTuning != null ? activeColorTuning : RopeTuning.localDefaults();
+        return ropeColor(stripe, face, kind, powered, tier, tuning);
+    }
+
+    public static int ropeColor(int stripe, int face, LeadKind kind, boolean powered, int tier, RopeTuning tuning) {
+        LeadKind effectiveKind = kind == null ? LeadKind.NORMAL : kind;
+        RopeTuning effectiveTuning = tuning == null ? RopeTuning.localDefaults() : tuning;
         boolean bright = (stripe & 1) == 0;
         double shade = switch (face) {
             case 0 -> 1.0D;
@@ -841,47 +878,52 @@ public final class LeashBuilder {
             case 2 -> 0.68D;
             default -> 0.9D;
         };
-        if (kind == LeadKind.REDSTONE) {
-            int r = (int) ((bright ? (powered ? 255 : 168) : (powered ? 142 : 84)) * shade);
-            int g = (int) ((bright ? (powered ? 64 : 22) : (powered ? 10 : 0)) * shade);
-            int b = (int) ((bright ? (powered ? 58 : 20) : (powered ? 12 : 0)) * shade);
-            return 0xFF000000 | (r << 16) | (g << 8) | b;
-        }
-        if (kind == LeadKind.ENERGY) {
+        int base = effectiveTuning.baseColor(effectiveKind);
+        int accent = effectiveTuning.accentColor(effectiveKind);
+        int rgb = bright ? accent : base;
+
+        if (effectiveKind == LeadKind.REDSTONE && powered) {
+            rgb = brighten(blend(rgb, accent, bright ? 0.35D : 0.20D), bright ? 1.45D : 1.30D);
+            rgb = blend(rgb, 0xFF302A, bright ? 0.18D : 0.08D);
+        } else if (effectiveKind == LeadKind.ENERGY) {
             boolean goldBand = tier > 0 && (stripe % Math.max(2, 4 - Math.min(3, tier))) == 0 && bright;
-            int rBase, gBase, bBase;
             if (powered) {
-                rBase = bright ? 255 : 200;
-                gBase = bright ? 220 : 150;
-                bBase = bright ? 80 : 40;
-            } else {
-                rBase = bright ? 228 : 128;
-                gBase = bright ? 158 : 84;
-                bBase = bright ? 54 : 22;
+                rgb = brighten(blend(rgb, accent, 0.20D), 1.14D);
             }
             if (goldBand) {
-                rBase = 255;
-                gBase = powered ? 240 : 210;
-                bBase = powered ? 120 : 60;
+                rgb = brighten(blend(rgb, accent, 0.78D), powered ? 1.18D : 1.06D);
             }
-            int r = (int) (rBase * shade);
-            int g = (int) (gBase * shade);
-            int b = (int) (bBase * shade);
-            return 0xFF000000 | (r << 16) | (g << 8) | b;
         }
-        int r = (int) ((bright ? 142 : 86) * shade);
-        int g = (int) ((bright ? 101 : 59) * shade);
-        int b = (int) ((bright ? 57 : 34) * shade);
-        if (kind == LeadKind.ITEM) {
-            r = (int) ((bright ? 175 : 110) * shade);
-            g = (int) ((bright ? 200 : 130) * shade);
-            b = (int) ((bright ? 230 : 165) * shade);
-        } else if (kind == LeadKind.FLUID) {
-            r = (int) ((bright ? 90 : 50) * shade);
-            g = (int) ((bright ? 220 : 145) * shade);
-            b = (int) ((bright ? 220 : 150) * shade);
-        }
-        return 0xFF000000 | (r << 16) | (g << 8) | b;
+
+        return 0xFF000000 | shade(rgb, shade);
+    }
+
+    private static int shade(int rgb, double shade) {
+        int r = clampChannel((int) Math.round(((rgb >> 16) & 255) * shade));
+        int g = clampChannel((int) Math.round(((rgb >> 8) & 255) * shade));
+        int b = clampChannel((int) Math.round((rgb & 255) * shade));
+        return (r << 16) | (g << 8) | b;
+    }
+
+    private static int brighten(int rgb, double factor) {
+        int r = clampChannel((int) Math.round(((rgb >> 16) & 255) * factor));
+        int g = clampChannel((int) Math.round(((rgb >> 8) & 255) * factor));
+        int b = clampChannel((int) Math.round((rgb & 255) * factor));
+        return (r << 16) | (g << 8) | b;
+    }
+
+    private static int blend(int a, int b, double t) {
+        double u = Math.max(0.0D, Math.min(1.0D, t));
+        int ar = (a >> 16) & 255, ag = (a >> 8) & 255, ab = a & 255;
+        int br = (b >> 16) & 255, bg = (b >> 8) & 255, bb = b & 255;
+        int r = clampChannel((int) Math.round(ar + (br - ar) * u));
+        int g = clampChannel((int) Math.round(ag + (bg - ag) * u));
+        int bl = clampChannel((int) Math.round(ab + (bb - ab) * u));
+        return (r << 16) | (g << 8) | bl;
+    }
+
+    private static int clampChannel(int value) {
+        return value < 0 ? 0 : value > 255 ? 255 : value;
     }
 
     private static int highlightOverlayColor(int face, int baseColor) {

@@ -57,6 +57,8 @@ public final class SuperLeadServerCommands {
                 new Entry("network.fluid_bucket_amount", Config.NETWORK_FLUID_BUCKET_AMOUNT, "[100..10000]", "1000"));
         m.put("network.stuck_break_ticks",
                 new Entry("network.stuck_break_ticks", Config.NETWORK_STUCK_BREAK_TICKS, "[20..1200]", "100"));
+        m.put("network.max_ropes_per_block_face",
+                new Entry("network.max_ropes_per_block_face", Config.NETWORK_MAX_ROPES_PER_BLOCK_FACE, "[1..64]", "8"));
         m.put("presets.allow_op_visual_presets",
                 new Entry("presets.allow_op_visual_presets", Config.PRESETS_ALLOW_OP_VISUAL_PRESETS, "[true|false]",
                         "true"));

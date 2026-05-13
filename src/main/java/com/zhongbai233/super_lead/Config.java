@@ -15,6 +15,7 @@ public final class Config {
     public static final ModConfigSpec.IntValue NETWORK_ITEM_TRANSFER_INTERVAL_TICKS;
     public static final ModConfigSpec.IntValue NETWORK_FLUID_BUCKET_AMOUNT;
     public static final ModConfigSpec.IntValue NETWORK_STUCK_BREAK_TICKS;
+    public static final ModConfigSpec.IntValue NETWORK_MAX_ROPES_PER_BLOCK_FACE;
 
     public static final ModConfigSpec.BooleanValue PRESETS_ALLOW_OP_VISUAL_PRESETS;
 
@@ -49,6 +50,9 @@ public final class Config {
         NETWORK_STUCK_BREAK_TICKS = builder
                 .comment("Ticks a rope must remain stuck inside collision before it auto-breaks.")
                 .defineInRange("stuck_break_ticks", 100, 20, 1200);
+        NETWORK_MAX_ROPES_PER_BLOCK_FACE = builder
+                .comment("Maximum number of ropes that can anchor to a single block face.")
+                .defineInRange("max_ropes_per_block_face", 8, 1, 64);
         builder.pop();
 
         builder.push("presets");
@@ -68,6 +72,7 @@ public final class Config {
     private static volatile int cachedItemTransferIntervalTicks = 4;
     private static volatile int cachedFluidBucketAmount = 1000;
     private static volatile int cachedStuckBreakTicks = 100;
+    private static volatile int cachedMaxRopesPerBlockFace = 8;
     private static volatile boolean cachedAllowOpVisualPresets = true;
 
     private Config() {
@@ -105,6 +110,10 @@ public final class Config {
         return cachedStuckBreakTicks;
     }
 
+    public static int maxRopesPerBlockFace() {
+        return cachedMaxRopesPerBlockFace;
+    }
+
     public static boolean allowOpVisualPresets() {
         return cachedAllowOpVisualPresets;
     }
@@ -132,6 +141,7 @@ public final class Config {
         cachedItemTransferIntervalTicks = NETWORK_ITEM_TRANSFER_INTERVAL_TICKS.getAsInt();
         cachedFluidBucketAmount = NETWORK_FLUID_BUCKET_AMOUNT.getAsInt();
         cachedStuckBreakTicks = NETWORK_STUCK_BREAK_TICKS.getAsInt();
+        cachedMaxRopesPerBlockFace = NETWORK_MAX_ROPES_PER_BLOCK_FACE.getAsInt();
         cachedAllowOpVisualPresets = PRESETS_ALLOW_OP_VISUAL_PRESETS.get();
     }
 
@@ -155,6 +165,7 @@ public final class Config {
                 Integer.toString(NETWORK_ITEM_TRANSFER_INTERVAL_TICKS.getAsInt()));
         m.put("network.fluid_bucket_amount", Integer.toString(NETWORK_FLUID_BUCKET_AMOUNT.getAsInt()));
         m.put("network.stuck_break_ticks", Integer.toString(NETWORK_STUCK_BREAK_TICKS.getAsInt()));
+        m.put("network.max_ropes_per_block_face", Integer.toString(NETWORK_MAX_ROPES_PER_BLOCK_FACE.getAsInt()));
         m.put("presets.allow_op_visual_presets", Boolean.toString(PRESETS_ALLOW_OP_VISUAL_PRESETS.get()));
         return m;
     }
@@ -174,6 +185,8 @@ public final class Config {
                 case "network.fluid_bucket_amount" ->
                     NETWORK_FLUID_BUCKET_AMOUNT.set(parseIntClamped(value, 100, 10000));
                 case "network.stuck_break_ticks" -> NETWORK_STUCK_BREAK_TICKS.set(parseIntClamped(value, 20, 1200));
+                case "network.max_ropes_per_block_face" ->
+                    NETWORK_MAX_ROPES_PER_BLOCK_FACE.set(parseIntClamped(value, 1, 64));
                 case "presets.allow_op_visual_presets" ->
                     PRESETS_ALLOW_OP_VISUAL_PRESETS.set(Boolean.parseBoolean(value.trim()));
                 default -> {

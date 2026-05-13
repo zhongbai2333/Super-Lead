@@ -1,7 +1,9 @@
 package com.zhongbai233.super_lead.lead.client;
 
 import com.zhongbai233.super_lead.lead.LeadConnection;
+import com.zhongbai233.super_lead.lead.LeadEndpointLayout;
 import com.zhongbai233.super_lead.lead.RopeAttachment;
+import com.zhongbai233.super_lead.lead.SuperLeadNetwork;
 import com.zhongbai233.super_lead.lead.UpdateRopeAttachmentSignText;
 import java.util.UUID;
 import net.minecraft.client.Minecraft;
@@ -96,8 +98,10 @@ public final class RopeAttachmentSignEditor {
     private static boolean isViewerOnFrontSide(LeadConnection connection, RopeAttachment attachment,
             net.minecraft.client.player.LocalPlayer player) {
         var level = player.level();
-        net.minecraft.world.phys.Vec3 from = connection.from().attachmentPoint(level);
-        net.minecraft.world.phys.Vec3 to = connection.to().attachmentPoint(level);
+        LeadEndpointLayout.Endpoints endpoints = LeadEndpointLayout.endpoints(level, connection,
+                SuperLeadNetwork.connections(level));
+        net.minecraft.world.phys.Vec3 from = endpoints.from();
+        net.minecraft.world.phys.Vec3 to = endpoints.to();
         net.minecraft.world.phys.Vec3 signPos = from.lerp(to, attachment.t());
         net.minecraft.world.phys.Vec3 viewerPos = player.getEyePosition(1.0F);
         // frontSide determines which direction the "front" face points.

@@ -16,6 +16,7 @@ import java.util.function.IntSupplier;
 import java.util.function.Predicate;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.core.particles.DustParticleOptions;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.ChunkPos;
@@ -149,6 +150,12 @@ public final class SuperLeadNetwork {
 
     public static LeadConnection connect(Level level, LeadAnchor from, LeadAnchor to, LeadKind kind, Player player) {
         if (!level.isClientSide() && level instanceof ServerLevel serverLevel) {
+            if (countConnectionsAtAnchor(serverLevel, from) >= Config.maxRopesPerBlockFace()
+                    || countConnectionsAtAnchor(serverLevel, to) >= Config.maxRopesPerBlockFace()) {
+                spawnBlockFaceLimitParticles(serverLevel, countConnectionsAtAnchor(serverLevel, from) >= Config
+                        .maxRopesPerBlockFace() ? from : to);
+                return null;
+            }
             LeadConnection connection = LeadConnection.create(from, to, kind);
             connection = connection.withPhysicsPreset(
                     PresetServerManager.resolvePresetForConnection(serverLevel, connection));
@@ -330,10 +337,10 @@ public final class SuperLeadNetwork {
     }
 
     private static boolean invalid(Level level, LeadConnection connection) {
+        LeadEndpointLayout.Endpoints endpoints = endpoints(level, connection);
         return level.getBlockState(connection.from().pos()).isAir()
                 || level.getBlockState(connection.to().pos()).isAir()
-                || connection.from().attachmentPoint(level)
-                        .distanceTo(connection.to().attachmentPoint(level)) > MAX_LEASH_DISTANCE;
+            || endpoints.from().distanceTo(endpoints.to()) > MAX_LEASH_DISTANCE;
     }
 
     public static void tickStuckBreaks(ServerLevel level) {
@@ -384,8 +391,9 @@ public final class SuperLeadNetwork {
     }
 
     private static boolean hasInteriorBlockage(Level level, LeadConnection connection) {
-        Vec3 a = connection.from().attachmentPoint(level);
-        Vec3 b = connection.to().attachmentPoint(level);
+        LeadEndpointLayout.Endpoints endpoints = endpoints(level, connection);
+        Vec3 a = endpoints.from();
+        Vec3 b = endpoints.to();
         double distance = a.distanceTo(b);
         if (distance < 1.0e-6D) {
             return false;
@@ -448,6 +456,11 @@ public final class SuperLeadNetwork {
     public static boolean hasConnectionNear(Level level, Vec3 point, double maxDistance,
             Predicate<LeadConnection> predicate) {
         return nearestConnection(level, point, maxDistance, predicate).isPresent();
+    }
+
+    public static Optional<LeadConnection> findConnectionInView(ServerLevel level, Player player, double radius) {
+        return nearestConnectionInView(level, player, radius, connection -> true)
+                .map(ConnectionPick::connection);
     }
 
     public static boolean hasConnectionInView(Level level, Player player, double radius,
@@ -578,8 +591,9 @@ public final class SuperLeadNetwork {
 
         Vec3 origin = player.getEyePosition(1.0F);
         Vec3 direction = player.getViewVector(1.0F).normalize();
-        Vec3 a = connection.from().attachmentPoint(level);
-        Vec3 b = connection.to().attachmentPoint(level);
+    LeadEndpointLayout.Endpoints endpoints = endpoints(level, connection);
+    Vec3 a = endpoints.from();
+    Vec3 b = endpoints.to();
         double reach = clippedAimReach(level, player, origin, direction,
                 SERVER_CONFIRMED_PICK_REACH, SERVER_CLAIM_BLOCK_SLACK);
 
@@ -617,8 +631,9 @@ public final class SuperLeadNetwork {
     public static boolean canTouchConnectionForAttachment(ServerLevel level, Player player, LeadConnection connection) {
         Vec3 origin = player.getEyePosition(1.0F);
         Vec3 direction = player.getViewVector(1.0F).normalize();
-        Vec3 a = connection.from().attachmentPoint(level);
-        Vec3 b = connection.to().attachmentPoint(level);
+        LeadEndpointLayout.Endpoints endpoints = endpoints(level, connection);
+        Vec3 a = endpoints.from();
+        Vec3 b = endpoints.to();
         net.minecraft.world.phys.AABB envelope = connectionEnvelope(a, b, SERVER_CONFIRMED_PICK_RADIUS);
         Vec3 reachEnd = origin.add(direction.scale(SERVER_CONFIRMED_PICK_REACH));
         return envelope.clip(origin, reachEnd).isPresent();
@@ -627,8 +642,9 @@ public final class SuperLeadNetwork {
     private static boolean canAimAtConnectionEnvelope(ServerLevel level, Player player, LeadConnection connection) {
         Vec3 origin = player.getEyePosition(1.0F);
         Vec3 direction = player.getViewVector(1.0F).normalize();
-        Vec3 a = connection.from().attachmentPoint(level);
-        Vec3 b = connection.to().attachmentPoint(level);
+        LeadEndpointLayout.Endpoints endpoints = endpoints(level, connection);
+        Vec3 a = endpoints.from();
+        Vec3 b = endpoints.to();
         double reach = clippedAimReach(level, player, origin, direction,
                 SERVER_CONFIRMED_PICK_REACH, SERVER_CONFIRMED_PICK_RADIUS);
         return connectionEnvelope(a, b, SERVER_CONFIRMED_PICK_RADIUS)
@@ -823,8 +839,7 @@ public final class SuperLeadNetwork {
         if (player != null && !player.getInventory().add(drop)) {
             player.drop(drop, false);
         } else if (player == null) {
-            Vec3 mid = connection.from().attachmentPoint(level)
-                    .add(connection.to().attachmentPoint(level)).scale(0.5D);
+            Vec3 mid = midpoint(level, connection);
             net.minecraft.world.entity.item.ItemEntity entity = new net.minecraft.world.entity.item.ItemEntity(level,
                     mid.x, mid.y, mid.z, drop);
             entity.setDefaultPickUpDelay();
@@ -1150,7 +1165,8 @@ public final class SuperLeadNetwork {
                 power = Math.max(power, externalSignalAt(level, current.from()));
                 power = Math.max(power, externalSignalAt(level, current.to()));
 
-                addUnvisitedNeighbors(current, connectionsByAnchor, visited, component);
+                addUnvisitedNeighborsBridge(level, current.from(), connectionsByAnchor, visited, component);
+                addUnvisitedNeighborsBridge(level, current.to(), connectionsByAnchor, visited, component);
             }
 
             final int componentPower = power;
@@ -1197,7 +1213,8 @@ public final class SuperLeadNetwork {
 
             for (int cursor = 0; cursor < component.size(); cursor++) {
                 LeadConnection current = energyConnections.get(component.get(cursor));
-                addUnvisitedNeighbors(current, connectionsByAnchor, visited, component);
+                addUnvisitedNeighborsBridge(level, current.from(), connectionsByAnchor, visited, component);
+                addUnvisitedNeighborsBridge(level, current.to(), connectionsByAnchor, visited, component);
             }
 
             transferEnergyComponent(level, component, energyConnections, transferredIds);
@@ -1542,27 +1559,31 @@ public final class SuperLeadNetwork {
         byAnchor.computeIfAbsent(anchor, key -> new ArrayList<>()).add(index);
     }
 
-    private static void addUnvisitedNeighbors(LeadConnection connection, Map<LeadAnchor, List<Integer>> byAnchor,
-            boolean[] visited, List<Integer> component) {
-        addUnvisitedNeighbors(connection.from(), byAnchor, visited, component);
-        if (!connection.to().equals(connection.from())) {
-            addUnvisitedNeighbors(connection.to(), byAnchor, visited, component);
-        }
-    }
-
     private static void addUnvisitedNeighbors(LeadAnchor anchor, Map<LeadAnchor, List<Integer>> byAnchor,
             boolean[] visited, List<Integer> component) {
         List<Integer> neighbors = byAnchor.get(anchor);
-        if (neighbors == null) {
+        if (neighbors != null) {
+            for (int index : neighbors) {
+                if (!visited[index]) {
+                    visited[index] = true;
+                    component.add(index);
+                }
+            }
+        }
+    }
+
+    private static void addUnvisitedNeighborsBridge(ServerLevel level, LeadAnchor anchor,
+            Map<LeadAnchor, List<Integer>> byAnchor, boolean[] visited, List<Integer> component) {
+        addUnvisitedNeighbors(anchor, byAnchor, visited, component);
+        if (!com.zhongbai233.super_lead.data.BlockPropertyRegistry.signalBridgeEnabled(
+                level.getBlockState(anchor.pos()).getBlock())) {
             return;
         }
-
-        for (int index : neighbors) {
-            if (visited[index]) {
+        for (Direction face : Direction.values()) {
+            if (face == anchor.face())
                 continue;
-            }
-            visited[index] = true;
-            component.add(index);
+            LeadAnchor otherFace = new LeadAnchor(anchor.pos(), face);
+            addUnvisitedNeighbors(otherFace, byAnchor, visited, component);
         }
     }
 
@@ -1616,8 +1637,9 @@ public final class SuperLeadNetwork {
                 continue;
             }
 
-            Vec3 a = connection.from().attachmentPoint(level);
-            Vec3 b = connection.to().attachmentPoint(level);
+            LeadEndpointLayout.Endpoints endpoints = endpoints(level, connection);
+            Vec3 a = endpoints.from();
+            Vec3 b = endpoints.to();
             ConnectionPick pick = pickSegment(connection, a, b, origin, direction, maxDistance);
             if (pick == null || pick.distanceSqr() > radiusSqr) {
                 continue;
@@ -1882,9 +1904,34 @@ public final class SuperLeadNetwork {
         return false;
     }
 
+    public static int countConnectionsAtAnchor(Level level, LeadAnchor anchor) {
+        int count = 0;
+        for (LeadConnection connection : connections(level)) {
+            if (connection.from().equals(anchor))
+                count++;
+            if (connection.to().equals(anchor))
+                count++;
+        }
+        return count;
+    }
+
+    private static void spawnBlockFaceLimitParticles(ServerLevel level, LeadAnchor anchor) {
+        Vec3 center = Vec3.atCenterOf(anchor.pos());
+        Direction face = anchor.face();
+        Vec3 particlePos = center.add(
+                face.getStepX() * 0.55D,
+                face.getStepY() * 0.55D,
+                face.getStepZ() * 0.55D);
+        level.sendParticles(
+                new DustParticleOptions(0xFF2222, 1.0F),
+                particlePos.x, particlePos.y, particlePos.z,
+                12, 0.15D, 0.15D, 0.15D, 0.05D);
+    }
+
     private static double distanceToConnectionSqr(Level level, LeadConnection connection, Vec3 point) {
-        Vec3 a = connection.from().attachmentPoint(level);
-        Vec3 b = connection.to().attachmentPoint(level);
+        LeadEndpointLayout.Endpoints endpoints = endpoints(level, connection);
+        Vec3 a = endpoints.from();
+        Vec3 b = endpoints.to();
         Vec3 ab = b.subtract(a);
         double lenSqr = ab.lengthSqr();
         if (lenSqr < 1.0e-8D) {
@@ -1929,8 +1976,8 @@ public final class SuperLeadNetwork {
     }
 
     private static Vec3 midpoint(Level level, LeadConnection connection) {
-        return connection.from().attachmentPoint(level)
-                .add(connection.to().attachmentPoint(level)).scale(0.5D);
+        LeadEndpointLayout.Endpoints endpoints = endpoints(level, connection);
+        return endpoints.from().add(endpoints.to()).scale(0.5D);
     }
 
     private static void dropConnectionDrops(ServerLevel level, LeadConnection connection, Vec3 leadDropPoint,
@@ -1943,8 +1990,9 @@ public final class SuperLeadNetwork {
         if (player != null && player.isCreative()) {
             return;
         }
-        Vec3 a = connection.from().attachmentPoint(level);
-        Vec3 b = connection.to().attachmentPoint(level);
+        LeadEndpointLayout.Endpoints endpoints = endpoints(level, connection);
+        Vec3 a = endpoints.from();
+        Vec3 b = endpoints.to();
         for (RopeAttachment attachment : connection.attachments()) {
             Vec3 point = a.lerp(b, attachment.t());
             ItemEntity drop = new ItemEntity(level, point.x, point.y, point.z, attachment.stack().copy());
@@ -1959,6 +2007,10 @@ public final class SuperLeadNetwork {
         }
         level.addFreshEntity(new ItemEntity(level, point.x, point.y, point.z,
                 new ItemStack(SuperLeadItems.SUPER_LEAD.asItem(), count)));
+    }
+
+    private static LeadEndpointLayout.Endpoints endpoints(Level level, LeadConnection connection) {
+        return LeadEndpointLayout.endpoints(level, connection, connections(level));
     }
 
     private record NetworkKey(ResourceKey<Level> dimension, boolean clientSide) {

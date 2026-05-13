@@ -31,6 +31,13 @@ public final class RopeSimulation extends RopeSimulationStepper {
         RopeSimulationCore.endParallelPhase();
     }
 
+    /**
+     * Enable/disable the smoothed proxy curve for rendering and contact sampling.
+     */
+    public void setUseCollisionProxy(boolean use) {
+        this.useCollisionProxy = use;
+    }
+
     public ContactSample findPlayerContact(AABB box, double radius) {
         double totalLen = 0.0D;
         for (int s = 0; s < segments; s++) {
@@ -42,12 +49,23 @@ public final class RopeSimulation extends RopeSimulationStepper {
         if (totalLen < 1.0e-6D)
             return null;
 
+        Vec3 endpointA = new Vec3(x[0], y[0], z[0]);
+        Vec3 endpointB = new Vec3(x[nodes - 1], y[nodes - 1], z[nodes - 1]);
+        double chordLen = endpointA.distanceTo(endpointB);
+        double targetLen = chordLen > 1.0e-6D ? chordLen * slackFactor(endpointA, endpointB) / segments : 0.0D;
+        double freeSlack = Math.max(0.0D, targetLen * segments - chordLen);
+
         double centerX = (box.minX + box.maxX) * 0.5D;
         double centerY = (box.minY + box.maxY) * 0.5D;
         double centerZ = (box.minZ + box.maxZ) * 0.5D;
         double walked = 0.0D;
         ContactSample best = null;
         double bestSeparation = Double.POSITIVE_INFINITY;
+        double weightSum = 0.0D;
+        double sumX = 0.0D, sumY = 0.0D, sumZ = 0.0D, sumT = 0.0D;
+        double sumNx = 0.0D, sumNy = 0.0D, sumNz = 0.0D;
+        double sumTx = 0.0D, sumTy = 0.0D, sumTz = 0.0D;
+        double sumDepth = 0.0D, sumSlack = 0.0D;
 
         for (int s = 0; s < segments; s++) {
             double ax = x[s], ay = y[s], az = z[s];
@@ -97,163 +115,193 @@ public final class RopeSimulation extends RopeSimulationStepper {
                     && qy >= box.minY && qy <= box.maxY
                     && qz >= box.minZ && qz <= box.maxZ;
             double rawNx;
+            double rawNy;
             double rawNz;
             double separation;
             if (inside) {
-                double toMinX = qx - box.minX;
-                double toMaxX = box.maxX - qx;
-                double toMinZ = qz - box.minZ;
-                double toMaxZ = box.maxZ - qz;
-                double exit = toMinX;
-                rawNx = 1.0D;
-                rawNz = 0.0D;
-                if (toMaxX < exit) {
-                    exit = toMaxX;
-                    rawNx = -1.0D;
-                    rawNz = 0.0D;
-                }
-                if (toMinZ < exit) {
-                    exit = toMinZ;
-                    rawNx = 0.0D;
-                    rawNz = 1.0D;
-                }
-                if (toMaxZ < exit) {
-                    exit = toMaxZ;
-                    rawNx = 0.0D;
-                    rawNz = -1.0D;
-                }
+                double[] normal = stableSegmentNormal(centerX - qx, centerY - qy, centerZ - qz,
+                        sx, sy, sz, segLen);
+                rawNx = normal[0];
+                rawNy = normal[1];
+                rawNz = normal[2];
+                double exit = Math.min(Math.min(qx - box.minX, box.maxX - qx),
+                        Math.min(Math.min(qy - box.minY, box.maxY - qy),
+                                Math.min(qz - box.minZ, box.maxZ - qz)));
                 separation = -Math.max(0.0D, exit);
             } else {
                 rawNx = cx - qx;
+                rawNy = cy - qy;
                 rawNz = cz - qz;
-                double nLen = Math.sqrt(rawNx * rawNx + rawNz * rawNz);
+                double nLen = Math.sqrt(rawNx * rawNx + rawNy * rawNy + rawNz * rawNz);
                 if (nLen < 1.0e-5D) {
                     rawNx = centerX - qx;
+                    rawNy = centerY - qy;
                     rawNz = centerZ - qz;
-                    nLen = Math.sqrt(rawNx * rawNx + rawNz * rawNz);
+                    nLen = Math.sqrt(rawNx * rawNx + rawNy * rawNy + rawNz * rawNz);
                 }
                 if (nLen < 1.0e-5D)
                     continue;
                 rawNx /= nLen;
+                rawNy /= nLen;
                 rawNz /= nLen;
                 double dx = cx - qx;
                 double dy = cy - qy;
                 double dz = cz - qz;
                 separation = Math.sqrt(dx * dx + dy * dy + dz * dz);
             }
-            double nx = rawNx;
-            double nz = rawNz;
-            double horizontalLen = Math.sqrt(sx * sx + sz * sz);
-            if (horizontalLen > 1.0e-5D) {
-                // Stable side normal for diagonal ropes: use the vector from the rope point to
-                // the player's centre, projected perpendicular to the rope's horizontal
-                // tangent.
-                // The nearest-face normal above is only a fallback; using it directly makes a
-                // diagonal rope alternately push X/Z as the sampled point crosses AABB faces.
-                double tx = sx / horizontalLen;
-                double tz = sz / horizontalLen;
-                double vx = centerX - qx;
-                double vz = centerZ - qz;
-                double along = vx * tx + vz * tz;
-                double sideX = vx - tx * along;
-                double sideZ = vz - tz * along;
-                double sideLen = Math.sqrt(sideX * sideX + sideZ * sideZ);
-                if (sideLen > 1.0e-5D) {
-                    nx = sideX / sideLen;
-                    nz = sideZ / sideLen;
-                }
-            } else {
-                double vx = centerX - qx;
-                double vz = centerZ - qz;
-                double sideLen = Math.sqrt(vx * vx + vz * vz);
-                if (sideLen > 1.0e-5D) {
-                    nx = vx / sideLen;
-                    nz = vz / sideLen;
-                }
+            {
+                double[] smoothed = smoothSideNormal(centerX - qx, centerY - qy, centerZ - qz,
+                        rawNx, rawNy, rawNz, sx, sy, sz, segLen);
+                rawNx = smoothed[0];
+                rawNy = smoothed[1];
+                rawNz = smoothed[2];
             }
-            if (separation >= radius || separation >= bestSeparation) {
+            if (separation >= radius) {
                 walked += segLen;
                 continue;
             }
             double t = (walked + segLen * u) / totalLen;
-            bestSeparation = separation;
-            best = new ContactSample(qx, qy, qz, t, nx, nz, radius - separation);
-            walked += segLen;
-        }
-
-        return best;
-    }
-
-    public SupportSample findPlayerSupportContact(AABB box, double radius) {
-        double supportRadius = Math.max(radius, 0.24D);
-        double supportHeight = Math.max(radius * 1.5D, 0.28D);
-        double totalLen = 0.0D;
-        for (int s = 0; s < segments; s++) {
-            double sx = x[s + 1] - x[s];
-            double sy = y[s + 1] - y[s];
-            double sz = z[s + 1] - z[s];
-            totalLen += Math.sqrt(sx * sx + sy * sy + sz * sz);
-        }
-        if (totalLen < 1.0e-6D)
-            return null;
-
-        double centerX = (box.minX + box.maxX) * 0.5D;
-        double centerZ = (box.minZ + box.maxZ) * 0.5D;
-        double walked = 0.0D;
-        SupportSample best = null;
-        double bestScore = Double.POSITIVE_INFINITY;
-
-        for (int s = 0; s < segments; s++) {
-            double ax = x[s], ay = y[s], az = z[s];
-            double bx = x[s + 1], by = y[s + 1], bz = z[s + 1];
-            double sx = bx - ax, sy = by - ay, sz = bz - az;
-            double segLenSqr = sx * sx + sy * sy + sz * sz;
-            double segLen = Math.sqrt(segLenSqr);
-            double u = 0.0D;
-            double horizLenSqr = sx * sx + sz * sz;
-            if (horizLenSqr > 1.0e-9D) {
-                u = ((centerX - ax) * sx + (centerZ - az) * sz) / horizLenSqr;
-                if (u < 0.0D)
-                    u = 0.0D;
-                else if (u > 1.0D)
-                    u = 1.0D;
+            double tx = 0.0D;
+            double ty = 0.0D;
+            double tz = 0.0D;
+            if (segLen > 1.0e-6D) {
+                tx = sx / segLen;
+                ty = sy / segLen;
+                tz = sz / segLen;
             }
-
-            double qx = ax + sx * u;
-            double qy = ay + sy * u;
-            double qz = az + sz * u;
-            double cx = clamp(qx, box.minX, box.maxX);
-            double cz = clamp(qz, box.minZ, box.maxZ);
-            double hx = qx - cx;
-            double hz = qz - cz;
-            double horizontal = Math.sqrt(hx * hx + hz * hz);
-            double verticalGap = box.minY - qy;
-            if (horizontal > supportRadius || verticalGap < -0.08D || verticalGap > supportHeight) {
-                walked += segLen;
-                continue;
+            double localSlack = Math.max(0.0D, targetLen - segLen);
+            double midspanSlack = freeSlack * Math.sin(Math.PI * clamp(t, 0.0D, 1.0D));
+            double slackAllowance = localSlack + midspanSlack;
+            double depth = radius - separation;
+            double weight = contactBlendWeight(depth, radius);
+            if (weightSum > 1.0e-9D && rawNx * sumNx + rawNy * sumNy + rawNz * sumNz < 0.0D) {
+                rawNx = -rawNx;
+                rawNy = -rawNy;
+                rawNz = -rawNz;
             }
-
-            double score = horizontal * horizontal + verticalGap * verticalGap * 0.35D;
-            if (score < bestScore) {
-                double t = (walked + segLen * u) / totalLen;
-                double depth = Math.max(0.0D, supportHeight - Math.max(verticalGap, horizontal));
-                best = new SupportSample(qx, qy, qz, t, depth);
-                bestScore = score;
+            if (weightSum > 1.0e-9D && tx * sumTx + ty * sumTy + tz * sumTz < 0.0D) {
+                tx = -tx;
+                ty = -ty;
+                tz = -tz;
+            }
+            weightSum += weight;
+            sumX += qx * weight;
+            sumY += qy * weight;
+            sumZ += qz * weight;
+            sumT += t * weight;
+            sumNx += rawNx * weight;
+            sumNy += rawNy * weight;
+            sumNz += rawNz * weight;
+            sumTx += tx * weight;
+            sumTy += ty * weight;
+            sumTz += tz * weight;
+            sumDepth += depth * weight;
+            sumSlack += slackAllowance * weight;
+            if (separation < bestSeparation) {
+                bestSeparation = separation;
+                best = new ContactSample(qx, qy, qz, t, rawNx, rawNy, rawNz,
+                        tx, ty, tz, depth, slackAllowance);
             }
             walked += segLen;
         }
 
-        return best;
+        if (best == null || weightSum <= 1.0e-9D)
+            return best;
+
+        double invWeight = 1.0D / weightSum;
+        double nx = sumNx * invWeight;
+        double ny = sumNy * invWeight;
+        double nz = sumNz * invWeight;
+        double nLen = Math.sqrt(nx * nx + ny * ny + nz * nz);
+        if (nLen < 1.0e-5D) {
+            nx = best.normalX();
+            ny = best.normalY();
+            nz = best.normalZ();
+        } else {
+            nx /= nLen;
+            ny /= nLen;
+            nz /= nLen;
+        }
+        double tx = sumTx * invWeight;
+        double ty = sumTy * invWeight;
+        double tz = sumTz * invWeight;
+        double tLen = Math.sqrt(tx * tx + ty * ty + tz * tz);
+        if (tLen < 1.0e-5D) {
+            tx = best.tangentX();
+            ty = best.tangentY();
+            tz = best.tangentZ();
+        } else {
+            tx /= tLen;
+            ty /= tLen;
+            tz /= tLen;
+        }
+        double depth = Math.max(sumDepth * invWeight, best.depth() * 0.65D);
+        return new ContactSample(sumX * invWeight, sumY * invWeight, sumZ * invWeight,
+                clamp(sumT * invWeight, 0.0D, 1.0D), nx, ny, nz, tx, ty, tz,
+                depth, sumSlack * invWeight);
     }
 
     private static double clamp(double value, double min, double max) {
         return value < min ? min : (value > max ? max : value);
     }
 
-    public record ContactSample(double x, double y, double z, double t,
-            double normalX, double normalZ, double depth) {
+    private static double[] stableSegmentNormal(double vx, double vy, double vz,
+            double sx, double sy, double sz, double segLen) {
+        if (segLen > 1.0e-6D) {
+            double tx = sx / segLen;
+            double ty = sy / segLen;
+            double tz = sz / segLen;
+            double along = vx * tx + vy * ty + vz * tz;
+            vx -= tx * along;
+            vy -= ty * along;
+            vz -= tz * along;
+        }
+        double len = Math.sqrt(vx * vx + vy * vy + vz * vz);
+        if (len < 1.0e-5D) {
+            return new double[] { 0.0D, 1.0D, 0.0D };
+        }
+        return new double[] { vx / len, vy / len, vz / len };
     }
 
-    public record SupportSample(double x, double y, double z, double t, double depth) {
+    private static double[] smoothSideNormal(double centerX, double centerY, double centerZ,
+            double nx, double ny, double nz, double sx, double sy, double sz, double segLen) {
+        double vx = centerX;
+        double vy = Math.abs(ny) > 0.35D ? centerY : 0.0D;
+        double vz = centerZ;
+        if (segLen > 1.0e-6D) {
+            double tx = sx / segLen;
+            double ty = sy / segLen;
+            double tz = sz / segLen;
+            double along = vx * tx + vy * ty + vz * tz;
+            vx -= tx * along;
+            vy -= ty * along;
+            vz -= tz * along;
+        }
+        double len = Math.sqrt(vx * vx + vy * vy + vz * vz);
+        if (len < 1.0e-5D || vx * nx + vy * ny + vz * nz <= 0.0D) {
+            return new double[] { nx, ny, nz };
+        }
+        vx /= len;
+        vy /= len;
+        vz /= len;
+        double blend = 0.58D;
+        nx = nx * (1.0D - blend) + vx * blend;
+        ny = ny * (1.0D - blend) + vy * blend;
+        nz = nz * (1.0D - blend) + vz * blend;
+        len = Math.sqrt(nx * nx + ny * ny + nz * nz);
+        if (len < 1.0e-5D)
+            return new double[] { vx, vy, vz };
+        return new double[] { nx / len, ny / len, nz / len };
+    }
+
+    private static double contactBlendWeight(double depth, double radius) {
+        double x = clamp(depth / Math.max(radius, 1.0e-6D), 0.0D, 1.0D);
+        return 0.05D + x * x;
+    }
+
+    public record ContactSample(double x, double y, double z, double t,
+            double normalX, double normalY, double normalZ,
+            double tangentX, double tangentY, double tangentZ,
+            double depth, double slack) {
     }
 }

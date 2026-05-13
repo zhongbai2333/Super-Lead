@@ -3,6 +3,8 @@ package com.zhongbai233.super_lead.preset;
 import com.mojang.logging.LogUtils;
 import com.zhongbai233.super_lead.Config;
 import com.zhongbai233.super_lead.lead.LeadConnection;
+import com.zhongbai233.super_lead.lead.LeadEndpointLayout;
+import com.zhongbai233.super_lead.lead.SuperLeadNetwork;
 import com.zhongbai233.super_lead.lead.SuperLeadPayloads;
 import com.zhongbai233.super_lead.lead.SuperLeadSavedData;
 import java.util.ArrayList;
@@ -204,8 +206,10 @@ public final class PresetServerManager {
     }
 
     public static PhysicsZone findZoneForConnection(ServerLevel level, LeadConnection connection) {
-        Vec3 a = connection.from().attachmentPoint(level);
-        Vec3 b = connection.to().attachmentPoint(level);
+        LeadEndpointLayout.Endpoints endpoints = LeadEndpointLayout.endpoints(level, connection,
+                SuperLeadNetwork.connections(level));
+        Vec3 a = endpoints.from();
+        Vec3 b = endpoints.to();
         if (a == null || b == null)
             return null;
         return findZoneForRope(PhysicsZoneSavedData.get(level).zones(), a, b);

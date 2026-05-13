@@ -1,6 +1,7 @@
 package com.zhongbai233.super_lead.tuning.gui;
 
 import com.zhongbai233.super_lead.tuning.ClientTuning;
+import com.zhongbai233.super_lead.tuning.ColorTuningType;
 import com.zhongbai233.super_lead.tuning.DoubleTuningType;
 import com.zhongbai233.super_lead.tuning.IntTuningType;
 import com.zhongbai233.super_lead.tuning.TuningKey;
@@ -90,6 +91,13 @@ public final class SuperLeadConfigScreen extends Screen {
                 .bounds(this.width - PADDING - 60 - 86, PADDING, 84, 14)
                 .build();
         addRenderableWidget(opPresets);
+
+        Button blockProps = Button.builder(
+                Component.literal("Block Props"),
+                button -> com.zhongbai233.super_lead.data.BlockPropertyEditScreen.open(this))
+                .bounds(this.width - PADDING - 60 - 86 - 90, PADDING, 86, 14)
+                .build();
+        addRenderableWidget(blockProps);
     }
 
     private void rebuildBody(int startY) {
@@ -177,6 +185,11 @@ public final class SuperLeadConfigScreen extends Screen {
                     / Math.max(1, intType.max() - intType.min());
             return new IntTuningSlider(x, y, width, WIDGET_H, intKey, intType, initial);
         }
+        if (key.type instanceof ColorTuningType) {
+            TuningKey<Integer> colorKey = (TuningKey<Integer>) key;
+            double initial = colorKey.get() / (double) ColorTuningType.MAX;
+            return new ColorTuningSlider(x, y, width, WIDGET_H, colorKey, initial);
+        }
 
         TuningKey<Boolean> boolKey = (TuningKey<Boolean>) key;
         return Button.builder(boolLabel(boolKey.get()), button -> {
@@ -188,6 +201,18 @@ public final class SuperLeadConfigScreen extends Screen {
 
     @SuppressWarnings("unchecked")
     private AbstractWidget buildInput(TuningKey<?> key, int x, int y, int width) {
+        if (key.type instanceof ColorTuningType) {
+            TuningKey<Integer> colorKey = (TuningKey<Integer>) key;
+            EditBox box = new EditBox(this.font, x, y, width, WIDGET_H,
+                    Component.translatableWithFallback("super_lead.config.value", "Value"));
+            box.setMaxLength(10);
+            box.setValue(colorKey.formatEffective());
+            box.setResponder(raw -> {
+                boolean ok = colorKey.setLocalFromString(raw);
+                box.setTextColor(ok ? 0xFFE8E8E8 : 0xFFFF6666);
+            });
+            return box;
+        }
         if (!(key.type instanceof DoubleTuningType)) {
             return null;
         }
@@ -299,6 +324,7 @@ public final class SuperLeadConfigScreen extends Screen {
             case "physics.solver" -> "Solver";
             case "render.mode" -> "Mode";
             case "render.geom" -> "Geometry";
+            case "render.color" -> "Color";
             case "render.lod" -> "LOD";
             case "render.attach" -> "Attach";
             case "misc" -> "Misc";
@@ -394,6 +420,28 @@ public final class SuperLeadConfigScreen extends Screen {
             int span = type.max() - type.min();
             int next = type.min() + (int) Math.round(this.value * span);
             key.setLocalFromString(Integer.toString(next));
+        }
+    }
+
+    private static final class ColorTuningSlider extends AbstractSliderButton {
+        private final TuningKey<Integer> key;
+
+        private ColorTuningSlider(int x, int y, int width, int height,
+                TuningKey<Integer> key, double initial) {
+            super(x, y, width, height, Component.empty(), Mth.clamp(initial, 0.0D, 1.0D));
+            this.key = key;
+            updateMessage();
+        }
+
+        @Override
+        protected void updateMessage() {
+            this.setMessage(Component.empty());
+        }
+
+        @Override
+        protected void applyValue() {
+            int next = (int) Math.round(this.value * ColorTuningType.MAX);
+            key.setLocalFromString(key.type.format(next));
         }
     }
 }

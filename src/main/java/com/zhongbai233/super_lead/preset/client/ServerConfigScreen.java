@@ -150,6 +150,9 @@ public final class ServerConfigScreen extends Screen {
                     FieldKind.INT, 100, 10000, "1000"),
             new FieldDef("network.stuck_break_ticks", "super_lead.server_config.field.network.stuck_break_ticks",
                     FieldKind.INT, 20, 1200, "100"),
+            new FieldDef("network.max_ropes_per_block_face",
+                    "super_lead.server_config.field.network.max_ropes_per_block_face",
+                    FieldKind.INT, 1, 64, "8"),
             new FieldDef("presets.allow_op_visual_presets",
                     "super_lead.server_config.field.presets.allow_op_visual_presets", FieldKind.BOOL, 0, 1, "true"),
     };
@@ -516,6 +519,7 @@ public final class ServerConfigScreen extends Screen {
             case "network.item_transfer_interval_ticks" -> Integer.toString(Config.itemTransferIntervalTicks());
             case "network.fluid_bucket_amount" -> Integer.toString(Config.fluidBucketAmount());
             case "network.stuck_break_ticks" -> Integer.toString(Config.stuckBreakTicks());
+            case "network.max_ropes_per_block_face" -> Integer.toString(Config.maxRopesPerBlockFace());
             case "presets.allow_op_visual_presets" -> Boolean.toString(Config.allowOpVisualPresets());
             default -> "?";
         };

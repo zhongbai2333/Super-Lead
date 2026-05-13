@@ -1,6 +1,7 @@
 package com.zhongbai233.super_lead.lead.client.sim;
 
 import com.zhongbai233.super_lead.lead.LeadConnection;
+import com.zhongbai233.super_lead.lead.LeadKind;
 import com.zhongbai233.super_lead.preset.client.PhysicsZonesClient;
 import com.zhongbai233.super_lead.tuning.ClientTuning;
 import com.zhongbai233.super_lead.tuning.TuningKey;
@@ -25,6 +26,18 @@ public record RopeTuning(
         int iterContact,
         int iterRope,
         double compliance,
+        double halfThickness,
+        double ribbonWidthFactor,
+        int normalBaseColor,
+        int normalAccentColor,
+        int redstoneBaseColor,
+        int redstoneAccentColor,
+        int energyBaseColor,
+        int energyAccentColor,
+        int itemBaseColor,
+        int itemAccentColor,
+        int fluidBaseColor,
+        int fluidAccentColor,
         boolean modePhysics) {
 
     public static RopeTuning forMidpoint(Vec3 a, Vec3 b) {
@@ -59,7 +72,47 @@ public record RopeTuning(
                 resolve(overrides, ClientTuning.ITER_CONTACT),
                 resolve(overrides, ClientTuning.ITER_ROPE),
                 resolve(overrides, ClientTuning.COMPLIANCE),
+                resolve(overrides, ClientTuning.THICKNESS_HALF),
+                resolve(overrides, ClientTuning.RIBBON_WIDTH_FACTOR),
+                resolve(overrides, ClientTuning.COLOR_NORMAL_BASE),
+                resolve(overrides, ClientTuning.COLOR_NORMAL_ACCENT),
+                resolve(overrides, ClientTuning.COLOR_REDSTONE_BASE),
+                resolve(overrides, ClientTuning.COLOR_REDSTONE_ACCENT),
+                resolve(overrides, ClientTuning.COLOR_ENERGY_BASE),
+                resolve(overrides, ClientTuning.COLOR_ENERGY_ACCENT),
+                resolve(overrides, ClientTuning.COLOR_ITEM_BASE),
+                resolve(overrides, ClientTuning.COLOR_ITEM_ACCENT),
+                resolve(overrides, ClientTuning.COLOR_FLUID_BASE),
+                resolve(overrides, ClientTuning.COLOR_FLUID_ACCENT),
                 resolve(overrides, ClientTuning.MODE_PHYSICS));
+    }
+
+    public int baseColor(LeadKind kind) {
+        return switch (kind) {
+            case REDSTONE -> redstoneBaseColor;
+            case ENERGY -> energyBaseColor;
+            case ITEM -> itemBaseColor;
+            case FLUID -> fluidBaseColor;
+            default -> normalBaseColor;
+        } & 0xFFFFFF;
+    }
+
+    public int accentColor(LeadKind kind) {
+        return switch (kind) {
+            case REDSTONE -> redstoneAccentColor;
+            case ENERGY -> energyAccentColor;
+            case ITEM -> itemAccentColor;
+            case FLUID -> fluidAccentColor;
+            default -> normalAccentColor;
+        } & 0xFFFFFF;
+    }
+
+    public int colorHashFor(LeadKind kind) {
+        int h = 17;
+        h = h * 31 + (kind == null ? 0 : kind.ordinal());
+        h = h * 31 + baseColor(kind == null ? LeadKind.NORMAL : kind);
+        h = h * 31 + accentColor(kind == null ? LeadKind.NORMAL : kind);
+        return h;
     }
 
     private static <T> T resolve(Map<String, String> overrides, TuningKey<T> key) {

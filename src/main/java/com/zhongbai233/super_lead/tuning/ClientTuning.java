@@ -61,14 +61,14 @@ public final class ClientTuning {
             "contact.radius", "physics.contact", 0.18D, 0.02D, 0.60D,
             "Soft gameplay radius around the rope used for player push-back contacts.");
     public static final TuningKey<Double> CONTACT_SPRING = registerD(
-            "contact.spring", "physics.contact", 0.22D, 0.0D, 1.0D,
+            "contact.spring", "physics.contact", 0.30D, 0.0D, 1.0D,
             "Depth-based push-back strength. Higher values resist overlap more strongly.");
     public static final TuningKey<Double> CONTACT_VELOCITY_DAMPING = registerD(
-            "contact.velocityDamping", "physics.contact", 0.65D, 0.0D, 2.0D,
+            "contact.velocityDamping", "physics.contact", 0.55D, 0.0D, 2.0D,
             "Approach-speed damping when the player moves into the rope.");
     public static final TuningKey<Double> CONTACT_MAX_RECOIL_PER_TICK = registerD(
-            "contact.maxRecoilPerTick", "physics.contact", 0.09D, 0.0D, 0.50D,
-            "Maximum horizontal push-back velocity added to the player per server tick.");
+            "contact.maxRecoilPerTick", "physics.contact", 0.20D, 0.0D, 0.50D,
+            "Maximum 3D contact velocity added to the player per server tick before support scaling.");
 
     public static final TuningKey<Boolean> MODE_PHYSICS = registerB(
             "mode.physics", "render.mode", Boolean.TRUE,
@@ -86,6 +86,37 @@ public final class ClientTuning {
     public static final TuningKey<Double> RIBBON_WIDTH_FACTOR = registerD(
             "ribbon.widthFactor", "render.geom", 1.45D, 0.5D, 3.0D,
             "Ribbon width multiplier relative to rope half thickness.");
+
+    public static final TuningKey<Integer> COLOR_NORMAL_BASE = registerC(
+            "color.normal.base", "render.color", 0x563B22,
+            "Normal rope base stripe color. Accepts #RRGGBB, 0xRRGGBB, or decimal RGB.");
+    public static final TuningKey<Integer> COLOR_NORMAL_ACCENT = registerC(
+            "color.normal.accent", "render.color", 0x8E6539,
+            "Normal rope accent stripe color. Accepts #RRGGBB, 0xRRGGBB, or decimal RGB.");
+    public static final TuningKey<Integer> COLOR_REDSTONE_BASE = registerC(
+            "color.redstone.base", "render.color", 0x540000,
+            "Redstone rope base stripe color. Powered ropes brighten this palette.");
+    public static final TuningKey<Integer> COLOR_REDSTONE_ACCENT = registerC(
+            "color.redstone.accent", "render.color", 0xA81614,
+            "Redstone rope accent stripe color. Powered ropes brighten this palette.");
+    public static final TuningKey<Integer> COLOR_ENERGY_BASE = registerC(
+            "color.energy.base", "render.color", 0x805416,
+            "Energy rope base stripe color. Tier bands use the accent color.");
+    public static final TuningKey<Integer> COLOR_ENERGY_ACCENT = registerC(
+            "color.energy.accent", "render.color", 0xE49E36,
+            "Energy rope accent stripe and tier-band color.");
+    public static final TuningKey<Integer> COLOR_ITEM_BASE = registerC(
+            "color.item.base", "render.color", 0x6E82A5,
+            "Item rope base stripe color.");
+    public static final TuningKey<Integer> COLOR_ITEM_ACCENT = registerC(
+            "color.item.accent", "render.color", 0xAFC8E6,
+            "Item rope accent stripe color.");
+    public static final TuningKey<Integer> COLOR_FLUID_BASE = registerC(
+            "color.fluid.base", "render.color", 0x329196,
+            "Fluid rope base stripe color.");
+    public static final TuningKey<Integer> COLOR_FLUID_ACCENT = registerC(
+            "color.fluid.accent", "render.color", 0x5ADCDC,
+            "Fluid rope accent stripe color.");
 
     public static final TuningKey<Double> LOD_RIBBON_DISTANCE = registerD(
             "lod.ribbonDistance", "render.lod", 48.0D, 8.0D, 256.0D,
@@ -132,6 +163,14 @@ public final class ClientTuning {
             int defaultValue, int min, int max, String description) {
         TuningKey<Integer> key = new TuningKey<>(
                 id, group, TuningType.intRange(min, max), defaultValue, description);
+        KEYS.put(id, key);
+        return key;
+    }
+
+    private static TuningKey<Integer> registerC(String id, String group,
+            int defaultValue, String description) {
+        TuningKey<Integer> key = new TuningKey<>(
+                id, group, TuningType.colorRgb(), defaultValue, description);
         KEYS.put(id, key);
         return key;
     }

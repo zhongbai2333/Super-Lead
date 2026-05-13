@@ -419,7 +419,7 @@ public final class StaticRopeChunkRegistry {
                         nextClaimedFromSim.add(c.id());
                     }
                 } else {
-                    r = RopeStaticGeometry.build(c, level);
+                    r = RopeStaticGeometry.build(c, level, realSources);
                 }
                 if (r.snapshot == null || r.sectionKeys.isEmpty())
                     continue;

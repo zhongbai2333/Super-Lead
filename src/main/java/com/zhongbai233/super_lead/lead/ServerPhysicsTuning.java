@@ -18,8 +18,10 @@ record ServerPhysicsTuning(
         double maxRecoilPerTick) {
     private static final double CONTACT_RADIUS_FALLBACK = ClientTuning.CONTACT_RADIUS.defaultValue;
     private static final double SPRING_K_FALLBACK = ClientTuning.CONTACT_SPRING.defaultValue;
+    private static final double SPRING_K_MINIMUM = 0.30D;
     private static final double VELOCITY_DAMPING_FALLBACK = ClientTuning.CONTACT_VELOCITY_DAMPING.defaultValue;
     private static final double MAX_RECOIL_PER_TICK_FALLBACK = ClientTuning.CONTACT_MAX_RECOIL_PER_TICK.defaultValue;
+    private static final double MAX_RECOIL_PER_TICK_MINIMUM = 0.20D;
 
     static ServerPhysicsTuning loadServerPhysicsTuning(ServerLevel level, String presetName) {
         Map<String, String> overrides = RopePresetLibrary.forServer(level.getServer())
@@ -35,12 +37,14 @@ record ServerPhysicsTuning(
                 ClientTuning.CONTACT_PUSHBACK.defaultValue);
         double contactRadius = parseDouble(overrides.get(ClientTuning.CONTACT_RADIUS.id),
                 ClientTuning.CONTACT_RADIUS, CONTACT_RADIUS_FALLBACK);
-        double springK = parseDouble(overrides.get(ClientTuning.CONTACT_SPRING.id),
-                ClientTuning.CONTACT_SPRING, SPRING_K_FALLBACK);
+        double springK = Math.max(SPRING_K_MINIMUM,
+                parseDouble(overrides.get(ClientTuning.CONTACT_SPRING.id),
+                        ClientTuning.CONTACT_SPRING, SPRING_K_FALLBACK));
         double velocityDamping = parseDouble(overrides.get(ClientTuning.CONTACT_VELOCITY_DAMPING.id),
                 ClientTuning.CONTACT_VELOCITY_DAMPING, VELOCITY_DAMPING_FALLBACK);
-        double maxRecoilPerTick = parseDouble(overrides.get(ClientTuning.CONTACT_MAX_RECOIL_PER_TICK.id),
-                ClientTuning.CONTACT_MAX_RECOIL_PER_TICK, MAX_RECOIL_PER_TICK_FALLBACK);
+        double maxRecoilPerTick = Math.max(MAX_RECOIL_PER_TICK_MINIMUM,
+                parseDouble(overrides.get(ClientTuning.CONTACT_MAX_RECOIL_PER_TICK.id),
+                        ClientTuning.CONTACT_MAX_RECOIL_PER_TICK, MAX_RECOIL_PER_TICK_FALLBACK));
         return new ServerPhysicsTuning(physicsEnabled, gravity, slackTight,
                 pushbackEnabled, contactRadius, springK, velocityDamping, maxRecoilPerTick);
     }

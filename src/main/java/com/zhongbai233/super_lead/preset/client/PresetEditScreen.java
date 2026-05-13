@@ -4,6 +4,7 @@ import com.zhongbai233.super_lead.preset.PresetEditKey;
 import com.zhongbai233.super_lead.preset.PresetDetailsRequest;
 import com.zhongbai233.super_lead.preset.PresetDetailsResponse;
 import com.zhongbai233.super_lead.tuning.ClientTuning;
+import com.zhongbai233.super_lead.tuning.ColorTuningType;
 import com.zhongbai233.super_lead.tuning.DoubleTuningType;
 import com.zhongbai233.super_lead.tuning.IntTuningType;
 import com.zhongbai233.super_lead.tuning.TuningKey;
@@ -259,6 +260,14 @@ public final class PresetEditScreen extends Screen {
                 setOverride(key, value);
             });
         }
+        if (key.type instanceof ColorTuningType) {
+            TuningKey<Integer> colorKey = (TuningKey<Integer>) key;
+            int current = parseColor(overrides.get(key.id), colorKey.getDefault(), colorKey);
+            double initial = current / (double) ColorTuningType.MAX;
+            return new PresetColorSlider(x, y, width, WIDGET_H, initial, value -> {
+                setOverride(key, value);
+            });
+        }
 
         TuningKey<Boolean> bKey = (TuningKey<Boolean>) key;
         boolean current = parseBool(overrides.get(key.id), bKey.getDefault());
@@ -273,6 +282,21 @@ public final class PresetEditScreen extends Screen {
 
     @SuppressWarnings("unchecked")
     private AbstractWidget buildInput(TuningKey<?> key, int x, int y, int width) {
+        if (key.type instanceof ColorTuningType) {
+            TuningKey<Integer> colorKey = (TuningKey<Integer>) key;
+            EditBox box = new EditBox(this.font, x, y, width, WIDGET_H,
+                    Component.translatableWithFallback("super_lead.config.value", "Value"));
+            box.setMaxLength(10);
+            box.setValue(formatColorInputValue(colorKey));
+            box.setResponder(raw -> {
+                boolean ok = isValidColorInput(colorKey, raw);
+                box.setTextColor(ok ? 0xFFE8E8E8 : 0xFFFF6666);
+                if (ok) {
+                    setOverride(colorKey, raw);
+                }
+            });
+            return box;
+        }
         if (!(key.type instanceof DoubleTuningType)) {
             return null;
         }
@@ -289,6 +313,18 @@ public final class PresetEditScreen extends Screen {
             }
         });
         return box;
+    }
+
+    private String formatColorInputValue(TuningKey<Integer> key) {
+        String raw = overrides.get(key.id);
+        if (raw == null) {
+            return key.type.format(key.getDefault());
+        }
+        try {
+            return key.type.format(key.type.parse(raw));
+        } catch (RuntimeException ignored) {
+            return raw;
+        }
     }
 
     private String formatInputValue(TuningKey<Double> key) {
@@ -313,6 +349,15 @@ public final class PresetEditScreen extends Screen {
         }
     }
 
+    private static boolean isValidColorInput(TuningKey<Integer> key, String raw) {
+        try {
+            Integer parsed = key.type.parse(raw);
+            return key.type.validate(parsed);
+        } catch (RuntimeException ignored) {
+            return false;
+        }
+    }
+
     private static boolean isUnboundedInputKey(TuningKey<Double> key) {
         return key == ClientTuning.SLACK_LOOSE || key == ClientTuning.SLACK_TIGHT;
     }
@@ -332,6 +377,17 @@ public final class PresetEditScreen extends Screen {
             return fallback;
         try {
             return Integer.parseInt(raw.trim());
+        } catch (RuntimeException e) {
+            return fallback;
+        }
+    }
+
+    private static int parseColor(String raw, int fallback, TuningKey<Integer> key) {
+        if (raw == null)
+            return fallback;
+        try {
+            int parsed = key.type.parse(raw.trim());
+            return key.type.validate(parsed) ? parsed : fallback;
         } catch (RuntimeException e) {
             return fallback;
         }
@@ -500,6 +556,7 @@ public final class PresetEditScreen extends Screen {
             case "physics.solver" -> "Solver";
             case "render.mode" -> "Mode";
             case "render.geom" -> "Geometry";
+            case "render.color" -> "Color";
             case "render.lod" -> "LOD";
             case "render.attach" -> "Attach";
             case "misc" -> "Misc";
@@ -569,6 +626,27 @@ public final class PresetEditScreen extends Screen {
             int span = type.max() - type.min();
             int next = type.min() + (int) Math.round(this.value * span);
             sink.accept(Integer.toString(next));
+        }
+    }
+
+    private static final class PresetColorSlider extends AbstractSliderButton {
+        private final java.util.function.Consumer<String> sink;
+
+        PresetColorSlider(int x, int y, int w, int h, double initial,
+                java.util.function.Consumer<String> sink) {
+            super(x, y, w, h, Component.empty(), Mth.clamp(initial, 0.0D, 1.0D));
+            this.sink = sink;
+        }
+
+        @Override
+        protected void updateMessage() {
+            setMessage(Component.empty());
+        }
+
+        @Override
+        protected void applyValue() {
+            int next = (int) Math.round(this.value * ColorTuningType.MAX);
+            sink.accept(String.format(java.util.Locale.ROOT, "#%06X", next & ColorTuningType.MAX));
         }
     }
 }

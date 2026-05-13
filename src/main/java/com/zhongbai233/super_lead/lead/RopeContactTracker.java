@@ -12,7 +12,6 @@ import java.util.UUID;
 import net.minecraft.network.protocol.game.ClientboundSetEntityMotionPacket;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import net.neoforged.neoforge.network.PacketDistributor;
@@ -21,12 +20,9 @@ import net.neoforged.neoforge.network.PacketDistributor;
  * Server-side adjudicator for client-reported rope contacts.
  *
  * Clients own the high-fidelity rope shape because it depends on local physics,
- * LOD and terrain
- * settling. The server only validates that a reported contact is plausible for
- * the authoritative
- * rope anchors, applies a clamped one-sided player push, and rebroadcasts the
- * accepted visual
- * deflection so observers and LOD/static ropes see the same pushed shape.
+ * LOD and terrain settling. The server validates the report against an
+ * authoritative-endpoint sag envelope, then applies a 3D contact response that
+ * separates normal push, foot support, tangent friction and slack softening.
  */
 public final class RopeContactTracker {
     private static final double VISUAL_MAX_DEFLECT = 0.50D;
@@ -35,24 +31,18 @@ public final class RopeContactTracker {
     private static final double CLIENT_REPORT_MAX_DEFLECTION_ALLOWANCE = 4.0D;
     private static final double CLIENT_REPORT_DEFLECTION_FRACTION = 0.35D;
     private static final double CLIENT_REPORT_MAX_DEPTH = 0.75D;
-    private static final double SUPPORT_MIN_HEIGHT = 0.28D;
-    private static final double SUPPORT_MAX_HEIGHT = 0.55D;
-    private static final double SUPPORT_MAX_UPWARD_SPEED = 0.08D;
+    private static final double FALLBACK_PUSH_SCALE = 0.60D;
+    private static final double INPUT_AWAY_PUSH_BOOST = 0.80D;
+    private static final double CONTACT_IMPULSE_DEADZONE = 0.01D;
+    private static final double CONTACT_LEGACY_MAX_RECOIL_SCALE = 1.50D;
+    private static final double CONTACT_SIDE_SOLID_RADIUS = 0.065D;
+    private static final double CONTACT_SIDE_SPRING_SCALE = 0.55D;
+    private static final double CONTACT_SIDE_MAX_RECOIL_SCALE = 0.70D;
+    private static final double CONTACT_SIDE_DAMPING_SCALE = 0.12D;
+    private static final double CONTACT_SLACK_DEPTH_ABSORB = 0.65D;
+    private static final double CONTACT_SLACK_SOFTENING = 1.25D;
+    private static final double NORMAL_EPSILON = 1.0e-5D;
     private static final long CLIENT_CONTACT_TTL_TICKS = 5L;
-    private static final double PUSH_MIN_TRAVEL_BLOCKS = 0.70D;
-    private static final double PUSH_MAX_TRAVEL_BLOCKS = 2.65D;
-    private static final double PUSH_TRAVEL_LENGTH_FRACTION = 0.22D;
-    private static final double PUSH_SOFT_START_RATIO = 0.08D;
-    private static final double PUSH_HARD_START_RATIO = 0.58D;
-    private static final double PUSH_DAMPING_SCALE = 0.72D;
-    private static final double PUSH_SPRING_SCALE = 0.42D;
-    private static final double PUSH_EXIT_RESTORE_SCALE = 1.08D;
-    private static final double PUSH_EXIT_RESTORE_CAP_SCALE = 1.35D;
-    private static final double PUSH_EXIT_TARGET_SPEED_SCALE = 1.10D;
-    private static final double PUSH_EXIT_MIN_RESTORE_GAIN = 0.85D;
-    private static final double PUSH_EXIT_FULL_DEPTH_RATIO = 1.30D;
-    private static final double PUSH_EXIT_MAX_MOVE_SPEED = 0.50D;
-    private static final double PUSH_MAX_CANCEL_FRACTION = 0.82D;
 
     private static final Map<NetworkKey, Integer> LAST_SENT_COUNT = new HashMap<>();
     private static final Map<NetworkKey, Map<ContactKey, AcceptedClientContact>> CLIENT_CONTACTS = new HashMap<>();
@@ -94,7 +84,9 @@ public final class RopeContactTracker {
         if (player.isSpectator())
             return;
         if (!finite(report.t(), report.pointX(), report.pointY(), report.pointZ(),
-                report.normalX(), report.normalZ(), report.inputX(), report.inputZ(), report.depth()))
+                report.normalX(), report.normalY(), report.normalZ(),
+                report.tangentX(), report.tangentY(), report.tangentZ(),
+                report.inputX(), report.inputZ(), report.depth(), report.slack()))
             return;
         if (report.t() < -0.05F || report.t() > 1.05F)
             return;
@@ -106,87 +98,72 @@ public final class RopeContactTracker {
         if (connection.kind() != LeadKind.NORMAL && connection.kind() != LeadKind.REDSTONE)
             return;
 
-        Vec3 a = connection.from().attachmentPoint(level);
-        Vec3 b = connection.to().attachmentPoint(level);
+        LeadEndpointLayout.Endpoints endpoints = LeadEndpointLayout.endpoints(level, connection,
+                SuperLeadNetwork.connections(level));
+        Vec3 a = endpoints.from();
+        Vec3 b = endpoints.to();
         if (a == null || b == null)
             return;
         double dist = a.distanceTo(b);
         if (dist < 1.0e-3D || dist > Config.maxLeashDistance() + 1.0D)
             return;
 
+        // Gameplay collision is deliberately limited to the synced physics-zone path.
         if (connection.physicsPreset().isBlank())
             return;
         ServerPhysicsTuning tuning = loadServerPhysicsTuning(level, connection.physicsPreset());
-        if (!tuning.physicsEnabled() || !tuning.pushbackEnabled())
+        if (!tuning.physicsEnabled())
             return;
 
-        Vec3 point = new Vec3(report.pointX(), report.pointY(), report.pointZ());
+        double radius = tuning.contactRadius();
+        if (radius <= 1.0e-6D)
+            return;
 
         AABB playerBox = player.getBoundingBox();
-        double radius = tuning.contactRadius();
-        double speed = player.getDeltaMovement().horizontalDistance();
+        Vec3 playerCenter = playerBox.getCenter();
+        Vec3 reportedPoint = new Vec3(report.pointX(), report.pointY(), report.pointZ());
+        double speed = player.getDeltaMovement().length();
         double tolerance = CLIENT_REPORT_BASE_TOLERANCE + radius + speed * 2.0D;
-        if (!playerBox.inflate(tolerance).contains(point))
-            return;
 
         double[] closest = new double[4];
-        double dSqr = closestPointOnPlausibleClientRope(a, b, point, tuning, closest);
+        double dSqr = closestPointOnPlausibleClientRope(a, b, reportedPoint, tuning, closest);
         double deflectionAllowance = clamp(
                 dist * CLIENT_REPORT_DEFLECTION_FRACTION,
                 CLIENT_REPORT_MIN_DEFLECTION_ALLOWANCE,
                 CLIENT_REPORT_MAX_DEFLECTION_ALLOWANCE);
         double shapeTolerance = tolerance + deflectionAllowance;
-        if (dSqr > shapeTolerance * shapeTolerance)
+        boolean plausibleReport = playerBox.inflate(tolerance).contains(reportedPoint)
+                && dSqr <= shapeTolerance * shapeTolerance;
+
+        double reportDepth = clamp(report.depth(), 0.0D,
+                Math.min(CLIENT_REPORT_MAX_DEPTH, radius * 2.75D));
+        if (reportDepth <= 1.0e-4D)
             return;
 
-        double t = clamp01(report.t());
-        double depth = clamp(report.depth(), 0.0D, Math.min(CLIENT_REPORT_MAX_DEPTH, radius * 2.75D));
-        if (depth <= 1.0e-4D)
-            return;
-
-        if (report.support()) {
-            acceptSupportContact(level, player, connection, point, closest, t, depth, radius);
-            return;
-        }
-
-        double nx = report.normalX();
-        double nz = report.normalZ();
-        double nLen = Math.sqrt(nx * nx + nz * nz);
-        if (nLen < 1.0e-4D)
-            return;
-        nx /= nLen;
-        nz /= nLen;
-
-        Vec3 playerCenter = playerBox.getCenter();
-        double toPlayerX = playerCenter.x - point.x;
-        double toPlayerZ = playerCenter.z - point.z;
-        if (toPlayerX * toPlayerX + toPlayerZ * toPlayerZ > 1.0e-6D
-                && toPlayerX * nx + toPlayerZ * nz < 0.0D) {
-            nx = -nx;
-            nz = -nz;
-        }
-
-        // When the rope hits in the upper half of the player's body, redirect a
-        // portion of the horizontal push into a gentle upward lift so the player
-        // slides under the rope.  When it hits the lower half, push downward so
-        // the player steps over it.  Both avoid the rope simply clipping through
-        // the model.
-        double bodyHeight = playerBox.maxY - playerBox.minY;
-        double midY = playerBox.minY + bodyHeight * 0.5D;
-        if (bodyHeight > 1.0e-6D) {
-            double verticalFraction = (point.y - midY) / (bodyHeight * 0.5D);
-            double verticalScale = (depth / Math.max(radius, 1.0e-6D)) * 0.12D;
-            Vec3 v = player.getDeltaMovement();
-            if (verticalFraction > 0.0D) {
-                double lift = verticalScale * clamp01(verticalFraction);
-                player.setDeltaMovement(v.x, Math.max(v.y, lift), v.z);
-            } else if (verticalFraction < 0.0D) {
-                double pushDown = verticalScale * clamp01(-verticalFraction);
-                player.setDeltaMovement(v.x, v.y - pushDown, v.z);
+        ContactEstimate contact = null;
+        double impulseScale = 1.0D;
+        if (plausibleReport) {
+            Vec3 normal = normalize(report.normalX(), report.normalY(), report.normalZ());
+            Vec3 tangent = sanitizeTangent(report.tangentX(), report.tangentY(), report.tangentZ(), a, b);
+            if (normal != null) {
+                normal = orthogonalizeNormal(normal, tangent);
+                normal = orientTowardPlayer(normal, reportedPoint, playerCenter);
+                double slack = clamp(report.slack(), 0.0D, radius * 3.0D);
+                contact = new ContactEstimate(clamp01(report.t()), reportedPoint, normal, tangent, reportDepth, slack);
             }
-            player.hurtMarked = true;
-            player.connection.send(new ClientboundSetEntityMotionPacket(player));
         }
+
+        if (contact == null) {
+            contact = fallbackContact(a, b, playerBox, radius, tuning, reportDepth * 0.50D);
+            impulseScale = FALLBACK_PUSH_SCALE;
+        }
+        if (contact == null)
+            return;
+
+        ParrotRopePerchController.disturb(level, connection.id(), contact.point());
+
+        if (!tuning.pushbackEnabled())
+            return;
 
         long now = level.getGameTime();
         NetworkKey dim = NetworkKey.of(level);
@@ -196,53 +173,23 @@ public final class RopeContactTracker {
         AcceptedClientContact previous = dimContacts.get(key);
         boolean applyVelocityThisTick = previous == null || previous.tick() < now;
 
-        double ropeDeflection = contactDeflectionAwayFromPlayer(point, closest, nx, nz);
+        double inputAway = inputAwayFactor(report.inputX(), report.inputZ(), contact.normal());
+        // Only sync-zone ropes send contact reports; pass syncZone=true here.
+        // If this method were ever called for a non-sync rope (preset blank),
+        // the early-return above prevents reaching this point.
         AppliedPush push = applyVelocityThisTick
-                ? applySoftPushback(player, nx, nz, report.inputX(), report.inputZ(),
-                        depth, ropeDeflection, radius, dist, tuning)
+                ? applyContactImpulse(player, contact.normal(), contact.tangent(),
+                        contact.depth(), contact.slack(), radius, tuning, impulseScale, inputAway, true)
                 : (previous == null ? AppliedPush.NONE : previous.push());
 
-        double visualMag = Math.min(Math.max(ropeDeflection, depth * push.gain() * 0.15D), VISUAL_MAX_DEFLECT);
+        double visualMag = Math.min(Math.max(contact.depth() * 0.75D, push.mag() * 0.35D), VISUAL_MAX_DEFLECT);
+        Vec3 n = contact.normal();
         dimContacts.put(key, new AcceptedClientContact(connection.id(), player.getUUID(), now,
-                (float) t, (float) (-nx * visualMag), 0.0F, (float) (-nz * visualMag), push));
-    }
-
-    private static void acceptSupportContact(ServerLevel level, ServerPlayer player, LeadConnection connection,
-            Vec3 point, double[] restPoint, double t, double depth, double radius) {
-        AABB box = player.getBoundingBox();
-        double supportHeight = clamp(Math.max(radius * 1.5D, SUPPORT_MIN_HEIGHT),
-                SUPPORT_MIN_HEIGHT, SUPPORT_MAX_HEIGHT);
-        double verticalGap = box.minY - point.y;
-        double horizontalSlack = Math.max(radius, 0.24D) + 0.12D;
-        if (verticalGap < -0.10D || verticalGap > supportHeight)
-            return;
-        if (point.x < box.minX - horizontalSlack || point.x > box.maxX + horizontalSlack
-                || point.z < box.minZ - horizontalSlack || point.z > box.maxZ + horizontalSlack) {
-            return;
-        }
-
-        long now = level.getGameTime();
-        NetworkKey dim = NetworkKey.of(level);
-        ContactKey key = new ContactKey(connection.id(), player.getUUID());
-        Map<ContactKey, AcceptedClientContact> dimContacts = CLIENT_CONTACTS.computeIfAbsent(dim,
-                ignored -> new HashMap<>());
-        AcceptedClientContact previous = dimContacts.get(key);
-        boolean applyVelocityThisTick = previous == null || previous.tick() < now;
-
-        AppliedPush push;
-        if (applyVelocityThisTick) {
-            push = applyVerticalSupport(player, verticalGap);
-        } else {
-            push = previous == null ? AppliedPush.NONE : previous.push();
-            // Add light Y damping every tick while supported (not just the push tick) to
-            // kill the pushback-vs-gravity oscillation that makes the player stutter.
-            dampSupportedVelocity(player);
-        }
-
-        double ropeDeflection = Math.max(0.0D, restPoint[1] - point.y);
-        double visualMag = Math.min(Math.max(ropeDeflection, depth * 0.35D), VISUAL_MAX_DEFLECT);
-        dimContacts.put(key, new AcceptedClientContact(connection.id(), player.getUUID(), now,
-                (float) t, 0.0F, (float) (-visualMag), 0.0F, push));
+                (float) contact.t(),
+                (float) (-n.x * visualMag),
+                (float) (-n.y * visualMag),
+                (float) (-n.z * visualMag),
+                push));
     }
 
     private static void tickInternal(ServerLevel level) {
@@ -264,122 +211,258 @@ public final class RopeContactTracker {
         lastContacts = pulse.size();
     }
 
-    private static AppliedPush applySoftPushback(ServerPlayer player, double nx, double nz,
-            double inputX, double inputZ,
-            double depth, double ropeDeflection, double radius, double ropeLength, ServerPhysicsTuning tuning) {
+    /**
+     * Applies a 3D contact impulse to the player.
+     * <p>
+     * Sync-zone ropes use a slack-aware, compressible-shell model.
+     * Non-sync-zone ropes (legacy path) use the original simple formula
+     * with no slack softening and a higher max-recoil cap.
+     *
+     * @param syncZone true when the rope belongs to a synced physics zone
+     */
+    private static AppliedPush applyContactImpulse(ServerPlayer player, Vec3 normal, Vec3 tangent,
+            double depth, double slack, double radius, ServerPhysicsTuning tuning,
+            double impulseScale, double inputAway, boolean syncZone) {
+        if (!syncZone)
+            return applyLegacyContactImpulse(player, normal, depth, radius, tuning, impulseScale, inputAway);
+        return applySyncZoneContactImpulse(player, normal, depth, slack, radius, tuning, impulseScale, inputAway);
+    }
+
+    /** Original simple formula — used for ropes outside synced physics zones. */
+    private static AppliedPush applyLegacyContactImpulse(ServerPlayer player, Vec3 normal,
+            double depth, double radius, ServerPhysicsTuning tuning,
+            double impulseScale, double inputAway) {
         if (depth <= 0.0D || radius <= 1.0e-6D)
             return AppliedPush.NONE;
-
-        double travel = clamp(ropeLength * PUSH_TRAVEL_LENGTH_FRACTION,
-                PUSH_MIN_TRAVEL_BLOCKS, PUSH_MAX_TRAVEL_BLOCKS);
-        double resistance = clamp(7.0D / Math.max(ropeLength, 1.0D), 0.45D, 1.35D);
-        double pressure = Math.max(depth * 0.45D, ropeDeflection + Math.max(0.0D, depth - radius) * 0.25D);
-        double ratio = clamp01(pressure / travel);
-        double soft = clamp01((ratio - PUSH_SOFT_START_RATIO) / (1.0D - PUSH_SOFT_START_RATIO));
-        double gain = pushEaseIn(soft);
-        double inputAway = inputAwayFactor(player, nx, nz, inputX, inputZ);
-        double exitGain = gain;
-        double exitRestoreGain = 0.0D;
-        if (inputAway > 0.0D) {
-            double depthExit = clamp01(depth / Math.max(radius * PUSH_EXIT_FULL_DEPTH_RATIO, 1.0e-6D));
-            exitRestoreGain = Math.max(PUSH_EXIT_MIN_RESTORE_GAIN, pushEaseIn(depthExit));
-            exitGain = Math.max(exitGain, exitRestoreGain);
-        }
-        if (gain <= 1.0e-4D && exitGain <= 1.0e-4D)
+        Vec3 n = normalize(normal.x, normal.y, normal.z);
+        if (n == null)
             return AppliedPush.NONE;
 
+        double depthRatio = clamp01(depth / radius);
         Vec3 v = player.getDeltaMovement();
-        double outwardSpeed = v.x * nx + v.z * nz;
-        double inwardSpeed = Math.max(0.0D, -outwardSpeed);
-
+        double normalSpeed = v.x * n.x + v.y * n.y + v.z * n.z;
+        double cancelMag = Math.max(0.0D, -normalSpeed);
         double damping = clamp(tuning.velocityDamping(), 0.0D, 2.0D);
-        double cancelFraction = clamp(damping * gain * PUSH_DAMPING_SCALE * resistance,
-                0.0D, PUSH_MAX_CANCEL_FRACTION);
-        double dampMag = inwardSpeed * cancelFraction;
+        cancelMag *= clamp01(damping * depthRatio);
 
-        double hard = clamp01((ratio - PUSH_HARD_START_RATIO) / (1.0D - PUSH_HARD_START_RATIO));
-        double hardGain = pushEaseIn(hard);
-        double hardPressure = Math.max(0.0D, pressure - travel * PUSH_HARD_START_RATIO);
-        double spring = Math.max(0.0D, tuning.springK()) * resistance;
-        double shoveMag = spring * hardPressure * hardGain * PUSH_SPRING_SCALE;
+        double pushBoost = 1.0D + Math.max(0.0D, inputAway) * INPUT_AWAY_PUSH_BOOST;
+        double targetSeparationSpeed = Math.max(0.0D, tuning.springK()) * depthRatio * pushBoost * impulseScale;
+        double currentSeparationSpeed = Math.max(0.0D, normalSpeed);
+        double neededSeparation = Math.max(0.0D, targetSeparationSpeed - currentSeparationSpeed);
+        if (neededSeparation < CONTACT_IMPULSE_DEADZONE)
+            neededSeparation = 0.0D;
 
-        double maxRecoil = Math.max(0.0D, tuning.maxRecoilPerTick());
-        double physicalMax = maxRecoil * resistance * (0.25D + hardGain * 1.75D);
-        double physicalMag = Math.min(dampMag + shoveMag, physicalMax);
-        double exitRestore = 0.0D;
-        if (inputAway > 0.0D) {
-            double targetExitSpeed = expectedHorizontalMoveSpeed(player) * PUSH_EXIT_TARGET_SPEED_SCALE * inputAway;
-            double exitSpeedAfterPhysicalPush = Math.max(0.0D, outwardSpeed) + physicalMag;
-            double missingExitSpeed = Math.max(0.0D, targetExitSpeed - exitSpeedAfterPhysicalPush);
-            double restoreCap = Math.min(
-                    targetExitSpeed * PUSH_EXIT_RESTORE_CAP_SCALE * exitRestoreGain,
-                    maxRecoil * resistance * (0.35D + inputAway * 0.65D));
-            exitRestore = Math.min(missingExitSpeed * PUSH_EXIT_RESTORE_SCALE * exitRestoreGain, restoreCap);
-        }
-        double mag = physicalMag + exitRestore;
-        if (mag <= 1.0e-5D)
-            return new AppliedPush(0.0F, 0.0F, 0.0F, (float) gain);
+        double maxRecoil = Math.max(0.0D, tuning.maxRecoilPerTick()) * impulseScale * CONTACT_LEGACY_MAX_RECOIL_SCALE;
+        double impulseMag = Math.min(cancelMag + neededSeparation, maxRecoil);
 
-        double px = nx * mag;
-        double pz = nz * mag;
-        player.setDeltaMovement(v.x + px, v.y, v.z + pz);
+        double px = n.x * impulseMag;
+        double py = n.y * impulseMag;
+        double pz = n.z * impulseMag;
+        double nextX = v.x + px;
+        double nextY = v.y + py;
+        double nextZ = v.z + pz;
+
+        double totalPx = nextX - v.x;
+        double totalPy = nextY - v.y;
+        double totalPz = nextZ - v.z;
+        double totalImpulse = Math.sqrt(totalPx * totalPx + totalPy * totalPy + totalPz * totalPz);
+        if (totalImpulse <= 1.0e-6D)
+            return AppliedPush.NONE;
+
+        player.setDeltaMovement(nextX, nextY, nextZ);
         player.hurtMarked = true;
         player.connection.send(new ClientboundSetEntityMotionPacket(player));
-        return new AppliedPush((float) px, (float) pz, (float) mag, (float) Math.max(gain, exitGain));
+        return new AppliedPush((float) totalPx, (float) totalPz, (float) totalImpulse, (float) depthRatio);
     }
 
-    private static double expectedHorizontalMoveSpeed(ServerPlayer player) {
-        double speed = player.getAttributeValue(Attributes.MOVEMENT_SPEED);
-        return Double.isFinite(speed) ? clamp(speed, 0.0D, PUSH_EXIT_MAX_MOVE_SPEED) : 0.10D;
+    /**
+     * Slack-aware, compressible-shell model — used for ropes inside synced physics
+     * zones.
+     */
+    private static AppliedPush applySyncZoneContactImpulse(ServerPlayer player, Vec3 normal,
+            double depth, double slack, double radius, ServerPhysicsTuning tuning,
+            double impulseScale, double inputAway) {
+        if (depth <= 0.0D || radius <= 1.0e-6D)
+            return AppliedPush.NONE;
+        Vec3 n = normalize(normal.x, normal.y, normal.z);
+        if (n == null)
+            return AppliedPush.NONE;
+
+        double slackAllowance = clamp(slack, 0.0D, radius * 3.0D);
+        double sideCompressionAllowance = Math.max(0.0D, radius - CONTACT_SIDE_SOLID_RADIUS);
+        double effectiveDepth = Math.max(0.0D,
+                depth - sideCompressionAllowance - slackAllowance * CONTACT_SLACK_DEPTH_ABSORB);
+        double responseRadius = Math.max(CONTACT_SIDE_SOLID_RADIUS, radius * 0.25D);
+        double depthRatio = clamp01(effectiveDepth / responseRadius);
+        double rawDepthRatio = clamp01(depth / radius);
+        double slackRatio = clamp01(slackAllowance / Math.max(radius, 1.0e-6D));
+        double stiffness = 1.0D / (1.0D + slackRatio * CONTACT_SLACK_SOFTENING);
+
+        Vec3 v = player.getDeltaMovement();
+        double normalSpeed = v.x * n.x + v.y * n.y + v.z * n.z;
+        double cancelMag = Math.max(0.0D, -normalSpeed);
+        double damping = clamp(tuning.velocityDamping(), 0.0D, 2.0D);
+        cancelMag *= clamp01(damping * depthRatio * CONTACT_SIDE_DAMPING_SCALE * stiffness);
+
+        double pushBoost = 1.0D + Math.max(0.0D, inputAway) * INPUT_AWAY_PUSH_BOOST;
+        double springGain = smoothstep(depthRatio);
+        double targetSeparationSpeed = Math.max(0.0D, tuning.springK()) * springGain * stiffness
+                * CONTACT_SIDE_SPRING_SCALE * pushBoost * impulseScale;
+        double currentSeparationSpeed = Math.max(0.0D, normalSpeed);
+        double neededSeparation = Math.max(0.0D, targetSeparationSpeed - currentSeparationSpeed);
+        if (neededSeparation < CONTACT_IMPULSE_DEADZONE) {
+            neededSeparation = 0.0D;
+        }
+
+        double baseMaxRecoil = Math.max(0.0D, tuning.maxRecoilPerTick()) * impulseScale;
+        double maxRecoil = baseMaxRecoil * CONTACT_SIDE_MAX_RECOIL_SCALE;
+        double impulseMag = Math.min(cancelMag + neededSeparation, maxRecoil);
+
+        double px = n.x * impulseMag;
+        double py = n.y * impulseMag;
+        double pz = n.z * impulseMag;
+        double nextX = v.x + px;
+        double nextY = v.y + py;
+        double nextZ = v.z + pz;
+
+        double totalPx = nextX - v.x;
+        double totalPy = nextY - v.y;
+        double totalPz = nextZ - v.z;
+        double totalImpulse = Math.sqrt(totalPx * totalPx + totalPy * totalPy + totalPz * totalPz);
+        if (totalImpulse <= 1.0e-6D)
+            return AppliedPush.NONE;
+
+        player.setDeltaMovement(nextX, nextY, nextZ);
+        player.hurtMarked = true;
+        player.connection.send(new ClientboundSetEntityMotionPacket(player));
+        return new AppliedPush((float) totalPx, (float) totalPz, (float) totalImpulse, (float) rawDepthRatio);
     }
 
-    private static double inputAwayFactor(ServerPlayer player, double nx, double nz,
-            double clientInputX, double clientInputZ) {
-        double clientAway = inputAwayFromWorldVector(clientInputX, clientInputZ, nx, nz);
-        if (clientAway >= 0.0D)
-            return clientAway;
-
-        double inputX = player.xxa;
-        double inputZ = player.zza;
-        double inputLen = Math.sqrt(inputX * inputX + inputZ * inputZ);
-        if (inputLen < 1.0e-4D)
-            return 0.0D;
-
-        inputX /= inputLen;
-        inputZ /= inputLen;
-        double yaw = Math.toRadians(player.getYRot());
-        double sin = Math.sin(yaw);
-        double cos = Math.cos(yaw);
-        double worldX = inputX * cos - inputZ * sin;
-        double worldZ = inputZ * cos + inputX * sin;
-        return clamp01(worldX * nx + worldZ * nz);
+    private static ContactEstimate fallbackContact(Vec3 a, Vec3 b, AABB playerBox,
+            double radius, ServerPhysicsTuning tuning, double minDepth) {
+        double[] closest = new double[4];
+        closestPointOnPlausibleClientRope(a, b, playerBox.getCenter(), tuning, closest);
+        Vec3 point = new Vec3(closest[0], closest[1], closest[2]);
+        BoxContact box = contactFromPointToBox(point, playerBox);
+        if (box == null)
+            return null;
+        if (box.separation() >= radius)
+            return null;
+        double depth = clamp(Math.max(minDepth, radius - box.separation()), 0.0D,
+                Math.min(CLIENT_REPORT_MAX_DEPTH, radius * 2.75D));
+        if (depth <= 1.0e-4D)
+            return null;
+        double t = clamp01(closest[3]);
+        return new ContactEstimate(t, point, box.normal(), fallbackTangent(a, b), depth,
+                estimatedSlackAllowance(a, b, t, tuning, radius));
     }
 
-    private static double inputAwayFromWorldVector(double inputX, double inputZ, double nx, double nz) {
-        if (!Double.isFinite(inputX) || !Double.isFinite(inputZ))
-            return -1.0D;
-        double inputLen = Math.sqrt(inputX * inputX + inputZ * inputZ);
-        if (inputLen < 1.0e-4D)
-            return -1.0D;
-        inputX /= inputLen;
-        inputZ /= inputLen;
-        return clamp01(inputX * nx + inputZ * nz);
+    private static BoxContact contactFromPointToBox(Vec3 point, AABB box) {
+        boolean inside = point.x >= box.minX && point.x <= box.maxX
+                && point.y >= box.minY && point.y <= box.maxY
+                && point.z >= box.minZ && point.z <= box.maxZ;
+        if (inside) {
+            double exit = point.x - box.minX;
+            Vec3 normal = new Vec3(1.0D, 0.0D, 0.0D);
+            double toMaxX = box.maxX - point.x;
+            if (toMaxX < exit) {
+                exit = toMaxX;
+                normal = new Vec3(-1.0D, 0.0D, 0.0D);
+            }
+            double toMinY = point.y - box.minY;
+            if (toMinY < exit) {
+                exit = toMinY;
+                normal = new Vec3(0.0D, 1.0D, 0.0D);
+            }
+            double toMaxY = box.maxY - point.y;
+            if (toMaxY < exit) {
+                exit = toMaxY;
+                normal = new Vec3(0.0D, -1.0D, 0.0D);
+            }
+            double toMinZ = point.z - box.minZ;
+            if (toMinZ < exit) {
+                exit = toMinZ;
+                normal = new Vec3(0.0D, 0.0D, 1.0D);
+            }
+            double toMaxZ = box.maxZ - point.z;
+            if (toMaxZ < exit) {
+                exit = toMaxZ;
+                normal = new Vec3(0.0D, 0.0D, -1.0D);
+            }
+            return new BoxContact(normal, -Math.max(0.0D, exit));
+        }
+
+        double cx = clamp(point.x, box.minX, box.maxX);
+        double cy = clamp(point.y, box.minY, box.maxY);
+        double cz = clamp(point.z, box.minZ, box.maxZ);
+        double nx = cx - point.x;
+        double ny = cy - point.y;
+        double nz = cz - point.z;
+        double len = Math.sqrt(nx * nx + ny * ny + nz * nz);
+        if (len < NORMAL_EPSILON) {
+            Vec3 center = box.getCenter();
+            nx = center.x - point.x;
+            ny = center.y - point.y;
+            nz = center.z - point.z;
+            len = Math.sqrt(nx * nx + ny * ny + nz * nz);
+        }
+        if (len < NORMAL_EPSILON)
+            return null;
+        return new BoxContact(new Vec3(nx / len, ny / len, nz / len), len);
     }
 
-    private static double contactDeflectionAwayFromPlayer(Vec3 point, double[] restPoint,
-            double nx, double nz) {
-        double dx = point.x - restPoint[0];
-        double dz = point.z - restPoint[2];
-        double alongPush = -(dx * nx + dz * nz);
-        double lateral = Math.sqrt(dx * dx + dz * dz) * 0.35D;
-        return Math.max(0.0D, Math.max(alongPush, lateral));
+    private static Vec3 sanitizeTangent(double x, double y, double z, Vec3 a, Vec3 b) {
+        Vec3 tangent = normalize(x, y, z);
+        return tangent != null ? tangent : fallbackTangent(a, b);
     }
 
-    private static double pushEaseIn(double x) {
+    private static Vec3 fallbackTangent(Vec3 a, Vec3 b) {
+        Vec3 delta = b.subtract(a);
+        if (delta.lengthSqr() < NORMAL_EPSILON * NORMAL_EPSILON)
+            return new Vec3(1.0D, 0.0D, 0.0D);
+        return delta.normalize();
+    }
+
+    private static Vec3 orthogonalizeNormal(Vec3 normal, Vec3 tangent) {
+        Vec3 projected = normal.subtract(tangent.scale(normal.dot(tangent)));
+        Vec3 n = normalize(projected.x, projected.y, projected.z);
+        return n != null ? n : normal;
+    }
+
+    private static double estimatedSlackAllowance(Vec3 a, Vec3 b, double t, ServerPhysicsTuning tuning, double radius) {
+        double dist = a.distanceTo(b);
+        double freeSlack = Math.max(0.0D, dist * (tuning.slackTight() - 1.0D));
+        double midspan = Math.sin(Math.PI * clamp01(t));
+        return clamp(freeSlack * midspan, 0.0D, radius * 3.0D);
+    }
+
+    private static double smoothstep(double x) {
         x = clamp01(x);
-        double x2 = x * x;
-        double x4 = x2 * x2;
-        return x4 * (0.25D + 0.75D * x);
+        return x * x * x * (x * (x * 6.0D - 15.0D) + 10.0D);
+    }
+
+    private static double inputAwayFactor(double inputX, double inputZ, Vec3 normal) {
+        double inputLen = Math.sqrt(inputX * inputX + inputZ * inputZ);
+        double normalLen = Math.sqrt(normal.x * normal.x + normal.z * normal.z);
+        if (inputLen < NORMAL_EPSILON || normalLen < NORMAL_EPSILON)
+            return 0.0D;
+        return clamp01((inputX / inputLen) * (normal.x / normalLen)
+                + (inputZ / inputLen) * (normal.z / normalLen));
+    }
+
+    private static Vec3 orientTowardPlayer(Vec3 normal, Vec3 point, Vec3 playerCenter) {
+        Vec3 toPlayer = playerCenter.subtract(point);
+        if (toPlayer.lengthSqr() > NORMAL_EPSILON * NORMAL_EPSILON && normal.dot(toPlayer) < 0.0D) {
+            return normal.scale(-1.0D);
+        }
+        return normal;
+    }
+
+    private static Vec3 normalize(double x, double y, double z) {
+        double len = Math.sqrt(x * x + y * y + z * z);
+        if (len < NORMAL_EPSILON || !Double.isFinite(len))
+            return null;
+        return new Vec3(x / len, y / len, z / len);
     }
 
     private static void broadcast(ServerLevel level, List<RopeContactPulse.Entry> pulse) {
@@ -389,50 +472,6 @@ public final class RopeContactTracker {
             return;
         LAST_SENT_COUNT.put(key, pulse.size());
         PacketDistributor.sendToPlayersInDimension(level, new RopeContactPulse(pulse));
-    }
-
-    private static AppliedPush applyVerticalSupport(ServerPlayer player, double verticalGap) {
-        Vec3 v = player.getDeltaMovement();
-        // Don't override intentional upward motion (jumping / being knocked up).
-        if (v.y > SUPPORT_MAX_UPWARD_SPEED) {
-            dampSupportedVelocity(player);
-            return AppliedPush.NONE;
-        }
-        // Only provide a gentle lift when the player has sunk slightly below the rope.
-        // Stronger lift = more overshoot = more oscillation. Keep it barely noticeable
-        // so the player feels "supported" without bouncing.
-        double lift = verticalGap < 0.0D
-                ? Math.min((-verticalGap) * 0.12D + 0.005D, 0.035D)
-                : 0.0D;
-        double nextY = Math.max(v.y * 0.55D, lift); // kill most of the downward speed
-        player.setDeltaMovement(v.x, nextY, v.z);
-        player.setOnGround(true);
-        player.resetFallDistance();
-        player.hurtMarked = true;
-        player.connection.send(new ClientboundSetEntityMotionPacket(player));
-        return new AppliedPush(0.0F, 0.0F, (float) nextY, 1.0F);
-    }
-
-    /**
-     * Light Y-velocity damping applied every tick while the player is standing on a
-     * rope.
-     * Removes the residual bounce energy that otherwise builds up between the
-     * vertical-lift
-     * push and the natural gravity-driven sink.
-     */
-    private static void dampSupportedVelocity(ServerPlayer player) {
-        Vec3 v = player.getDeltaMovement();
-        // Only damp small residual speeds. If the player is actively falling or
-        // jumping,
-        // leave them alone.
-        if (v.y < -0.02D || v.y > 0.06D)
-            return;
-        double dampedY = v.y * 0.65D;
-        if (Math.abs(dampedY - v.y) < 1.0e-5D)
-            return;
-        player.setDeltaMovement(v.x, dampedY, v.z);
-        player.hurtMarked = true;
-        player.connection.send(new ClientboundSetEntityMotionPacket(player));
     }
 
     /** Forget per-dimension state for a level (e.g. on shutdown). */
@@ -449,6 +488,12 @@ public final class RopeContactTracker {
     }
 
     private record ContactKey(UUID ropeId, UUID playerId) {
+    }
+
+    private record ContactEstimate(double t, Vec3 point, Vec3 normal, Vec3 tangent, double depth, double slack) {
+    }
+
+    private record BoxContact(Vec3 normal, double separation) {
     }
 
     private record AppliedPush(float x, float z, float mag, float gain) {
