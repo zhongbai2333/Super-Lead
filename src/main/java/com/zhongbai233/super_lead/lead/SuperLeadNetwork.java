@@ -1,6 +1,8 @@
 package com.zhongbai233.super_lead.lead;
 
 import com.zhongbai233.super_lead.Config;
+import com.zhongbai233.super_lead.lead.integration.mekanism.MekanismChemicalBridge;
+import com.zhongbai233.super_lead.lead.integration.mekanism.MekanismHeatBridge;
 import com.zhongbai233.super_lead.preset.PresetServerManager;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -70,8 +72,8 @@ public final class SuperLeadNetwork {
     // knot").
     private static final Map<BlockPos, Integer> ITEM_RR_CURSOR = new HashMap<>();
     private static final Map<BlockPos, Integer> FLUID_RR_CURSOR = new HashMap<>();
+    private static final Map<BlockPos, Integer> PRESSURIZED_RR_CURSOR = new HashMap<>();
     private static final int ITEM_PULSE_DURATION_TICKS = 10;
-    private static final int ITEM_TRANSFER_INTERVAL_TICKS = 4;
     private static final long STUCK_CHECK_INTERVAL_TICKS = 5L;
     private static final long STUCK_BREAK_TICKS = 100L;
     private static final double STUCK_SAMPLE_STEP = 0.20D;
@@ -79,8 +81,6 @@ public final class SuperLeadNetwork {
     private static final double STUCK_INSIDE_EPS = 1.0e-4D;
     public static final int ITEM_TIER_MAX = 6;
     public static final int FLUID_TIER_MAX = 4;
-    /** Per-rope batch unit for fluid transfers (1 bucket = 1000 mB). */
-    private static final int FLUID_BUCKET_AMOUNT = 1000;
     private static final ThreadLocal<Boolean> SUPPRESS_LEAD_SIGNALS = ThreadLocal.withInitial(() -> false);
 
     private SuperLeadNetwork() {
@@ -488,6 +488,14 @@ public final class SuperLeadNetwork {
         return upgradeNearestToKindInView(level, player, radius, LeadKind.FLUID);
     }
 
+    public static boolean upgradeNearestToPressurizedInView(Level level, Player player, double radius) {
+        return upgradeNearestToKindInView(level, player, radius, LeadKind.PRESSURIZED);
+    }
+
+    public static boolean upgradeNearestToThermalInView(Level level, Player player, double radius) {
+        return upgradeNearestToKindInView(level, player, radius, LeadKind.THERMAL);
+    }
+
     /**
      * Toggle the extract-source anchor for any ITEM connection attached at the
      * given block position.
@@ -499,6 +507,10 @@ public final class SuperLeadNetwork {
 
     public static boolean toggleFluidExtractAt(Level level, BlockPos pos) {
         return toggleExtractAt(level, pos, LeadKind.FLUID);
+    }
+
+    public static boolean togglePressurizedExtractAt(Level level, BlockPos pos) {
+        return toggleExtractAt(level, pos, LeadKind.PRESSURIZED);
     }
 
     private static boolean toggleExtractAt(Level level, BlockPos pos, LeadKind kind) {
@@ -535,6 +547,10 @@ public final class SuperLeadNetwork {
         return hasKindConnectionAt(level, pos, LeadKind.FLUID);
     }
 
+    public static boolean hasPressurizedConnectionAt(Level level, BlockPos pos) {
+        return hasKindConnectionAt(level, pos, LeadKind.PRESSURIZED);
+    }
+
     private static boolean hasKindConnectionAt(Level level, BlockPos pos, LeadKind kind) {
         for (LeadConnection connection : connections(level)) {
             if (connection.kind() == kind
@@ -546,11 +562,23 @@ public final class SuperLeadNetwork {
     }
 
     public static boolean upgradeNearestItemTierInView(Level level, Player player, double radius) {
-        return upgradeNearestKindTierInView(level, player, radius, LeadKind.ITEM, ITEM_TIER_MAX, Items.CHEST);
+        return upgradeNearestKindTierInView(level, player, radius, LeadKind.ITEM, Config.itemTierMax(), Items.CHEST);
     }
 
     public static boolean upgradeNearestFluidTierInView(Level level, Player player, double radius) {
-        return upgradeNearestKindTierInView(level, player, radius, LeadKind.FLUID, FLUID_TIER_MAX, Items.BUCKET);
+        return upgradeNearestKindTierInView(level, player, radius, LeadKind.FLUID, Config.fluidTierMax(), Items.BUCKET);
+    }
+
+    public static boolean upgradeNearestPressurizedTierInView(Level level, Player player, double radius,
+            Predicate<ItemStack> costMatcher) {
+        return upgradeNearestKindTierInView(level, player, radius, LeadKind.PRESSURIZED,
+                Config.pressurizedTierMax(), costMatcher);
+    }
+
+    public static boolean upgradeNearestThermalTierInView(Level level, Player player, double radius,
+            Predicate<ItemStack> costMatcher) {
+        return upgradeNearestKindTierInView(level, player, radius, LeadKind.THERMAL,
+                Config.thermalTierMax(), costMatcher);
     }
 
     /** Find a known connection by id in the given level (server or client). */
@@ -757,11 +785,16 @@ public final class SuperLeadNetwork {
      */
     public static boolean upgradeConnectionTier(ServerLevel level, Player player, LeadConnection connection,
             int maxTier, net.minecraft.world.item.Item costItem) {
+        return upgradeConnectionTier(level, player, connection, maxTier, stack -> stack.is(costItem));
+    }
+
+    public static boolean upgradeConnectionTier(ServerLevel level, Player player, LeadConnection connection,
+            int maxTier, Predicate<ItemStack> costMatcher) {
         if (connection.tier() >= maxTier)
             return false;
         int totalCost = 1 << Math.min(maxTier, connection.tier());
         int extraCost = totalCost - 1;
-        if (!player.isCreative() && extraCost > 0 && !consumeFromInventory(player, costItem, extraCost)) {
+        if (!player.isCreative() && extraCost > 0 && !consumeMatchingFromInventory(player, costMatcher, extraCost)) {
             return false;
         }
         boolean ok = SuperLeadSavedData.get(level).update(connection.id(),
@@ -1014,6 +1047,11 @@ public final class SuperLeadNetwork {
 
     private static boolean upgradeNearestKindTierInView(Level level, Player player, double radius,
             LeadKind kind, int maxTier, net.minecraft.world.item.Item costItem) {
+        return upgradeNearestKindTierInView(level, player, radius, kind, maxTier, stack -> stack.is(costItem));
+    }
+
+    private static boolean upgradeNearestKindTierInView(Level level, Player player, double radius,
+            LeadKind kind, int maxTier, Predicate<ItemStack> costMatcher) {
         if (level.isClientSide() || !(level instanceof ServerLevel serverLevel)) {
             return false;
         }
@@ -1025,7 +1063,7 @@ public final class SuperLeadNetwork {
         LeadConnection target = pick.get().connection();
         int totalCost = 1 << Math.min(maxTier, target.tier());
         int extraCost = totalCost - 1;
-        if (!player.isCreative() && extraCost > 0 && !consumeFromInventory(player, costItem, extraCost)) {
+        if (!player.isCreative() && extraCost > 0 && !consumeMatchingFromInventory(player, costMatcher, extraCost)) {
             return false;
         }
         SuperLeadSavedData.get(serverLevel).update(target.id(),
@@ -1071,10 +1109,14 @@ public final class SuperLeadNetwork {
     }
 
     private static boolean consumeFromInventory(Player player, net.minecraft.world.item.Item item, int amount) {
+        return consumeMatchingFromInventory(player, stack -> stack.is(item), amount);
+    }
+
+    private static boolean consumeMatchingFromInventory(Player player, Predicate<ItemStack> matcher, int amount) {
         int total = 0;
         for (int i = 0; i < player.getInventory().getContainerSize(); i++) {
             ItemStack stack = player.getInventory().getItem(i);
-            if (stack.is(item)) {
+            if (!stack.isEmpty() && matcher.test(stack)) {
                 total += stack.getCount();
                 if (total >= amount) {
                     break;
@@ -1088,7 +1130,7 @@ public final class SuperLeadNetwork {
         int remaining = amount;
         for (int i = 0; i < player.getInventory().getContainerSize() && remaining > 0; i++) {
             ItemStack stack = player.getInventory().getItem(i);
-            if (!stack.is(item)) {
+            if (stack.isEmpty() || !matcher.test(stack)) {
                 continue;
             }
             int take = Math.min(stack.getCount(), remaining);
@@ -1339,19 +1381,171 @@ public final class SuperLeadNetwork {
     }
 
     public static void tickItem(ServerLevel level) {
-        if (level.getGameTime() % ITEM_TRANSFER_INTERVAL_TICKS != 0L) {
+        if (level.getGameTime() % Config.itemTransferIntervalTicks() != 0L) {
             return;
         }
         tickTransfer(level, LeadKind.ITEM, Capabilities.Item.BLOCK, ITEM_RR_CURSOR,
-                rope -> Math.min(64, 1 << Math.min(ITEM_TIER_MAX, rope.tier())));
+                rope -> Math.min(64, 1 << Math.min(Config.itemTierMax(), rope.tier())));
     }
 
     public static void tickFluid(ServerLevel level) {
-        if (level.getGameTime() % ITEM_TRANSFER_INTERVAL_TICKS != 0L) {
+        if (level.getGameTime() % Config.itemTransferIntervalTicks() != 0L) {
             return;
         }
         tickTransfer(level, LeadKind.FLUID, Capabilities.Fluid.BLOCK, FLUID_RR_CURSOR,
-                rope -> FLUID_BUCKET_AMOUNT * (1 << Math.min(FLUID_TIER_MAX, rope.tier())));
+                rope -> Config.fluidBucketAmount() * (1 << Math.min(Config.fluidTierMax(), rope.tier())));
+    }
+
+    public static void tickPressurized(ServerLevel level) {
+        if (level.getGameTime() % Config.itemTransferIntervalTicks() != 0L || !isMekanismLoaded()) {
+            return;
+        }
+        tickPressurizedTransfer(level);
+    }
+
+    public static void tickThermal(ServerLevel level) {
+        if (!isMekanismLoaded()) {
+            return;
+        }
+
+        List<LeadConnection> thermalConnections = new ArrayList<>();
+        for (LeadConnection connection : SuperLeadSavedData.get(level).connections()) {
+            if (connection.kind() == LeadKind.THERMAL) {
+                thermalConnections.add(connection);
+            }
+        }
+        if (thermalConnections.isEmpty()) {
+            return;
+        }
+
+        boolean[] visited = new boolean[thermalConnections.size()];
+        Map<BlockPos, List<Integer>> connectionsByPos = indexConnectionsByBlockPos(thermalConnections);
+        for (int i = 0; i < thermalConnections.size(); i++) {
+            if (visited[i]) {
+                continue;
+            }
+
+            List<Integer> component = new ArrayList<>();
+            component.add(i);
+            visited[i] = true;
+
+            for (int cursor = 0; cursor < component.size(); cursor++) {
+                LeadConnection current = thermalConnections.get(component.get(cursor));
+                addUnvisitedNeighborsByPos(current.from().pos(), connectionsByPos, visited, component);
+                addUnvisitedNeighborsByPos(current.to().pos(), connectionsByPos, visited, component);
+            }
+
+            balanceThermalComponent(level, component, thermalConnections);
+        }
+    }
+
+    private static void tickPressurizedTransfer(ServerLevel level) {
+        SuperLeadSavedData data = SuperLeadSavedData.get(level);
+
+        Map<BlockPos, List<LeadConnection>> ropesAt = new HashMap<>();
+        Map<BlockPos, List<LeadConnection>> startsBySource = new HashMap<>();
+        for (LeadConnection c : data.connections()) {
+            if (c.kind() != LeadKind.PRESSURIZED) {
+                continue;
+            }
+
+            BlockPos a = c.from().pos().immutable();
+            BlockPos b = c.to().pos().immutable();
+            ropesAt.computeIfAbsent(a, k -> new ArrayList<>()).add(c);
+            if (!a.equals(b)) {
+                ropesAt.computeIfAbsent(b, k -> new ArrayList<>()).add(c);
+            }
+
+            LeadAnchor src = c.extractSource();
+            if (src != null) {
+                startsBySource.computeIfAbsent(src.pos().immutable(), k -> new ArrayList<>()).add(c);
+            }
+        }
+
+        for (Map.Entry<BlockPos, List<LeadConnection>> entry : startsBySource.entrySet()) {
+            BlockPos sourcePos = entry.getKey();
+            List<LeadConnection> ropes = entry.getValue();
+            if (ropes.isEmpty()) {
+                continue;
+            }
+
+            int n = ropes.size();
+            int start = PRESSURIZED_RR_CURSOR.getOrDefault(sourcePos, 0) % n;
+
+            for (int step = 0; step < n; step++) {
+                int idx = (start + step) % n;
+                LeadConnection rope = ropes.get(idx);
+                LeadAnchor sourceAnchor = rope.extractSource();
+                LeadAnchor firstFar = rope.extractTarget();
+                if (sourceAnchor == null || firstFar == null
+                        || !MekanismChemicalBridge.hasHandler(level, sourceAnchor)) {
+                    continue;
+                }
+
+                long batch = pressurizedBatch(rope);
+                List<PathStep> path = new ArrayList<>();
+                List<RrChoice> rrChoices = new ArrayList<>();
+                Set<UUID> visited = new HashSet<>();
+                visited.add(rope.id());
+                path.add(new PathStep(rope, rope.extractAnchor() == 2));
+
+                if (walkAndTransferPressurized(level, sourceAnchor, batch, firstFar, ropesAt,
+                        PRESSURIZED_RR_CURSOR, visited, path, rrChoices)) {
+                    long now = level.getGameTime();
+                    for (int i = 0; i < path.size(); i++) {
+                        PathStep s = path.get(i);
+                        long startTick = now + (long) i * ITEM_PULSE_DURATION_TICKS;
+                        SuperLeadPayloads.sendItemPulse(level,
+                                new ItemPulse(s.rope.id(), s.reverse, startTick, ITEM_PULSE_DURATION_TICKS));
+                    }
+                    PRESSURIZED_RR_CURSOR.put(sourcePos, (idx + 1) % n);
+                    for (RrChoice rc : rrChoices) {
+                        PRESSURIZED_RR_CURSOR.put(rc.knot, (rc.idx + 1) % rc.n);
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
+    private static long pressurizedBatch(LeadConnection rope) {
+        int tier = Math.min(Config.pressurizedTierMax(), rope.tier());
+        long multiplier = 1L << Math.min(30, tier);
+        return Math.max(1L, Math.min(Integer.MAX_VALUE, (long) Config.pressurizedBatchAmount() * multiplier));
+    }
+
+    private static void balanceThermalComponent(ServerLevel level, List<Integer> component,
+            List<LeadConnection> thermalConnections) {
+        List<LeadAnchor> endpoints = new ArrayList<>();
+        Set<LeadAnchor> seenAnchors = new HashSet<>();
+        double componentRate = 0.0D;
+        for (int index : component) {
+            LeadConnection connection = thermalConnections.get(index);
+            componentRate = Math.min(1.0e12D,
+                    componentRate + Config.thermalBaseTransfer() * connection.speedMultiplier());
+            addThermalEndpoint(level, connection.from(), endpoints, seenAnchors);
+            addThermalEndpoint(level, connection.to(), endpoints, seenAnchors);
+        }
+        if (endpoints.size() < 2 || componentRate <= 0.0D) {
+            return;
+        }
+
+        for (int i = 0; i < endpoints.size(); i++) {
+            for (int j = i + 1; j < endpoints.size(); j++) {
+                MekanismHeatBridge.balance(level, endpoints.get(i), endpoints.get(j), componentRate);
+            }
+        }
+    }
+
+    private static void addThermalEndpoint(ServerLevel level, LeadAnchor anchor, List<LeadAnchor> endpoints,
+            Set<LeadAnchor> seenAnchors) {
+        if (seenAnchors.add(anchor) && MekanismHeatBridge.hasHandler(level, anchor)) {
+            endpoints.add(anchor);
+        }
+    }
+
+    private static boolean isMekanismLoaded() {
+        return net.neoforged.fml.ModList.get().isLoaded("mekanism");
     }
 
     private static <R extends Resource> void tickTransfer(
@@ -1503,6 +1697,58 @@ public final class SuperLeadNetwork {
         return false;
     }
 
+    private static boolean walkAndTransferPressurized(
+            ServerLevel level,
+            LeadAnchor sourceAnchor,
+            long batch,
+            LeadAnchor current,
+            Map<BlockPos, List<LeadConnection>> ropesAt,
+            Map<BlockPos, Integer> rrCursor,
+            Set<UUID> visited,
+            List<PathStep> path,
+            List<RrChoice> rrChoices) {
+        if (MekanismChemicalBridge.hasHandler(level, current)) {
+            return MekanismChemicalBridge.transferOne(level, sourceAnchor, current, batch,
+                    MekanismChemicalBridge.ChemicalFilter.ANY) > 0L;
+        }
+
+        BlockPos knot = current.pos().immutable();
+        List<LeadConnection> all = ropesAt.getOrDefault(knot, List.of());
+        List<LeadConnection> branches = new ArrayList<>();
+        for (LeadConnection b : all) {
+            if (!visited.contains(b.id())) {
+                branches.add(b);
+            }
+        }
+        if (branches.isEmpty()) {
+            return false;
+        }
+
+        int n = branches.size();
+        int rrStart = rrCursor.getOrDefault(knot, 0) % n;
+        for (int step = 0; step < n; step++) {
+            int idx = (rrStart + step) % n;
+            LeadConnection branch = branches.get(idx);
+            boolean enteredFromSide = branch.from().pos().equals(knot);
+            LeadAnchor far = enteredFromSide ? branch.to() : branch.from();
+            boolean reverse = !enteredFromSide;
+
+            visited.add(branch.id());
+            path.add(new PathStep(branch, reverse));
+            rrChoices.add(new RrChoice(knot, idx, n));
+
+            if (walkAndTransferPressurized(level, sourceAnchor, batch, far, ropesAt, rrCursor,
+                    visited, path, rrChoices)) {
+                return true;
+            }
+
+            path.remove(path.size() - 1);
+            rrChoices.remove(rrChoices.size() - 1);
+            visited.remove(branch.id());
+        }
+        return false;
+    }
+
     private static <R extends Resource> ResourceHandler<R> handler(
             ServerLevel level, LeadAnchor anchor, BlockCapability<ResourceHandler<R>, Direction> cap) {
         ResourceHandler<R> h = level.getCapability(cap, anchor.pos(), anchor.face());
@@ -1555,13 +1801,42 @@ public final class SuperLeadNetwork {
         return byAnchor;
     }
 
+    private static Map<BlockPos, List<Integer>> indexConnectionsByBlockPos(List<LeadConnection> connections) {
+        Map<BlockPos, List<Integer>> byPos = new HashMap<>();
+        for (int i = 0; i < connections.size(); i++) {
+            LeadConnection connection = connections.get(i);
+            addBlockPosIndex(byPos, connection.from().pos(), i);
+            if (!connection.to().pos().equals(connection.from().pos())) {
+                addBlockPosIndex(byPos, connection.to().pos(), i);
+            }
+        }
+        return byPos;
+    }
+
     private static void addAnchorIndex(Map<LeadAnchor, List<Integer>> byAnchor, LeadAnchor anchor, int index) {
         byAnchor.computeIfAbsent(anchor, key -> new ArrayList<>()).add(index);
+    }
+
+    private static void addBlockPosIndex(Map<BlockPos, List<Integer>> byPos, BlockPos pos, int index) {
+        byPos.computeIfAbsent(pos.immutable(), key -> new ArrayList<>()).add(index);
     }
 
     private static void addUnvisitedNeighbors(LeadAnchor anchor, Map<LeadAnchor, List<Integer>> byAnchor,
             boolean[] visited, List<Integer> component) {
         List<Integer> neighbors = byAnchor.get(anchor);
+        if (neighbors != null) {
+            for (int index : neighbors) {
+                if (!visited[index]) {
+                    visited[index] = true;
+                    component.add(index);
+                }
+            }
+        }
+    }
+
+    private static void addUnvisitedNeighborsByPos(BlockPos pos, Map<BlockPos, List<Integer>> byPos,
+            boolean[] visited, List<Integer> component) {
+        List<Integer> neighbors = byPos.get(pos);
         if (neighbors != null) {
             for (int index : neighbors) {
                 if (!visited[index]) {

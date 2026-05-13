@@ -5,6 +5,7 @@ import com.zhongbai233.super_lead.Super_lead;
 import com.zhongbai233.super_lead.lead.LeadConnection;
 import com.zhongbai233.super_lead.lead.LeadKind;
 import com.zhongbai233.super_lead.lead.client.SuperLeadClientEvents;
+import com.zhongbai233.super_lead.lead.integration.mekanism.MekanismLeadMaterials;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
@@ -61,7 +62,8 @@ public final class LeadTooltipOverlay {
         Font font = mc.font;
         Component title = Component.translatable("tooltip.super_lead.kind." + hovered.kind().serializedName());
         Component subtitle;
-        if (hovered.kind() == LeadKind.ENERGY || hovered.kind() == LeadKind.ITEM || hovered.kind() == LeadKind.FLUID) {
+        if (hovered.kind() == LeadKind.ENERGY || hovered.kind() == LeadKind.ITEM || hovered.kind() == LeadKind.FLUID
+            || hovered.kind() == LeadKind.PRESSURIZED || hovered.kind() == LeadKind.THERMAL) {
             int mult = hovered.speedMultiplier();
             subtitle = Component.translatable("tooltip.super_lead.tier",
                     hovered.tier(),
@@ -132,6 +134,10 @@ public final class LeadTooltipOverlay {
                         Component.translatable("tooltip.super_lead.upgrade.item")));
                 rows.add(new UpgradeRow(new ItemStack(Items.CAULDRON),
                         Component.translatable("tooltip.super_lead.upgrade.fluid")));
+                rows.add(new UpgradeRow(new ItemStack(MekanismLeadMaterials.steelIngotIcon()),
+                    Component.translatable("tooltip.super_lead.upgrade.pressurized")));
+                rows.add(new UpgradeRow(new ItemStack(Items.COPPER_INGOT),
+                    Component.translatable("tooltip.super_lead.upgrade.thermal")));
             }
             case ENERGY -> {
                 if (hovered.tier() < Config.energyTierMaxLevel()) {
@@ -150,6 +156,20 @@ public final class LeadTooltipOverlay {
             case FLUID -> {
                 if (hovered.tier() < Config.fluidTierMax()) {
                     rows.add(new UpgradeRow(new ItemStack(Items.BUCKET),
+                            Component.translatable("tooltip.super_lead.upgrade.tier_up",
+                                    hovered.tier() + 1)));
+                }
+            }
+            case PRESSURIZED -> {
+                if (hovered.tier() < Config.pressurizedTierMax()) {
+                    rows.add(new UpgradeRow(new ItemStack(MekanismLeadMaterials.reinforcedAlloyIcon()),
+                            Component.translatable("tooltip.super_lead.upgrade.tier_up",
+                                    hovered.tier() + 1)));
+                }
+            }
+            case THERMAL -> {
+                if (hovered.tier() < Config.thermalTierMax()) {
+                    rows.add(new UpgradeRow(new ItemStack(MekanismLeadMaterials.reinforcedAlloyIcon()),
                             Component.translatable("tooltip.super_lead.upgrade.tier_up",
                                     hovered.tier() + 1)));
                 }

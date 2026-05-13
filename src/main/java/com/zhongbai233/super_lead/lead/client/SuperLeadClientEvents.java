@@ -859,7 +859,9 @@ public final class SuperLeadClientEvents {
                     ? highlight.color()
                     : LeashBuilder.NO_HIGHLIGHT;
             float[] pulses = computeItemPulses(entry.connection(), tick, partialTick);
-            int extractEnd = (entry.connection().kind() == LeadKind.ITEM || entry.connection().kind() == LeadKind.FLUID)
+                int extractEnd = (entry.connection().kind() == LeadKind.ITEM
+                    || entry.connection().kind() == LeadKind.FLUID
+                    || entry.connection().kind() == LeadKind.PRESSURIZED)
                     ? entry.connection().extractAnchor()
                     : 0;
             ropeJobs.add(LeashBuilder.collect(sim, blockA, blockB, skyA, skyB, highlightColor,
@@ -980,7 +982,8 @@ public final class SuperLeadClientEvents {
     }
 
     private static float[] computeItemPulses(LeadConnection connection, long currentTick, float partialTick) {
-        if (connection.kind() != LeadKind.ITEM && connection.kind() != LeadKind.FLUID) {
+        if (connection.kind() != LeadKind.ITEM && connection.kind() != LeadKind.FLUID
+                && connection.kind() != LeadKind.PRESSURIZED) {
             return EMPTY_PULSES;
         }
         Iterable<ItemPulse> active = ItemFlowAnimator.activePulses(connection.id(), currentTick, partialTick);

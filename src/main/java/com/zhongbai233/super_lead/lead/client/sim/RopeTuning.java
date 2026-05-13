@@ -38,6 +38,10 @@ public record RopeTuning(
         int itemAccentColor,
         int fluidBaseColor,
         int fluidAccentColor,
+        int pressurizedBaseColor,
+        int pressurizedAccentColor,
+        int thermalBaseColor,
+        int thermalAccentColor,
         boolean modePhysics) {
 
     public static RopeTuning forMidpoint(Vec3 a, Vec3 b) {
@@ -84,6 +88,10 @@ public record RopeTuning(
                 resolve(overrides, ClientTuning.COLOR_ITEM_ACCENT),
                 resolve(overrides, ClientTuning.COLOR_FLUID_BASE),
                 resolve(overrides, ClientTuning.COLOR_FLUID_ACCENT),
+                resolve(overrides, ClientTuning.COLOR_PRESSURIZED_BASE),
+                resolve(overrides, ClientTuning.COLOR_PRESSURIZED_ACCENT),
+                resolve(overrides, ClientTuning.COLOR_THERMAL_BASE),
+                resolve(overrides, ClientTuning.COLOR_THERMAL_ACCENT),
                 resolve(overrides, ClientTuning.MODE_PHYSICS));
     }
 
@@ -93,6 +101,8 @@ public record RopeTuning(
             case ENERGY -> energyBaseColor;
             case ITEM -> itemBaseColor;
             case FLUID -> fluidBaseColor;
+            case PRESSURIZED -> pressurizedBaseColor;
+            case THERMAL -> thermalBaseColor;
             default -> normalBaseColor;
         } & 0xFFFFFF;
     }
@@ -103,6 +113,8 @@ public record RopeTuning(
             case ENERGY -> energyAccentColor;
             case ITEM -> itemAccentColor;
             case FLUID -> fluidAccentColor;
+            case PRESSURIZED -> pressurizedAccentColor;
+            case THERMAL -> thermalAccentColor;
             default -> normalAccentColor;
         } & 0xFFFFFF;
     }

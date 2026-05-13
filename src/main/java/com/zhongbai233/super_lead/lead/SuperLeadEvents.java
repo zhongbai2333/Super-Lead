@@ -1,6 +1,7 @@
 package com.zhongbai233.super_lead.lead;
 
 import com.zhongbai233.super_lead.Super_lead;
+import com.zhongbai233.super_lead.lead.integration.mekanism.MekanismLeadMaterials;
 import java.util.Optional;
 import net.minecraft.ChatFormatting;
 import net.minecraft.core.Direction;
@@ -54,6 +55,9 @@ public final class SuperLeadEvents {
                 return;
             }
             if (stack.is(Items.CAULDRON) && tryToggleFluidExtract(event)) {
+                return;
+            }
+            if (MekanismLeadMaterials.isSteelIngot(stack) && tryTogglePressurizedExtract(event)) {
                 return;
             }
             if (tryUseConnectionAction(event)) {
@@ -186,6 +190,22 @@ public final class SuperLeadEvents {
         }
         if (!level.isClientSide()) {
             SuperLeadNetwork.toggleFluidExtractAt(level, event.getPos());
+        }
+        event.setCanceled(true);
+        event.setCancellationResult(InteractionResult.SUCCESS);
+        return true;
+    }
+
+    private static boolean tryTogglePressurizedExtract(PlayerInteractEvent.RightClickBlock event) {
+        if (!SuperLeadNetwork.canModifyRopes(event.getEntity())) {
+            return false;
+        }
+        Level level = event.getLevel();
+        if (!SuperLeadNetwork.hasPressurizedConnectionAt(level, event.getPos())) {
+            return false;
+        }
+        if (!level.isClientSide()) {
+            SuperLeadNetwork.togglePressurizedExtractAt(level, event.getPos());
         }
         event.setCanceled(true);
         event.setCancellationResult(InteractionResult.SUCCESS);
@@ -551,6 +571,8 @@ public final class SuperLeadEvents {
                 SuperLeadNetwork.tickEnergy(serverLevel);
                 SuperLeadNetwork.tickItem(serverLevel);
                 SuperLeadNetwork.tickFluid(serverLevel);
+                SuperLeadNetwork.tickPressurized(serverLevel);
+                SuperLeadNetwork.tickThermal(serverLevel);
                 RopeContactTracker.tickRopeContacts(serverLevel);
                 ParrotRopePerchController.tick(serverLevel);
                 ZiplineController.tick(serverLevel);
@@ -636,6 +658,12 @@ public final class SuperLeadEvents {
         }
         if (stack.is(Items.CAULDRON)) {
             return LeadKind.FLUID;
+        }
+        if (MekanismLeadMaterials.isSteelIngot(stack)) {
+            return LeadKind.PRESSURIZED;
+        }
+        if (MekanismLeadMaterials.isMekanismLoaded() && stack.is(Items.COPPER_INGOT)) {
+            return LeadKind.THERMAL;
         }
         return null;
     }

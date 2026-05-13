@@ -60,10 +60,11 @@ public record LeadConnection(UUID id, LeadAnchor from, LeadAnchor to, LeadKind k
     }
 
     public LeadConnection withKind(LeadKind kind) {
-        boolean keepsTier = kind == LeadKind.ENERGY || kind == LeadKind.ITEM || kind == LeadKind.FLUID;
+        boolean keepsTier = kind == LeadKind.ENERGY || kind == LeadKind.ITEM || kind == LeadKind.FLUID
+            || kind == LeadKind.PRESSURIZED || kind == LeadKind.THERMAL;
         int newTier = keepsTier ? tier : 0;
         int newPower = (kind == LeadKind.REDSTONE || kind == LeadKind.ENERGY) ? power : 0;
-        boolean keepsExtract = kind == LeadKind.ITEM || kind == LeadKind.FLUID;
+        boolean keepsExtract = kind == LeadKind.ITEM || kind == LeadKind.FLUID || kind == LeadKind.PRESSURIZED;
         int newExtract = keepsExtract ? extractAnchor : 0;
         return new LeadConnection(id, from, to, kind, newPower, newTier, newExtract, attachments, physicsPreset,
                 adventureOwner);
@@ -154,7 +155,7 @@ public record LeadConnection(UUID id, LeadAnchor from, LeadAnchor to, LeadKind k
      * Returns the resource extraction anchor, or null when extraction is disabled.
      */
     public LeadAnchor extractSource() {
-        if (kind != LeadKind.ITEM && kind != LeadKind.FLUID)
+        if (kind != LeadKind.ITEM && kind != LeadKind.FLUID && kind != LeadKind.PRESSURIZED)
             return null;
         return switch (extractAnchor) {
             case 1 -> from;
@@ -167,7 +168,7 @@ public record LeadConnection(UUID id, LeadAnchor from, LeadAnchor to, LeadKind k
      * Returns the resource insertion anchor, or null when extraction is disabled.
      */
     public LeadAnchor extractTarget() {
-        if (kind != LeadKind.ITEM && kind != LeadKind.FLUID)
+        if (kind != LeadKind.ITEM && kind != LeadKind.FLUID && kind != LeadKind.PRESSURIZED)
             return null;
         return switch (extractAnchor) {
             case 1 -> to;

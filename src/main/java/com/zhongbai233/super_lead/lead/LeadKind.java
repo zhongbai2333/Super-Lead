@@ -7,7 +7,9 @@ public enum LeadKind {
     REDSTONE("redstone"),
     ENERGY("energy"),
     ITEM("item"),
-    FLUID("fluid");
+    FLUID("fluid"),
+    PRESSURIZED("pressurized"),
+    THERMAL("thermal");
 
     public static final Codec<LeadKind> CODEC = Codec.STRING.xmap(LeadKind::byName, LeadKind::serializedName);
 
@@ -27,6 +29,8 @@ public enum LeadKind {
             case "energy" -> ENERGY;
             case "item" -> ITEM;
             case "fluid" -> FLUID;
+            case "pressurized" -> PRESSURIZED;
+            case "thermal" -> THERMAL;
             default -> NORMAL;
         };
     }

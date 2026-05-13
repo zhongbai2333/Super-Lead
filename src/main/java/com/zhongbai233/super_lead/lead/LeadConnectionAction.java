@@ -1,6 +1,7 @@
 package com.zhongbai233.super_lead.lead;
 
 import com.zhongbai233.super_lead.Config;
+import com.zhongbai233.super_lead.lead.integration.mekanism.MekanismLeadMaterials;
 import java.util.Optional;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.InteractionHand;
@@ -268,6 +269,128 @@ public enum LeadConnectionAction {
                 return false;
             return SuperLeadNetwork.upgradeConnectionTier(level, player, connection,
                     Config.fluidTierMax(), Items.BUCKET);
+        }
+
+        @Override
+        public void consumeSuccessfulUse(ItemStack stack, Player player, InteractionHand hand) {
+            if (!player.isCreative()) {
+                stack.shrink(1);
+            }
+        }
+    },
+    PRESSURIZED_UPGRADE(0x88B8C8D8) {
+        @Override
+        public boolean matches(ItemStack stack) {
+            return MekanismLeadMaterials.isSteelIngot(stack);
+        }
+
+        @Override
+        public net.minecraft.world.item.Item iconItem() {
+            return MekanismLeadMaterials.steelIngotIcon();
+        }
+
+        @Override
+        public boolean canTarget(LeadConnection connection) {
+            // Highlight any rope; on already-PRESSURIZED ropes steel is used on the
+            // anchor block to toggle extraction.
+            return true;
+        }
+
+        @Override
+        public boolean apply(Level level, Player player, double radius) {
+            return SuperLeadNetwork.upgradeNearestToPressurizedInView(level, player, radius);
+        }
+
+        @Override
+        public boolean applyTo(ServerLevel level, Player player, LeadConnection connection) {
+            if (connection.kind() == LeadKind.PRESSURIZED)
+                return false;
+            return SuperLeadNetwork.upgradeConnectionKind(level, connection, LeadKind.PRESSURIZED);
+        }
+
+        @Override
+        public void consumeSuccessfulUse(ItemStack stack, Player player, InteractionHand hand) {
+            if (!player.isCreative()) {
+                stack.shrink(1);
+            }
+        }
+    },
+    THERMAL_UPGRADE(0x88D98B35) {
+        @Override
+        public boolean matches(ItemStack stack) {
+            return MekanismLeadMaterials.isMekanismLoaded() && stack.is(Items.COPPER_INGOT);
+        }
+
+        @Override
+        public net.minecraft.world.item.Item iconItem() {
+            return Items.COPPER_INGOT;
+        }
+
+        @Override
+        public boolean canTarget(LeadConnection connection) {
+            return connection.kind() != LeadKind.THERMAL;
+        }
+
+        @Override
+        public boolean apply(Level level, Player player, double radius) {
+            return SuperLeadNetwork.upgradeNearestToThermalInView(level, player, radius);
+        }
+
+        @Override
+        public boolean applyTo(ServerLevel level, Player player, LeadConnection connection) {
+            return SuperLeadNetwork.upgradeConnectionKind(level, connection, LeadKind.THERMAL);
+        }
+
+        @Override
+        public void consumeSuccessfulUse(ItemStack stack, Player player, InteractionHand hand) {
+            if (!player.isCreative()) {
+                stack.shrink(1);
+            }
+        }
+    },
+    MEKANISM_TIER_UPGRADE(0x88E15EFF) {
+        @Override
+        public boolean matches(ItemStack stack) {
+            return MekanismLeadMaterials.isReinforcedAlloy(stack);
+        }
+
+        @Override
+        public net.minecraft.world.item.Item iconItem() {
+            return MekanismLeadMaterials.reinforcedAlloyIcon();
+        }
+
+        @Override
+        public boolean canTarget(LeadConnection connection) {
+            if (connection.kind() == LeadKind.PRESSURIZED) {
+                return connection.tier() < Config.pressurizedTierMax();
+            }
+            if (connection.kind() == LeadKind.THERMAL) {
+                return connection.tier() < Config.thermalTierMax();
+            }
+            return false;
+        }
+
+        @Override
+        public boolean apply(Level level, Player player, double radius) {
+            if (SuperLeadNetwork.upgradeNearestPressurizedTierInView(level, player, radius,
+                    MekanismLeadMaterials::isReinforcedAlloy)) {
+                return true;
+            }
+            return SuperLeadNetwork.upgradeNearestThermalTierInView(level, player, radius,
+                    MekanismLeadMaterials::isReinforcedAlloy);
+        }
+
+        @Override
+        public boolean applyTo(ServerLevel level, Player player, LeadConnection connection) {
+            if (connection.kind() == LeadKind.PRESSURIZED) {
+                return SuperLeadNetwork.upgradeConnectionTier(level, player, connection,
+                        Config.pressurizedTierMax(), MekanismLeadMaterials::isReinforcedAlloy);
+            }
+            if (connection.kind() == LeadKind.THERMAL) {
+                return SuperLeadNetwork.upgradeConnectionTier(level, player, connection,
+                        Config.thermalTierMax(), MekanismLeadMaterials::isReinforcedAlloy);
+            }
+            return false;
         }
 
         @Override

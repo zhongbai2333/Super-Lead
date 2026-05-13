@@ -144,6 +144,16 @@ public final class ServerConfigScreen extends Screen {
                     1, 12, "6"),
             new FieldDef("network.fluid_tier_max", "super_lead.server_config.field.network.fluid_tier_max",
                     FieldKind.INT, 1, 12, "4"),
+                new FieldDef("network.pressurized_tier_max",
+                    "super_lead.server_config.field.network.pressurized_tier_max", FieldKind.INT, 1, 12, "4"),
+                new FieldDef("network.pressurized_batch_amount",
+                    "super_lead.server_config.field.network.pressurized_batch_amount", FieldKind.INT, 1, 100000,
+                    "1000"),
+                new FieldDef("network.thermal_tier_max", "super_lead.server_config.field.network.thermal_tier_max",
+                    FieldKind.INT, 1, 12, "4"),
+                new FieldDef("network.thermal_transfer_per_tick",
+                    "super_lead.server_config.field.network.thermal_transfer", FieldKind.DOUBLE, 1.0, 1000000.0,
+                    "1000.0"),
             new FieldDef("network.item_transfer_interval_ticks",
                     "super_lead.server_config.field.network.item_transfer_interval", FieldKind.INT, 1, 40, "4"),
             new FieldDef("network.fluid_bucket_amount", "super_lead.server_config.field.network.fluid_bucket_amount",
@@ -516,6 +526,10 @@ public final class ServerConfigScreen extends Screen {
             case "network.max_leash_distance" -> Double.toString(Config.maxLeashDistance());
             case "network.item_tier_max" -> Integer.toString(Config.itemTierMax());
             case "network.fluid_tier_max" -> Integer.toString(Config.fluidTierMax());
+            case "network.pressurized_tier_max" -> Integer.toString(Config.pressurizedTierMax());
+            case "network.pressurized_batch_amount" -> Integer.toString(Config.pressurizedBatchAmount());
+            case "network.thermal_tier_max" -> Integer.toString(Config.thermalTierMax());
+            case "network.thermal_transfer_per_tick" -> Double.toString(Config.thermalBaseTransfer());
             case "network.item_transfer_interval_ticks" -> Integer.toString(Config.itemTransferIntervalTicks());
             case "network.fluid_bucket_amount" -> Integer.toString(Config.fluidBucketAmount());
             case "network.stuck_break_ticks" -> Integer.toString(Config.stuckBreakTicks());

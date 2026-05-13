@@ -50,6 +50,16 @@ public final class SuperLeadServerCommands {
                 new Entry("network.item_tier_max", Config.NETWORK_ITEM_TIER_MAX, "[1..12]", "6"));
         m.put("network.fluid_tier_max",
                 new Entry("network.fluid_tier_max", Config.NETWORK_FLUID_TIER_MAX, "[1..12]", "4"));
+        m.put("network.pressurized_tier_max",
+            new Entry("network.pressurized_tier_max", Config.NETWORK_PRESSURIZED_TIER_MAX, "[1..12]", "4"));
+        m.put("network.pressurized_batch_amount",
+            new Entry("network.pressurized_batch_amount", Config.NETWORK_PRESSURIZED_BATCH_AMOUNT,
+                "[1..2147483647]", "1000"));
+        m.put("network.thermal_tier_max",
+            new Entry("network.thermal_tier_max", Config.NETWORK_THERMAL_TIER_MAX, "[1..12]", "4"));
+        m.put("network.thermal_transfer_per_tick",
+            new Entry("network.thermal_transfer_per_tick", Config.NETWORK_THERMAL_TRANSFER,
+                "[1.0..1.0e12]", "1000.0"));
         m.put("network.item_transfer_interval_ticks",
                 new Entry("network.item_transfer_interval_ticks", Config.NETWORK_ITEM_TRANSFER_INTERVAL_TICKS,
                         "[1..40]", "4"));

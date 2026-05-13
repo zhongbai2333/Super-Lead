@@ -117,6 +117,18 @@ public final class ClientTuning {
     public static final TuningKey<Integer> COLOR_FLUID_ACCENT = registerC(
             "color.fluid.accent", "render.color", 0x5ADCDC,
             "Fluid rope accent stripe color.");
+    public static final TuningKey<Integer> COLOR_PRESSURIZED_BASE = registerC(
+            "color.pressurized.base", "render.color", 0x77828D,
+            "Mekanism pressurized rope base stripe color.");
+    public static final TuningKey<Integer> COLOR_PRESSURIZED_ACCENT = registerC(
+            "color.pressurized.accent", "render.color", 0xC5D8E8,
+            "Mekanism pressurized rope accent stripe color.");
+    public static final TuningKey<Integer> COLOR_THERMAL_BASE = registerC(
+            "color.thermal.base", "render.color", 0x9B4F24,
+            "Mekanism thermal rope base stripe color.");
+    public static final TuningKey<Integer> COLOR_THERMAL_ACCENT = registerC(
+            "color.thermal.accent", "render.color", 0xF39A4A,
+            "Mekanism thermal rope accent stripe color.");
 
     public static final TuningKey<Double> LOD_RIBBON_DISTANCE = registerD(
             "lod.ribbonDistance", "render.lod", 48.0D, 8.0D, 256.0D,

@@ -12,6 +12,10 @@ public final class Config {
     public static final ModConfigSpec.DoubleValue NETWORK_MAX_LEASH_DISTANCE;
     public static final ModConfigSpec.IntValue NETWORK_ITEM_TIER_MAX;
     public static final ModConfigSpec.IntValue NETWORK_FLUID_TIER_MAX;
+    public static final ModConfigSpec.IntValue NETWORK_PRESSURIZED_TIER_MAX;
+    public static final ModConfigSpec.IntValue NETWORK_PRESSURIZED_BATCH_AMOUNT;
+    public static final ModConfigSpec.IntValue NETWORK_THERMAL_TIER_MAX;
+    public static final ModConfigSpec.DoubleValue NETWORK_THERMAL_TRANSFER;
     public static final ModConfigSpec.IntValue NETWORK_ITEM_TRANSFER_INTERVAL_TICKS;
     public static final ModConfigSpec.IntValue NETWORK_FLUID_BUCKET_AMOUNT;
     public static final ModConfigSpec.IntValue NETWORK_STUCK_BREAK_TICKS;
@@ -41,6 +45,18 @@ public final class Config {
         NETWORK_FLUID_TIER_MAX = builder
                 .comment("Maximum upgrade tier for fluid leads.")
                 .defineInRange("fluid_tier_max", 4, 1, 12);
+        NETWORK_PRESSURIZED_TIER_MAX = builder
+            .comment("Maximum upgrade tier for Mekanism pressurized (chemical/gas) leads.")
+            .defineInRange("pressurized_tier_max", 4, 1, 12);
+        NETWORK_PRESSURIZED_BATCH_AMOUNT = builder
+            .comment("Per-rope batch amount for Mekanism chemical/gas transfers.")
+            .defineInRange("pressurized_batch_amount", 1000, 1, Integer.MAX_VALUE);
+        NETWORK_THERMAL_TIER_MAX = builder
+            .comment("Maximum upgrade tier for Mekanism thermal leads.")
+            .defineInRange("thermal_tier_max", 4, 1, 12);
+        NETWORK_THERMAL_TRANSFER = builder
+            .comment("Base heat units transferred per thermal lead per tick at tier 0.")
+            .defineInRange("thermal_transfer_per_tick", 1000.0D, 1.0D, 1.0e12D);
         NETWORK_ITEM_TRANSFER_INTERVAL_TICKS = builder
                 .comment("Tick interval between item-lead transfer attempts. Lower = faster.")
                 .defineInRange("item_transfer_interval_ticks", 4, 1, 40);
@@ -69,6 +85,10 @@ public final class Config {
     private static volatile double cachedMaxLeashDistance = 12.0D;
     private static volatile int cachedItemTierMax = 6;
     private static volatile int cachedFluidTierMax = 4;
+    private static volatile int cachedPressurizedTierMax = 4;
+    private static volatile int cachedPressurizedBatchAmount = 1000;
+    private static volatile int cachedThermalTierMax = 4;
+    private static volatile double cachedThermalTransfer = 1000.0D;
     private static volatile int cachedItemTransferIntervalTicks = 4;
     private static volatile int cachedFluidBucketAmount = 1000;
     private static volatile int cachedStuckBreakTicks = 100;
@@ -96,6 +116,22 @@ public final class Config {
 
     public static int fluidTierMax() {
         return cachedFluidTierMax;
+    }
+
+    public static int pressurizedTierMax() {
+        return cachedPressurizedTierMax;
+    }
+
+    public static int pressurizedBatchAmount() {
+        return cachedPressurizedBatchAmount;
+    }
+
+    public static int thermalTierMax() {
+        return cachedThermalTierMax;
+    }
+
+    public static double thermalBaseTransfer() {
+        return cachedThermalTransfer;
     }
 
     public static int itemTransferIntervalTicks() {
@@ -138,6 +174,10 @@ public final class Config {
         cachedMaxLeashDistance = NETWORK_MAX_LEASH_DISTANCE.get();
         cachedItemTierMax = NETWORK_ITEM_TIER_MAX.getAsInt();
         cachedFluidTierMax = NETWORK_FLUID_TIER_MAX.getAsInt();
+        cachedPressurizedTierMax = NETWORK_PRESSURIZED_TIER_MAX.getAsInt();
+        cachedPressurizedBatchAmount = NETWORK_PRESSURIZED_BATCH_AMOUNT.getAsInt();
+        cachedThermalTierMax = NETWORK_THERMAL_TIER_MAX.getAsInt();
+        cachedThermalTransfer = NETWORK_THERMAL_TRANSFER.get();
         cachedItemTransferIntervalTicks = NETWORK_ITEM_TRANSFER_INTERVAL_TICKS.getAsInt();
         cachedFluidBucketAmount = NETWORK_FLUID_BUCKET_AMOUNT.getAsInt();
         cachedStuckBreakTicks = NETWORK_STUCK_BREAK_TICKS.getAsInt();
@@ -161,6 +201,10 @@ public final class Config {
         m.put("network.max_leash_distance", Double.toString(NETWORK_MAX_LEASH_DISTANCE.get()));
         m.put("network.item_tier_max", Integer.toString(NETWORK_ITEM_TIER_MAX.getAsInt()));
         m.put("network.fluid_tier_max", Integer.toString(NETWORK_FLUID_TIER_MAX.getAsInt()));
+        m.put("network.pressurized_tier_max", Integer.toString(NETWORK_PRESSURIZED_TIER_MAX.getAsInt()));
+        m.put("network.pressurized_batch_amount", Integer.toString(NETWORK_PRESSURIZED_BATCH_AMOUNT.getAsInt()));
+        m.put("network.thermal_tier_max", Integer.toString(NETWORK_THERMAL_TIER_MAX.getAsInt()));
+        m.put("network.thermal_transfer_per_tick", Double.toString(NETWORK_THERMAL_TRANSFER.get()));
         m.put("network.item_transfer_interval_ticks",
                 Integer.toString(NETWORK_ITEM_TRANSFER_INTERVAL_TICKS.getAsInt()));
         m.put("network.fluid_bucket_amount", Integer.toString(NETWORK_FLUID_BUCKET_AMOUNT.getAsInt()));
@@ -180,6 +224,13 @@ public final class Config {
                     NETWORK_MAX_LEASH_DISTANCE.set(parseDoubleClamped(value, 4.0D, 32.0D));
                 case "network.item_tier_max" -> NETWORK_ITEM_TIER_MAX.set(parseIntClamped(value, 1, 12));
                 case "network.fluid_tier_max" -> NETWORK_FLUID_TIER_MAX.set(parseIntClamped(value, 1, 12));
+                case "network.pressurized_tier_max" ->
+                    NETWORK_PRESSURIZED_TIER_MAX.set(parseIntClamped(value, 1, 12));
+                case "network.pressurized_batch_amount" ->
+                    NETWORK_PRESSURIZED_BATCH_AMOUNT.set(parseIntClamped(value, 1, Integer.MAX_VALUE));
+                case "network.thermal_tier_max" -> NETWORK_THERMAL_TIER_MAX.set(parseIntClamped(value, 1, 12));
+                case "network.thermal_transfer_per_tick" ->
+                    NETWORK_THERMAL_TRANSFER.set(parseDoubleClamped(value, 1.0D, 1.0e12D));
                 case "network.item_transfer_interval_ticks" ->
                     NETWORK_ITEM_TRANSFER_INTERVAL_TICKS.set(parseIntClamped(value, 1, 40));
                 case "network.fluid_bucket_amount" ->
