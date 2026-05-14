@@ -217,10 +217,10 @@ public final class ZoneCreateScreen extends Screen {
     @Override
     public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float partialTick) {
         graphics.fill(0, 0, this.width, this.height, 0xC0000000);
-        super.extractRenderState(graphics, mouseX, mouseY, partialTick);
         int x = (this.width - W) / 2;
         int y = this.height / 2 - DIALOG_H / 2;
-        graphics.fill(x, y, x + W, y + DIALOG_H, 0xF0303840);
+        graphics.fill(x, y, x + W, y + DIALOG_H, 0xFF303840);
+        super.extractRenderState(graphics, mouseX, mouseY, partialTick);
         graphics.text(this.font, this.title, x + PADDING, y + 8, 0xFFFFD24F);
         graphics.text(this.font, Component.literal(areaText()), x + PADDING, y + 22,
                 0xFFFFFFFF);

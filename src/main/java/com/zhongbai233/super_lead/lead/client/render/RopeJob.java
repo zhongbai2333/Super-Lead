@@ -15,6 +15,8 @@ public final class RopeJob {
     public final int tier;
     public final float[] pulsePositions;
     public final int extractEnd;
+    /** True when the opaque base rope is already provided by the static chunk mesh. */
+    public final boolean chunkMeshActive;
 
     public RopeJob(
             RopeSimulation sim,
@@ -28,6 +30,23 @@ public final class RopeJob {
             int tier,
             float[] pulsePositions,
             int extractEnd) {
+        this(sim, blockA, blockB, skyA, skyB, highlightColor, kind, powered, tier,
+                pulsePositions, extractEnd, false);
+    }
+
+    public RopeJob(
+            RopeSimulation sim,
+            int blockA,
+            int blockB,
+            int skyA,
+            int skyB,
+            int highlightColor,
+            LeadKind kind,
+            boolean powered,
+            int tier,
+            float[] pulsePositions,
+            int extractEnd,
+            boolean chunkMeshActive) {
         this.sim = sim;
         this.blockA = blockA;
         this.blockB = blockB;
@@ -39,5 +58,6 @@ public final class RopeJob {
         this.tier = tier;
         this.pulsePositions = pulsePositions;
         this.extractEnd = extractEnd;
+        this.chunkMeshActive = chunkMeshActive;
     }
 }

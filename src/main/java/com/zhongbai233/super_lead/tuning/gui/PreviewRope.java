@@ -1,5 +1,6 @@
 package com.zhongbai233.super_lead.tuning.gui;
 
+import com.zhongbai233.super_lead.lead.physics.RopeSagModel;
 import com.zhongbai233.super_lead.tuning.ClientTuning;
 import com.zhongbai233.super_lead.tuning.TuningKey;
 import java.util.Map;
@@ -117,8 +118,16 @@ public final class PreviewRope {
         int iterAir = value(ClientTuning.ITER_AIR);
         int iterContact = value(ClientTuning.ITER_CONTACT);
         int iters = colliderActive ? Math.max(iterAir, iterContact) : iterAir;
+        int segments = n - 1;
+        double tautWeight = RopeSagModel.tautProjectionWeight(slack);
+        int minPasses = Math.max((segments + 1) / 2,
+                (int) Math.ceil(segments * (1.0D + tautWeight * 3.0D)));
+        if (iters < minPasses) {
+            iters = minPasses;
+        }
 
-        double target = restLen * slack;
+        double target = restLen * RopeSagModel.lengthFactor(slack);
+        double gravityScale = 1.0D - tautWeight;
 
         for (int i = 0; i < n; i++) {
             if (pinned[i]) {
@@ -131,7 +140,7 @@ public final class PreviewRope {
             px[i] = x[i];
             py[i] = y[i];
             x[i] += vx;
-            y[i] += vy + gravity;
+            y[i] += vy + gravity * gravityScale;
         }
 
         for (int it = 0; it < iters; it++) {
@@ -174,6 +183,28 @@ public final class PreviewRope {
                     }
                 }
             }
+        }
+
+        applyTautProjection(tautWeight);
+    }
+
+    private void applyTautProjection(double weight) {
+        if (weight <= 0.0D || n < 3) {
+            return;
+        }
+        double clamped = Math.min(1.0D, weight);
+        double keepVelocity = 1.0D - clamped;
+        int last = n - 1;
+        for (int i = 1; i < last; i++) {
+            double vx = x[i] - px[i];
+            double vy = y[i] - py[i];
+            double t = i / (double) last;
+            double tx = t * spanMeters;
+            double ty = 0.0D;
+            x[i] += (tx - x[i]) * clamped;
+            y[i] += (ty - y[i]) * clamped;
+            px[i] = x[i] - vx * keepVelocity;
+            py[i] = y[i] - vy * keepVelocity;
         }
     }
 

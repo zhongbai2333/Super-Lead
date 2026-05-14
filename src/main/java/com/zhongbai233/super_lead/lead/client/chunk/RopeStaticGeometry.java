@@ -7,6 +7,7 @@ import com.zhongbai233.super_lead.lead.client.render.LeashBuilder;
 import com.zhongbai233.super_lead.lead.client.render.RopeDynamicLights;
 import com.zhongbai233.super_lead.lead.client.sim.RopeSimulation;
 import com.zhongbai233.super_lead.lead.client.sim.RopeTuning;
+import com.zhongbai233.super_lead.lead.physics.RopeSagModel;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -55,19 +56,23 @@ public final class RopeStaticGeometry {
         if (len < 1.0e-6D) {
             return RopeStaticGeometryResult.EMPTY;
         }
-        double sag = Math.min(0.55D, len * 0.055D);
+        RopeTuning effectiveTuning = tuning != null ? tuning : RopeTuning.localDefaults();
+        Vec3 fallback = RopeSagModel.stableUnitVector(id == null ? 0L : id.getLeastSignificantBits());
+        double[] cx = new double[NODE_COUNT];
+        double[] cy = new double[NODE_COUNT];
+        double[] cz = new double[NODE_COUNT];
+        RopeSagModel.writeCatenary(a, b, effectiveTuning.slack(), effectiveTuning.gravity(), fallback, cx, cy, cz);
 
         float[] x = new float[NODE_COUNT];
         float[] y = new float[NODE_COUNT];
         float[] z = new float[NODE_COUNT];
         for (int i = 0; i < NODE_COUNT; i++) {
-            double t = i / (double) (NODE_COUNT - 1);
-            x[i] = (float) (a.x + (b.x - a.x) * t);
-            y[i] = (float) (a.y + (b.y - a.y) * t - Math.sin(Math.PI * t) * sag);
-            z[i] = (float) (a.z + (b.z - a.z) * t);
+            x[i] = (float) cx[i];
+            y[i] = (float) cy[i];
+            z[i] = (float) cz[i];
         }
 
-        return finalizeSnapshot(id, x, y, z, clientLevel, kind, powered, tier, tuning);
+        return finalizeSnapshot(id, x, y, z, clientLevel, kind, powered, tier, effectiveTuning);
     }
 
     public static RopeStaticGeometryResult buildFromSim(LeadConnection connection,

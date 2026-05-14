@@ -28,6 +28,7 @@ public final class StaticRopeChunkLifecycle {
         ClientTuning.addListener((key, value) -> {
             if (key == ClientTuning.MODE_CHUNK_MESH_STATIC_ROPES
                     || key == ClientTuning.MODE_RENDER3D
+                    || key.group.startsWith("physics")
                     || key.group.equals("render.geom")
                     || key.group.equals("render.color")) {
                 Minecraft mc = Minecraft.getInstance();

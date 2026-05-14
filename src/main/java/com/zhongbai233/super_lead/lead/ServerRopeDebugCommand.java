@@ -127,7 +127,7 @@ public final class ServerRopeDebugCommand {
                 .append(Component.literal(" preset=").withStyle(ChatFormatting.GRAY))
                 .append(Component.literal(connection.physicsPreset().isBlank() ? "<none>" : connection.physicsPreset())
                         .withStyle(connection.physicsPreset().isBlank() ? ChatFormatting.DARK_GRAY : ChatFormatting.GREEN))
-                .append(Component.literal(" nodes=" + shape.x().length
+                .append(Component.literal(" nodes=24"
                         + " length=" + format(shape.length())
                         + " target=" + format(shape.targetLength())
                         + " for " + seconds + "s").withStyle(ChatFormatting.GRAY)), false);
@@ -171,20 +171,22 @@ public final class ServerRopeDebugCommand {
 
     private static void draw(ServerLevel level, LeadConnection connection) {
         ServerRopeCurve.Shape shape = shape(level, connection);
-        double[] x = shape.x();
-        double[] y = shape.y();
-        double[] z = shape.z();
-        for (int i = 0; i < x.length; i++) {
-            DustParticleOptions dust = i == 0 ? START_DUST : (i == x.length - 1 ? END_DUST : NODE_DUST);
-            level.sendParticles(dust, x[i], y[i], z[i], 1, 0.025D, 0.025D, 0.025D, 0.0D);
+        int nodeCount = 24;
+        for (int i = 0; i <= nodeCount; i++) {
+            double t = i / (double) nodeCount;
+            Vec3 p = ServerRopeCurve.point(shape, t);
+            DustParticleOptions dust = i == 0 ? START_DUST : (i == nodeCount ? END_DUST : NODE_DUST);
+            level.sendParticles(dust, p.x, p.y, p.z, 1, 0.025D, 0.025D, 0.025D, 0.0D);
         }
-        for (int i = 0; i < x.length - 1; i++) {
-            Vec3 a = new Vec3(x[i], y[i], z[i]);
-            Vec3 b = new Vec3(x[i + 1], y[i + 1], z[i + 1]);
+        for (int i = 0; i < nodeCount; i++) {
+            double t0 = i / (double) nodeCount;
+            double t1 = (i + 1) / (double) nodeCount;
+            Vec3 a = ServerRopeCurve.point(shape, t0);
+            Vec3 b = ServerRopeCurve.point(shape, t1);
             double len = a.distanceTo(b);
-            int samples = Math.max(1, (int) Math.ceil(len / LINE_STEP));
-            for (int s = 1; s < samples; s++) {
-                double t = s / (double) samples;
+            int lineSamples = Math.max(1, (int) Math.ceil(len / LINE_STEP));
+            for (int s = 1; s < lineSamples; s++) {
+                double t = s / (double) lineSamples;
                 Vec3 p = a.lerp(b, t);
                 level.sendParticles(LINE_DUST, p.x, p.y, p.z, 1, 0.0D, 0.0D, 0.0D, 0.0D);
             }

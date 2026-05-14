@@ -71,11 +71,6 @@ public final class SuperLeadEvents {
             if (tryUseConnectionAction(event)) {
                 return;
             }
-            if (stack.isEmpty() && tryRemoveRopeAttachment(event.getEntity(), event.getLevel())) {
-                event.setCanceled(true);
-                event.setCancellationResult(InteractionResult.SUCCESS);
-                return;
-            }
         } else {
             if (tryOpenRopeAttachmentAeTerminal(event.getEntity(), event.getLevel(), stack)) {
                 event.setCanceled(true);
@@ -352,12 +347,6 @@ public final class SuperLeadEvents {
         if (tryUsePresetBinder(event.getEntity(), event.getHand(), event.getLevel(), shift)) {
             return;
         }
-        if (shift) {
-            if (stack.isEmpty()) {
-                tryRemoveRopeAttachment(event.getEntity(), event.getLevel());
-            }
-            return;
-        }
         if (tryOpenRopeAttachmentAeTerminal(event.getEntity(), event.getLevel(), stack)) {
             return;
         }
@@ -381,9 +370,30 @@ public final class SuperLeadEvents {
             return;
         if (!SuperLeadNetwork.canModifyRopes(event.getEntity()))
             return;
+        ItemStack stack = event.getItemStack();
+        if (event.getEntity().isShiftKeyDown() && stack.is(Items.SHEARS)) {
+            // Shears + Shift + Left-click → remove rope attachment.
+            com.zhongbai233.super_lead.lead.client.SuperLeadClientEvents.trySendRemoveRopeAttachment();
+            return;
+        }
         // Plain left-click on a rope attachment with both block- and item-display forms
         // toggles between the two. trySend… filters on BlockItem so harmless on misses.
         com.zhongbai233.super_lead.lead.client.SuperLeadClientEvents.trySendToggleRopeAttachmentForm();
+    }
+
+    @SubscribeEvent
+    public static void onLeftClickBlock(PlayerInteractEvent.LeftClickBlock event) {
+        if (!event.getLevel().isClientSide())
+            return;
+        if (!SuperLeadNetwork.canModifyRopes(event.getEntity()))
+            return;
+        ItemStack stack = event.getItemStack();
+        if (event.getEntity().isShiftKeyDown() && stack.is(Items.SHEARS)) {
+            // Shears + Shift + Left-click on block → remove rope attachment.
+            if (com.zhongbai233.super_lead.lead.client.SuperLeadClientEvents.trySendRemoveRopeAttachment()) {
+                event.setCanceled(true);
+            }
+        }
     }
 
     /**
@@ -438,19 +448,6 @@ public final class SuperLeadEvents {
             }
         }
         return false;
-    }
-
-    /**
-     * Attempt to remove the attachment under the player's crosshair. Client-only
-     * entry point.
-     */
-    private static boolean tryRemoveRopeAttachment(Player player, Level level) {
-        if (!level.isClientSide())
-            return false;
-        if (!SuperLeadNetwork.canModifyRopes(player))
-            return false;
-        return com.zhongbai233.super_lead.lead.client.SuperLeadClientEvents
-                .trySendRemoveRopeAttachment();
     }
 
     /**

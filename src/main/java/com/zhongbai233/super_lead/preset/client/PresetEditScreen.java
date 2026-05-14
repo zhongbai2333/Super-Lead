@@ -28,13 +28,15 @@ import net.neoforged.neoforge.client.network.ClientPacketDistributor;
 public final class PresetEditScreen extends Screen {
     private static final int WIDGET_H = 16;
     private static final int PADDING = 8;
-    private static final int TAB_HEIGHT = 18;
+    private static final int SIDEBAR_W = 100;
+    private static final int TAB_BTN_H = 20;
+    private static final int TAB_GAP = 2;
     private static final int DESC_GAP = 2;
     private static final int DESC_H = 9;
     private static final int ROW_HEIGHT = WIDGET_H + DESC_GAP + DESC_H;
     private static final int ROW_GAP = 4;
     private static final int RESET_BTN_W = 14;
-    private static final int VALUE_TEXT_W = 96;
+    private static final int VALUE_TEXT_W = 76;
     private static final int INPUT_W = 56;
     private static final int SCROLLBAR_W = 4;
 
@@ -53,6 +55,7 @@ public final class PresetEditScreen extends Screen {
     private boolean loaded;
     private boolean detailsRequested;
     private boolean pointerDownInBody;
+    private boolean initDone;
     private PresetDetailsResponse pendingDetails;
 
     public PresetEditScreen(Screen parent, String presetName) {
@@ -77,41 +80,49 @@ public final class PresetEditScreen extends Screen {
         preview.setViewport(0, 0, this.width, this.height);
         preview.setOverrides(overrides, true);
 
-        PresetClientHandler.setDetailsListener(resp -> {
-            if (!resp.name().equals(presetName))
-                return;
-            applyDetails(resp, true);
-        });
-        PresetDetailsResponse cached = PresetClientHandler.lastDetails();
-        if (cached != null && cached.name().equals(presetName) && cached.exists()) {
-            applyDetails(cached, false);
+        // One-time network setup — must not re-run on tab switches because
+        // Screen.rebuildWidgets() → init() would overwrite local edits with
+        // stale cached server data.
+        if (!initDone) {
+            initDone = true;
+            PresetClientHandler.setDetailsListener(resp -> {
+                if (!resp.name().equals(presetName))
+                    return;
+                applyDetails(resp, true);
+            });
+            PresetDetailsResponse cached = PresetClientHandler.lastDetails();
+            if (cached != null && cached.name().equals(presetName) && cached.exists()) {
+                applyDetails(cached, false);
+            }
         }
         if (!detailsRequested) {
             detailsRequested = true;
             ClientPacketDistributor.sendToServer(new PresetDetailsRequest(presetName));
         }
 
-        int tabsY = PADDING + 12;
-        int tabX = PADDING;
+        // --- Top bar: back button ---
+        Button back = Button.builder(Component.translatable("super_lead.preset.edit.back"), b -> onClose())
+                .bounds(this.width - PADDING - 60, PADDING, 60, 14).build();
+        addRenderableWidget(back);
+
+        // --- Left sidebar: vertical tab buttons ---
+        int sidebarTop = PADDING + 20;
+        int tabY = sidebarTop;
         for (int i = 0; i < groups.size(); i++) {
             int index = i;
             Component label = groupLabel(groups.get(i));
-            int tabWidth = Math.max(60, this.font.width(label) + 12);
             Button tab = Button.builder(label, b -> {
                 this.activeTab = index;
                 this.scrollOffset = 0;
                 this.rebuildWidgets();
-            }).bounds(tabX, tabsY, tabWidth, TAB_HEIGHT).build();
+            }).bounds(PADDING, tabY, SIDEBAR_W - 4, TAB_BTN_H).build();
             tab.active = i != activeTab;
             addRenderableWidget(tab);
-            tabX += tabWidth + 4;
+            tabY += TAB_BTN_H + TAB_GAP;
         }
 
-        rebuildBody(tabsY + TAB_HEIGHT + 6);
-
-        Button back = Button.builder(Component.translatable("super_lead.preset.edit.back"), b -> onClose())
-                .bounds(this.width - PADDING - 60, PADDING, 60, 14).build();
-        addRenderableWidget(back);
+        // --- Right body: config rows for active tab ---
+        rebuildBody(sidebarTop);
     }
 
     private void rebuildBody(int startY) {
@@ -121,17 +132,18 @@ public final class PresetEditScreen extends Screen {
         String group = groups.get(activeTab);
         bodyTop = startY;
         bodyBottom = this.height - PADDING;
+        int contentX = PADDING + SIDEBAR_W;
 
-        int rowW = this.width - PADDING * 2 - SCROLLBAR_W - 2;
-        int sliderW = Math.max(100, rowW * 4 / 12);
-        int labelW = rowW - sliderW - INPUT_W - VALUE_TEXT_W - RESET_BTN_W - 12;
+        int contentW = this.width - contentX - PADDING - SCROLLBAR_W - 2;
+        int sliderW = Math.max(100, contentW * 4 / 12);
+        int labelW = contentW - sliderW - INPUT_W - VALUE_TEXT_W - RESET_BTN_W - 12;
         if (labelW < 60) {
             labelW = 60;
-            sliderW = rowW - labelW - INPUT_W - VALUE_TEXT_W - RESET_BTN_W - 12;
+            sliderW = contentW - labelW - INPUT_W - VALUE_TEXT_W - RESET_BTN_W - 12;
         }
-        int sliderX = PADDING + labelW + 4;
+        int sliderX = contentX + labelW + 4;
         int inputX = sliderX + sliderW + 4;
-        int resetX = PADDING + rowW - RESET_BTN_W;
+        int resetX = contentX + contentW - RESET_BTN_W;
 
         int baseY = startY;
         for (TuningKey<?> key : ClientTuning.allKeys()) {
@@ -459,12 +471,21 @@ public final class PresetEditScreen extends Screen {
     @Override
     public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float partialTick) {
         preview.render(graphics);
+        int contentX = PADDING + SIDEBAR_W;
+
+        // Top bar background
         graphics.fill(0, 0, this.width, bodyTop, 0x80000000);
-        graphics.fill(0, bodyTop, this.width, this.height, 0xA0000000);
+        // Sidebar background
+        graphics.fill(0, bodyTop, contentX, this.height, 0x90000000);
+        // Content area background
+        graphics.fill(contentX, bodyTop, this.width, this.height, 0xA0000000);
+
         graphics.text(this.font, this.title, PADDING, PADDING, 0xFFFFD24F);
 
         int sepY = bodyTop - 2;
-        graphics.fill(PADDING, sepY, this.width - PADDING, sepY + 1, 0xFF40484F);
+        graphics.fill(contentX, sepY, this.width - PADDING, sepY + 1, 0xFF40484F);
+        // Sidebar separator
+        graphics.fill(contentX - 1, bodyTop, contentX, this.height, 0xFF40484F);
 
         super.extractRenderState(graphics, mouseX, mouseY, partialTick);
 
@@ -480,6 +501,7 @@ public final class PresetEditScreen extends Screen {
     }
 
     private void renderRows(GuiGraphicsExtractor graphics) {
+        int contentX = PADDING + SIDEBAR_W;
         for (Row row : rows) {
             AbstractWidget w = row.widget;
             if (!w.visible)
@@ -488,7 +510,7 @@ public final class PresetEditScreen extends Screen {
             int rowY = w.getY() + (w.getHeight() - this.font.lineHeight) / 2;
             Component label = Component.translatableWithFallback(
                     "super_lead.tuning." + key.id + ".label", key.id);
-            graphics.text(this.font, label, PADDING, rowY, 0xFFE8E8E8);
+            graphics.text(this.font, label, contentX, rowY, 0xFFE8E8E8);
 
             String displayed = formatRowValue(key);
             boolean overridden = overrides.containsKey(key.id);
@@ -500,11 +522,11 @@ public final class PresetEditScreen extends Screen {
 
             if (key.description != null && !key.description.isEmpty()) {
                 int descY = w.getY() + WIDGET_H + DESC_GAP;
-                int maxWidth = this.width - PADDING * 2 - SCROLLBAR_W - 2;
+                int maxWidth = this.width - contentX - PADDING - SCROLLBAR_W - 2;
                 Component desc = Component.translatableWithFallback(
                         "super_lead.tuning." + key.id + ".desc", key.description);
                 graphics.text(this.font, Component.literal(truncate(desc.getString(), maxWidth)),
-                        PADDING, descY, 0xFF8090A0);
+                        contentX, descY, 0xFF8090A0);
             }
         }
     }
@@ -532,8 +554,10 @@ public final class PresetEditScreen extends Screen {
         graphics.fill(trackX, bodyTop, trackX + SCROLLBAR_W, bodyBottom, 0x60000000);
         int thumbH = Math.max(16, viewport * viewport / contentHeight);
         int maxScroll = contentHeight - viewport;
-        int thumbY = bodyTop + scrollOffset * (viewport - thumbH) / maxScroll;
-        graphics.fill(trackX, thumbY, trackX + SCROLLBAR_W, thumbY + thumbH, 0xFF8090A0);
+        if (maxScroll > 0) {
+            int thumbY = bodyTop + scrollOffset * (viewport - thumbH) / maxScroll;
+            graphics.fill(trackX, thumbY, trackX + SCROLLBAR_W, thumbY + thumbH, 0xFF8090A0);
+        }
     }
 
     private String truncate(String value, int maxWidth) {
@@ -558,7 +582,13 @@ public final class PresetEditScreen extends Screen {
         String fallback = switch (group) {
             case "physics.shape" -> "Shape";
             case "physics.solver" -> "Solver";
+            case "physics.solverExt" -> "Solver Ext";
+            case "physics.geom" -> "Geometry";
+            case "physics.settle" -> "Settle";
+            case "physics.sag" -> "Sag Model";
+            case "physics.step" -> "Step Control";
             case "physics.contact" -> "Contact";
+            case "physics.zipline" -> "Zipline";
             case "render.mode" -> "Mode";
             case "render.geom" -> "Geometry";
             case "render.color" -> "Color";

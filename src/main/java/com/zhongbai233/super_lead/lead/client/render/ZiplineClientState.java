@@ -8,6 +8,8 @@ import com.zhongbai233.super_lead.lead.SuperLeadNetwork;
 import com.zhongbai233.super_lead.lead.SyncZiplines;
 import com.zhongbai233.super_lead.lead.ZiplineController;
 import com.zhongbai233.super_lead.lead.client.sim.RopeSimulation;
+import com.zhongbai233.super_lead.lead.client.sim.RopeTuning;
+import com.zhongbai233.super_lead.lead.physics.RopeSagModel;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
@@ -177,18 +179,13 @@ public final class ZiplineClientState {
         Vec3 a = endpoints.from();
         Vec3 b = endpoints.to();
         double t = clamp01(stateT);
-        double sag = Math.min(0.70D, a.distanceTo(b) * 0.055D);
-        Vec3 tangent = new Vec3(
-                b.x - a.x,
-                b.y - a.y - Math.PI * Math.cos(Math.PI * t) * sag,
-                b.z - a.z);
-        if (tangent.lengthSqr() < 1.0e-8D) {
-            tangent = new Vec3(1.0D, 0.0D, 0.0D);
-        }
+        RopeTuning tuning = RopeTuning.forConnection(connection);
+        Vec3 tangent = RopeSagModel.tangent(a, b, t, tuning.slack(), tuning.gravity(),
+            RopeSagModel.stableUnitVector(state.connectionId().getLeastSignificantBits()));
         // No active sim (static/LOD fallback): bind the folded chain to the current
         // rendered rider position so it does not wait for the next network zipline
         // snapshot before catching up to the player's head.
-        return new RopePoint(riderRopePoint, tangent.normalize());
+        return new RopePoint(riderRopePoint, tangent);
     }
 
     private static RopePoint projectOntoRenderedRope(RopeSimulation sim, Vec3 target, double hintT) {

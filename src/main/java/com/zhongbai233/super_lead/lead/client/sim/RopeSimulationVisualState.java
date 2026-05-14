@@ -1,5 +1,6 @@
 package com.zhongbai233.super_lead.lead.client.sim;
 
+import com.zhongbai233.super_lead.lead.physics.RopeSagModel;
 import net.minecraft.world.phys.Vec3;
 
 abstract class RopeSimulationVisualState extends RopeSimulationRenderCache {
@@ -12,7 +13,8 @@ abstract class RopeSimulationVisualState extends RopeSimulationRenderCache {
     // ============================================================================================
     public void updateVisualLeash(Vec3 a, Vec3 b, long currentTick, float smoothing) {
         lastTouchTick = currentTick;
-        double sag = Math.min(0.55D, a.distanceTo(b) * 0.055D);
+        double sag = RopeSagModel.midspanSag(a, b, tuning.slack(), tuning.gravity());
+        Vec3 sagDir = RopeSagModel.sagDirection(a, b, tuning.gravity(), stableSeparation);
         boolean bend = hasExternalContact(currentTick);
         if (!bend && contactT >= 0.0F) {
             contactT = -1.0F;
@@ -20,9 +22,10 @@ abstract class RopeSimulationVisualState extends RopeSimulationRenderCache {
         double bendWindow = 0.28D;
         for (int i = 0; i < nodes; i++) {
             double t = i / (double) segments;
-            double tx = a.x + (b.x - a.x) * t;
-            double ty = a.y + (b.y - a.y) * t - Math.sin(Math.PI * t) * sag;
-            double tz = a.z + (b.z - a.z) * t;
+            double ropeBend = Math.sin(Math.PI * t) * sag;
+            double tx = a.x + (b.x - a.x) * t + sagDir.x * ropeBend;
+            double ty = a.y + (b.y - a.y) * t + sagDir.y * ropeBend;
+            double tz = a.z + (b.z - a.z) * t + sagDir.z * ropeBend;
             if (bend) {
                 double dist = Math.abs(t - contactT);
                 if (dist < bendWindow) {
@@ -53,26 +56,27 @@ abstract class RopeSimulationVisualState extends RopeSimulationRenderCache {
         markBoundsDirty();
     }
 
-    protected void setCatenary(Vec3 a, Vec3 b, double sagFactor) {
-        double sag = Math.min(0.55D, a.distanceTo(b) * sagFactor);
+    protected void setCatenary(Vec3 a, Vec3 b) {
+        RopeSagModel.writeCatenary(a, b, tuning.slack(), tuning.gravity(), stableSeparation, x, y, z);
         for (int i = 0; i < nodes; i++) {
-            double t = i / (double) segments;
-            double nx = a.x + (b.x - a.x) * t;
-            double ny = a.y + (b.y - a.y) * t - Math.sin(Math.PI * t) * sag;
-            double nz = a.z + (b.z - a.z) * t;
-            x[i] = nx;
-            y[i] = ny;
-            z[i] = nz;
-            xLastTick[i] = nx;
-            yLastTick[i] = ny;
-            zLastTick[i] = nz;
+            xLastTick[i] = x[i];
+            yLastTick[i] = y[i];
+            zLastTick[i] = z[i];
             vx[i] = vy[i] = vz[i] = 0.0D;
         }
         markBoundsDirty();
     }
 
+    protected void setCatenary(Vec3 a, Vec3 b, double sagFactor) {
+        setCatenary(a, b);
+    }
+
+    public void resetCatenary(Vec3 a, Vec3 b) {
+        setCatenary(a, b);
+    }
+
     public void resetCatenary(Vec3 a, Vec3 b, double sagFactor) {
-        setCatenary(a, b, sagFactor);
+        setCatenary(a, b);
     }
 
     // ============================================================================================
@@ -167,7 +171,7 @@ abstract class RopeSimulationVisualState extends RopeSimulationRenderCache {
     protected boolean hasFreshServerNodes(long currentTick) {
         return serverNodesSegments > 0
                 && serverInterior != null
-                && (currentTick - serverNodesRefreshTick) <= SERVER_BLEND_STALE_TICKS;
+                && (currentTick - serverNodesRefreshTick) <= serverBlendStaleTicks;
     }
 
     /**
@@ -219,9 +223,9 @@ abstract class RopeSimulationVisualState extends RopeSimulationRenderCache {
             double tx = p0x + (p1x - p0x) * frac;
             double ty = p0y + (p1y - p0y) * frac;
             double tz = p0z + (p1z - p0z) * frac;
-            x[j] += (tx - x[j]) * SERVER_BLEND_ALPHA;
-            y[j] += (ty - y[j]) * SERVER_BLEND_ALPHA;
-            z[j] += (tz - z[j]) * SERVER_BLEND_ALPHA;
+            x[j] += (tx - x[j]) * serverBlendAlpha;
+            y[j] += (ty - y[j]) * serverBlendAlpha;
+            z[j] += (tz - z[j]) * serverBlendAlpha;
         }
     }
 
@@ -246,14 +250,14 @@ abstract class RopeSimulationVisualState extends RopeSimulationRenderCache {
         int i = seg, j = seg + 1;
         double wi = 1.0D - frac, wj = frac;
         if (!pinned[i]) {
-            x[i] += contactDx * wi * CONTACT_PUSH_GAIN;
-            y[i] += contactDy * wi * CONTACT_PUSH_GAIN;
-            z[i] += contactDz * wi * CONTACT_PUSH_GAIN;
+            x[i] += contactDx * wi * contactPushGain;
+            y[i] += contactDy * wi * contactPushGain;
+            z[i] += contactDz * wi * contactPushGain;
         }
         if (!pinned[j]) {
-            x[j] += contactDx * wj * CONTACT_PUSH_GAIN;
-            y[j] += contactDy * wj * CONTACT_PUSH_GAIN;
-            z[j] += contactDz * wj * CONTACT_PUSH_GAIN;
+            x[j] += contactDx * wj * contactPushGain;
+            y[j] += contactDy * wj * contactPushGain;
+            z[j] += contactDz * wj * contactPushGain;
         }
     }
 }

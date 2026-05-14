@@ -1,5 +1,6 @@
 package com.zhongbai233.super_lead.lead.client.sim;
 
+import com.zhongbai233.super_lead.lead.physics.RopeSagModel;
 import java.util.List;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.AABB;
@@ -62,7 +63,7 @@ abstract class RopeSimulationStepper extends RopeSimulationContactConstraints {
         // only
         // holds the proximity-only bbox from hasTerrainNearby which is too small.
         if (cachedTerrainNearby) {
-            double r = TERRAIN_RADIUS + COLLISION_EPS + TERRAIN_PROXIMITY_MARGIN + 1.0D;
+            double r = terrainRadius + collisionEps + terrainProximityMargin + 1.0D;
             int bx0 = (int) Math.floor(Math.min(Math.min(minX, a.x), b.x) - r) - 1;
             int by0 = (int) Math.floor(Math.min(Math.min(minY, a.y), b.y) - r) - 1;
             int bz0 = (int) Math.floor(Math.min(Math.min(minZ, a.z), b.z) - r) - 1;
@@ -95,8 +96,8 @@ abstract class RopeSimulationStepper extends RopeSimulationContactConstraints {
             finishPrecompute();
             return false;
         }
-        if (delta > 2)
-            delta = 2;
+        if (delta > tuning.maxTickDelta())
+            delta = tuning.maxTickDelta();
 
         boolean endpointMoved = rememberEndpointsMoved(a, b);
         boolean terrainNearby;
@@ -201,6 +202,8 @@ abstract class RopeSimulationStepper extends RopeSimulationContactConstraints {
         clearContactState();
 
         double dampingPerSubstep = Math.pow(tuning.damping(), h);
+        double tautWeight = RopeSagModel.tautProjectionWeight(tuning.slack());
+        double gravityScale = 1.0D - tautWeight;
         for (int i = 0; i < nodes; i++) {
             xPrev[i] = x[i];
             yPrev[i] = y[i];
@@ -210,7 +213,7 @@ abstract class RopeSimulationStepper extends RopeSimulationContactConstraints {
             vx[i] *= dampingPerSubstep;
             vy[i] *= dampingPerSubstep;
             vz[i] *= dampingPerSubstep;
-            vy[i] += tuning.gravity() * h;
+            vy[i] += tuning.gravity() * h * gravityScale;
             if (!forceFields.isEmpty()) {
                 forceScratch[0] = forceScratch[1] = forceScratch[2] = 0.0D;
                 for (int k = 0; k < forceFields.size(); k++) {
@@ -231,7 +234,7 @@ abstract class RopeSimulationStepper extends RopeSimulationContactConstraints {
             lambdaDistance[i] = 0.0D;
 
         // 3. Unified constraint loop
-        double targetLen = a.distanceTo(b) * slackFactor(a, b) / segments;
+        double targetLen = RopeSagModel.physicsTargetLength(a, b, tuning.slack(), tuning.gravity()) / segments;
         double alphaTilde = tuning.compliance() / (h * h);
         int iterations;
         if (terrainEnabled || !entityBoxes.isEmpty() || !forceFields.isEmpty()) {
@@ -246,7 +249,8 @@ abstract class RopeSimulationStepper extends RopeSimulationContactConstraints {
         // few iterations stays visibly stretched (gravity perturbation in the
         // middle segments never reaches a pinned end). Ensure we run at least
         // ceil(segments/2) passes so corrections from both ends meet in the middle.
-        int minPasses = (segments + 1) / 2;
+        int minPasses = Math.max((segments + 1) / 2,
+            (int) Math.ceil(segments * (1.0D + tautWeight * 3.0D)));
         if (iterations < minPasses)
             iterations = minPasses;
         for (int it = 0; it < iterations; it++) {
@@ -275,10 +279,13 @@ abstract class RopeSimulationStepper extends RopeSimulationContactConstraints {
             vz[i] = (z[i] - zPrev[i]) / h;
             // Light contact damping: bleed off velocity along contact normal-ish at rest.
             if (contactNode[i]) {
-                vx[i] *= 0.5D;
-                vy[i] *= 0.5D;
-                vz[i] *= 0.5D;
+                vx[i] *= tuning.contactNodeDamping();
+                vy[i] *= tuning.contactNodeDamping();
+                vz[i] *= tuning.contactNodeDamping();
             }
+        }
+        if (tautWeight > 0.0D) {
+            applyTautProjection(a, b, tautWeight, true);
         }
     }
 
@@ -290,13 +297,13 @@ abstract class RopeSimulationStepper extends RopeSimulationContactConstraints {
         double aSpeedSqr = daX * daX + daY * daY + daZ * daZ;
         double bSpeedSqr = dbX * dbX + dbY * dbY + dbZ * dbZ;
         double s2 = Math.max(Math.max(aSpeedSqr, bSpeedSqr), maxInteriorSpeedSqr());
-        if (s2 < SUBSTEP_SPEED_TIER1 * SUBSTEP_SPEED_TIER1)
+        if (s2 < substepSpeedTier1 * substepSpeedTier1)
             return 1;
-        if (s2 < SUBSTEP_SPEED_TIER2 * SUBSTEP_SPEED_TIER2)
+        if (s2 < substepSpeedTier2 * substepSpeedTier2)
             return 2;
-        if (s2 < SUBSTEP_SPEED_TIER3 * SUBSTEP_SPEED_TIER3)
+        if (s2 < substepSpeedTier3 * substepSpeedTier3)
             return 3;
-        return MAX_SUBSTEPS;
+        return maxSubsteps;
     }
 
     private double maxInteriorSpeedSqr() {

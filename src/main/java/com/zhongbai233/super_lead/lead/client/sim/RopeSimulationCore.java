@@ -3,6 +3,7 @@ package com.zhongbai233.super_lead.lead.client.sim;
 import com.zhongbai233.super_lead.lead.client.geom.RopeMath;
 import com.zhongbai233.super_lead.lead.client.geom.SegmentHit;
 import com.zhongbai233.super_lead.lead.client.geom.SegmentPair;
+import com.zhongbai233.super_lead.lead.physics.RopeSagModel;
 import java.util.List;
 import java.util.Objects;
 import net.minecraft.core.BlockPos;
@@ -14,51 +15,37 @@ import net.minecraft.world.phys.Vec3;
 abstract class RopeSimulationCore {
 
     // ============================================================================================
-    // Topology / geometry
+    // Topology / geometry — now resolved from RopeTuning
     // ============================================================================================
-    protected static final int MIN_SEGMENTS = 4;
-    protected static final double ROPE_RADIUS = 0.045D;
-    /**
-     * Effective half-thickness used for rope-vs-terrain collision. Larger than
-     * {@link #ROPE_RADIUS}
-     * so the visual highlight outline does not clip into block faces;
-     * rope-vs-rope spacing keeps using the smaller {@link #ROPE_RADIUS} so stacking
-     * stays tight.
-     */
-    protected static final double TERRAIN_RADIUS = 0.085D;
-    protected static final double ROPE_REPEL_DISTANCE = 0.06D;
+    protected final double ropeRadius;
+    protected final double terrainRadius;
+    protected final double ropeRepelDistance;
+    protected final double collisionEps;
+    protected final double terrainProximityMargin;
+    protected final double segmentCornerPushEps;
+    protected final double segmentTopSupportEps;
+    protected final int minSegments;
 
     // ============================================================================================
-    // Solver
+    // Solver — now resolved from RopeTuning
     // ============================================================================================
-    /**
-     * Under-relaxation factor for cross-rope corrections in parallel mode. <1
-     * trades a little
-     * settle latency for stability against Jacobi over-shoot in 3-layer rope
-     * stacks.
-     */
-    protected static final double ROPE_ROPE_PARALLEL_RELAX = 0.6D;
-    protected static final int MAX_SUBSTEPS = 5;
-    protected static final double SUBSTEP_SPEED_TIER1 = 0.35D; // blocks/tick
-    protected static final double SUBSTEP_SPEED_TIER2 = 0.75D;
-    protected static final double SUBSTEP_SPEED_TIER3 = 1.20D;
-    /**
-     * Y-axis correction multiplier for nodes resting on terrain. <1 = harder to
-     * push downward.
-     */
-    protected static final double SUPPORT_DOWN_INV_MASS = 1.0D;
-    protected static final double COLLISION_EPS = 0.015D;
-    protected static final double TERRAIN_PROXIMITY_MARGIN = 0.35D;
-    protected static final double SEGMENT_CORNER_PUSH_EPS = ROPE_RADIUS * 0.65D;
-    protected static final double SEGMENT_TOP_SUPPORT_EPS = ROPE_RADIUS * 1.8D;
+    protected final double ropeRopeParallelRelax;
+    protected final int maxSubsteps;
+    protected final double substepSpeedTier1;
+    protected final double substepSpeedTier2;
+    protected final double substepSpeedTier3;
+    protected final double supportDownInvMass;
+    protected final double contactPushGain;
+    protected final double serverBlendAlpha;
+    protected final long serverBlendStaleTicks;
 
     // ============================================================================================
-    // Settle / wake
+    // Settle / wake — now resolved from RopeTuning
     // ============================================================================================
-    protected static final int SETTLE_THRESHOLD_TICKS = 4;
-    protected static final double SETTLE_MOTION_SQR = 1.0e-5D;
-    protected static final double ENDPOINT_WAKE_DISTANCE_SQR = 1.0e-5D;
-    protected static final long SETTLED_BLOCK_HASH_INTERVAL_TICKS = 10L;
+    protected final int settleThresholdTicks;
+    protected final double settleMotionSqr;
+    protected final double endpointWakeDistanceSqr;
+    protected final long settledBlockHashIntervalTicks;
     protected static final long UNINIT = Long.MIN_VALUE;
 
     // ============================================================================================
@@ -209,17 +196,12 @@ abstract class RopeSimulationCore {
     protected final SegmentPair pairScratch = new SegmentPair();
     protected final SegmentHit hitScratch = new SegmentHit();
     protected final double[] forceScratch = new double[3];
+    protected final double[] distanceCorrectionScratch = new double[6];
 
-    // External (server-broadcast) contact: a single horizontal displacement target
-    // along the
-    // rope, applied as a soft push once per step() and as an additive bend in the
-    // LOD-off
-    // visual path so all observers see the same deflection. Disabled when contactT
-    // < 0.
+    // External (server-broadcast) contact
     protected float contactT = -1.0F;
     protected double contactDx, contactDy, contactDz;
     protected long contactRefreshTick = Long.MIN_VALUE;
-    protected static final double CONTACT_PUSH_GAIN = 0.45D;
 
     // Server-broadcast Verlet snapshot used as a soft target. Each tick the
     // corresponding
@@ -230,11 +212,9 @@ abstract class RopeSimulationCore {
     // refines the shape, large enough that all clients converge on the server's
     // geometry.
     // Cleared / made inactive by setting serverNodesSegments <= 0.
-    protected int serverNodesSegments = 0; // server segment count (e.g. 8). 0 = none.
-    protected float[] serverInterior; // length = (segments-1)*3
+    protected int serverNodesSegments = 0;
+    protected float[] serverInterior;
     protected long serverNodesRefreshTick = Long.MIN_VALUE;
-    protected static final double SERVER_BLEND_ALPHA = 0.20D;
-    protected static final long SERVER_BLEND_STALE_TICKS = 6L;
 
     // Precomputed per-segment AABBs (unpadded) for rope-vs-rope broad-phase.
     // Layout: 6 doubles
@@ -310,9 +290,33 @@ abstract class RopeSimulationCore {
 
     protected RopeSimulationCore(Vec3 a, Vec3 b, long seed, RopeTuning tuning) {
         this.tuning = tuning != null ? tuning : RopeTuning.localDefaults();
+
+        // Resolve all physics constants from tuning
+        this.ropeRadius = this.tuning.ropeRadius();
+        this.terrainRadius = this.tuning.terrainRadius();
+        this.ropeRepelDistance = this.tuning.ropeRepelDistance();
+        this.collisionEps = this.tuning.collisionEps();
+        this.terrainProximityMargin = this.tuning.terrainProximityMargin();
+        this.segmentCornerPushEps = this.tuning.ropeRadius() * this.tuning.segmentCornerPushFactor();
+        this.segmentTopSupportEps = this.tuning.ropeRadius() * this.tuning.segmentTopSupportFactor();
+        this.minSegments = this.tuning.minSegments();
+        this.ropeRopeParallelRelax = this.tuning.ropeRopeParallelRelax();
+        this.maxSubsteps = this.tuning.maxSubsteps();
+        this.substepSpeedTier1 = this.tuning.substepSpeedTier1();
+        this.substepSpeedTier2 = this.tuning.substepSpeedTier2();
+        this.substepSpeedTier3 = this.tuning.substepSpeedTier3();
+        this.supportDownInvMass = this.tuning.supportDownInvMass();
+        this.contactPushGain = this.tuning.contactPushGain();
+        this.serverBlendAlpha = this.tuning.serverBlendAlpha();
+        this.serverBlendStaleTicks = this.tuning.serverBlendStaleTicks();
+        this.settleThresholdTicks = this.tuning.settleThresholdTicks();
+        this.settleMotionSqr = this.tuning.settleMotionSqr();
+        this.endpointWakeDistanceSqr = this.tuning.endpointWakeDistanceSqr();
+        this.settledBlockHashIntervalTicks = 10L;
+
         this.segments = segmentCount(a, b, this.tuning);
         this.nodes = segments + 1;
-        this.stableSeparation = RopeMath.stableUnitVector(seed);
+        this.stableSeparation = RopeSagModel.stableUnitVector(seed);
 
         x = new double[nodes];
         y = new double[nodes];
@@ -346,27 +350,22 @@ abstract class RopeSimulationCore {
         entityPushAccum = new double[nodes];
         lambdaDistance = new double[segments];
 
-        Vec3 dir = b.subtract(a);
+        RopeSagModel.writeCatenary(a, b, this.tuning.slack(), this.tuning.gravity(), stableSeparation, x, y, z);
+        double kickScale = 1.0D - RopeSagModel.tautProjectionWeight(this.tuning.slack());
         for (int i = 0; i < nodes; i++) {
             double t = i / (double) segments;
-            double nx = a.x + dir.x * t;
-            double ny = a.y + dir.y * t;
-            double nz = a.z + dir.z * t;
-            x[i] = nx;
-            y[i] = ny;
-            z[i] = nz;
-            xPrev[i] = nx;
-            yPrev[i] = ny;
-            zPrev[i] = nz;
-            xLastTick[i] = nx;
-            yLastTick[i] = ny;
-            zLastTick[i] = nz;
+            xPrev[i] = x[i];
+            yPrev[i] = y[i];
+            zPrev[i] = z[i];
+            xLastTick[i] = x[i];
+            yLastTick[i] = y[i];
+            zLastTick[i] = z[i];
             // Tiny lateral kick so the rope never starts as a perfect line (avoids
             // ambiguous normals).
             double s = Math.sin(Math.PI * t);
-            vx[i] = stableSeparation.x * 0.06D * s;
-            vy[i] = -0.035D * s;
-            vz[i] = stableSeparation.z * 0.06D * s;
+            vx[i] = stableSeparation.x * this.tuning.initialVelocityKick() * kickScale * s;
+            vy[i] = 0.0D;
+            vz[i] = stableSeparation.z * this.tuning.initialVelocityKick() * kickScale * s;
         }
         pinned[0] = true;
         pinned[nodes - 1] = true;
@@ -377,7 +376,7 @@ abstract class RopeSimulationCore {
     }
 
     protected static int segmentCount(Vec3 a, Vec3 b, RopeTuning tuning) {
-        return Math.max(MIN_SEGMENTS,
+        return Math.max(tuning.minSegments(),
                 Math.min(tuning.segmentMax(),
                         (int) Math.ceil(a.distanceTo(b) / tuning.segmentLength())));
     }
@@ -418,7 +417,52 @@ abstract class RopeSimulationCore {
         settledTicks = 0;
         quietTicks = 0;
         markBoundsDirty();
+        double tautWeight = RopeSagModel.tautProjectionWeight(next.slack());
+        if (tautWeight > 0.0D) {
+            Vec3 a = new Vec3(x[0], y[0], z[0]);
+            Vec3 b = new Vec3(x[nodes - 1], y[nodes - 1], z[nodes - 1]);
+            applyTautProjection(a, b, tautWeight, false);
+            snapPreviousStateToCurrent();
+        }
         return true;
+    }
+
+    protected void applyTautProjection(Vec3 a, Vec3 b, double weight, boolean preserveContactNodes) {
+        if (weight <= 0.0D || nodes < 3) {
+            return;
+        }
+        double clamped = Math.min(1.0D, weight);
+        double keepVelocity = 1.0D - clamped;
+        double dx = b.x - a.x;
+        double dy = b.y - a.y;
+        double dz = b.z - a.z;
+        for (int i = 1; i < nodes - 1; i++) {
+            if (preserveContactNodes && (contactNode[i] || supportNode[i])) {
+                continue;
+            }
+            double t = i / (double) segments;
+            double tx = a.x + dx * t;
+            double ty = a.y + dy * t;
+            double tz = a.z + dz * t;
+            x[i] += (tx - x[i]) * clamped;
+            y[i] += (ty - y[i]) * clamped;
+            z[i] += (tz - z[i]) * clamped;
+            vx[i] *= keepVelocity;
+            vy[i] *= keepVelocity;
+            vz[i] *= keepVelocity;
+        }
+        markBoundsDirty();
+    }
+
+    private void snapPreviousStateToCurrent() {
+        for (int i = 0; i < nodes; i++) {
+            xPrev[i] = x[i];
+            yPrev[i] = y[i];
+            zPrev[i] = z[i];
+            xLastTick[i] = x[i];
+            yLastTick[i] = y[i];
+            zLastTick[i] = z[i];
+        }
     }
 
     /**
@@ -509,7 +553,7 @@ abstract class RopeSimulationCore {
     }
 
     public boolean isSettled() {
-        return settledTicks >= SETTLE_THRESHOLD_TICKS;
+        return settledTicks >= settleThresholdTicks;
     }
 
     public int quietTicks() {
@@ -577,7 +621,7 @@ abstract class RopeSimulationCore {
     private double desiredProxyLength(double ax, double ay, double az, double bx, double by, double bz) {
         Vec3 a = new Vec3(ax, ay, az);
         Vec3 b = new Vec3(bx, by, bz);
-        return a.distanceTo(b) * slackFactor(a, b);
+        return RopeSagModel.physicsTargetLength(a, b, tuning.slack(), tuning.gravity());
     }
 
     public boolean boundsOverlap(RopeSimulation other, double margin) {
@@ -637,7 +681,7 @@ abstract class RopeSimulationCore {
         if (pinned[i])
             return;
         if (supportNode[i] && dy < 0.0D)
-            dy *= SUPPORT_DOWN_INV_MASS;
+            dy *= supportDownInvMass;
         x[i] += dx;
         y[i] += dy;
         z[i] += dz;
@@ -687,7 +731,7 @@ abstract class RopeSimulationCore {
         double daX = a.x - lastAx, daY = a.y - lastAy, daZ = a.z - lastAz;
         double dbX = b.x - lastBx, dbY = b.y - lastBy, dbZ = b.z - lastBz;
         boolean moved = daX * daX + daY * daY + daZ * daZ
-                + dbX * dbX + dbY * dbY + dbZ * dbZ > ENDPOINT_WAKE_DISTANCE_SQR;
+                + dbX * dbX + dbY * dbY + dbZ * dbZ > endpointWakeDistanceSqr;
         rememberEndpoints(a, b);
         return moved;
     }
@@ -702,16 +746,7 @@ abstract class RopeSimulationCore {
     }
 
     protected double slackFactor(Vec3 a, Vec3 b) {
-        // With no gravity the physically expected zone-preset behaviour is a taut
-        // straight rope.
-        // Keeping slack > 1 here would force the solver to invent sideways/downward
-        // bends just to
-        // spend the extra length, making a gravity=0 preset still look sagged.
-        if (Math.abs(tuning.gravity()) < 1.0e-9D)
-            return 1.0D;
-        if (a.distanceToSqr(b) < 1.0e-12D)
-            return 1.0D;
-        return tuning.slack();
+        return RopeSagModel.slackFactor(a, b, tuning.slack(), tuning.gravity());
     }
 
     protected boolean anyNeighborAwake(List<RopeSimulation> neighbors) {
@@ -719,7 +754,7 @@ abstract class RopeSimulationCore {
             RopeSimulation n = neighbors.get(i);
             if (n == this)
                 continue;
-            if (!n.isSettled() && boundsOverlap(n, ROPE_REPEL_DISTANCE))
+            if (!n.isSettled() && boundsOverlap(n, ropeRepelDistance))
                 return true;
         }
         return false;
@@ -735,11 +770,11 @@ abstract class RopeSimulationCore {
             if (m > maxMotionSqr)
                 maxMotionSqr = m;
         }
-        if (maxMotionSqr < SETTLE_MOTION_SQR)
+        if (maxMotionSqr < settleMotionSqr)
             settledTicks++;
         else
             settledTicks = 0;
-        if (maxMotionSqr < SETTLE_MOTION_SQR)
+        if (maxMotionSqr < settleMotionSqr)
             quietTicks++;
         else
             quietTicks = 0;
@@ -748,7 +783,7 @@ abstract class RopeSimulationCore {
     protected boolean blockHashUnchanged(Level level, long currentTick) {
         if (blockHashInit && isSettled()
                 && lastBlockHashCheckTick != UNINIT
-                && currentTick - lastBlockHashCheckTick < SETTLED_BLOCK_HASH_INTERVAL_TICKS) {
+                && currentTick - lastBlockHashCheckTick < settledBlockHashIntervalTicks) {
             return true;
         }
         lastBlockHashCheckTick = currentTick;
@@ -766,12 +801,12 @@ abstract class RopeSimulationCore {
 
     private long computeBlockHash(Level level) {
         updateBounds();
-        int bx0 = (int) Math.floor(minX - ROPE_RADIUS) - 1;
-        int bx1 = (int) Math.floor(maxX + ROPE_RADIUS) + 1;
-        int by0 = (int) Math.floor(minY - ROPE_RADIUS) - 1;
-        int by1 = (int) Math.floor(maxY + ROPE_RADIUS) + 1;
-        int bz0 = (int) Math.floor(minZ - ROPE_RADIUS) - 1;
-        int bz1 = (int) Math.floor(maxZ + ROPE_RADIUS) + 1;
+        int bx0 = (int) Math.floor(minX - ropeRadius) - 1;
+        int bx1 = (int) Math.floor(maxX + ropeRadius) + 1;
+        int by0 = (int) Math.floor(minY - ropeRadius) - 1;
+        int by1 = (int) Math.floor(maxY + ropeRadius) + 1;
+        int bz0 = (int) Math.floor(minZ - ropeRadius) - 1;
+        int bz1 = (int) Math.floor(maxZ + ropeRadius) + 1;
         long hash = 1469598103934665603L;
         BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
         for (int by = by0; by <= by1; by++) {

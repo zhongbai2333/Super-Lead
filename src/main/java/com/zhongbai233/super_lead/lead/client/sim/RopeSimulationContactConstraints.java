@@ -50,7 +50,7 @@ abstract class RopeSimulationContactConstraints extends RopeSimulationTerrainCon
     // Constraint: rope-rope
     // ============================================================================================
     protected void solveRopeRopeConstraints(List<RopeSimulation> neighbors) {
-        final double m = ROPE_REPEL_DISTANCE;
+        final double m = ropeRepelDistance;
         refreshSegmentAabbs();
         final double[] amin = this.segAabb;
         final int aSegs = this.segments;
@@ -134,7 +134,7 @@ abstract class RopeSimulationContactConstraints extends RopeSimulationTerrainCon
     protected void solveEntityConstraints(List<AABB> entityBoxes) {
         if (entityBoxes.isEmpty())
             return;
-        double r = ROPE_RADIUS + COLLISION_EPS;
+        double r = ropeRadius + collisionEps;
         updateBounds();
         for (int e = 0; e < entityBoxes.size(); e++) {
             AABB box = entityBoxes.get(e);
@@ -155,6 +155,8 @@ abstract class RopeSimulationContactConstraints extends RopeSimulationTerrainCon
         double bx = x[b], by = y[b], bz = z[b];
         double ux = bx - ax, uy = by - ay, uz = bz - az;
         double segLenSqr = ux * ux + uy * uy + uz * uz;
+        double segLen = Math.sqrt(segLenSqr);
+        double verticality = segLen > 1.0e-6D ? Math.abs(uy) / segLen : 0.0D;
         double s;
         double cpx, cpy, cpz;
         double spx, spy, spz;
@@ -220,6 +222,16 @@ abstract class RopeSimulationContactConstraints extends RopeSimulationTerrainCon
             nx = dx * inv;
             ny = dy * inv;
             nz = dz * inv;
+
+            if (verticality > 0.82D && cpy > box.minY + 1.0e-6D && cpy < box.maxY - 1.0e-6D) {
+                double hLenSqr = nx * nx + nz * nz;
+                if (hLenSqr > 1.0e-8D) {
+                    double invH = 1.0D / Math.sqrt(hLenSqr);
+                    nx *= invH;
+                    ny = 0.0D;
+                    nz *= invH;
+                }
+            }
 
             // Budgeted slip-under / slip-over. Default behaviour stays lateral push so the
             // rope
@@ -293,17 +305,19 @@ abstract class RopeSimulationContactConstraints extends RopeSimulationTerrainCon
                 ny = 0.0D;
                 nz = 1.0D;
             }
-            if (pyNeg < bestPen) {
-                bestPen = pyNeg;
-                nx = 0.0D;
-                ny = -1.0D;
-                nz = 0.0D;
-            }
-            if (pyPos < bestPen) {
-                bestPen = pyPos;
-                nx = 0.0D;
-                ny = 1.0D;
-                nz = 0.0D;
+            if (verticality <= 0.82D) {
+                if (pyNeg < bestPen) {
+                    bestPen = pyNeg;
+                    nx = 0.0D;
+                    ny = -1.0D;
+                    nz = 0.0D;
+                }
+                if (pyPos < bestPen) {
+                    bestPen = pyPos;
+                    nx = 0.0D;
+                    ny = 1.0D;
+                    nz = 0.0D;
+                }
             }
             pushLen = bestPen + radius;
         }
@@ -350,7 +364,7 @@ abstract class RopeSimulationContactConstraints extends RopeSimulationTerrainCon
                 x[i], y[i], z[i], x[i + 1], y[i + 1], z[i + 1],
                 oX[j], oY[j], oZ[j], oX[j + 1], oY[j + 1], oZ[j + 1],
                 pairScratch);
-        if (pairScratch.distSqr >= ROPE_REPEL_DISTANCE * ROPE_REPEL_DISTANCE)
+        if (pairScratch.distSqr >= ropeRepelDistance * ropeRepelDistance)
             return;
 
         double s = pairScratch.s;
@@ -366,7 +380,7 @@ abstract class RopeSimulationContactConstraints extends RopeSimulationTerrainCon
             nz = pairScratch.dz / dist;
         }
 
-        double penetration = ROPE_REPEL_DISTANCE - dist;
+        double penetration = ropeRepelDistance - dist;
 
         // Inverse mass per contact point: w = (1-t)^2 * w_i + t^2 * w_{i+1}.
         // Important: this per-rope step must not mutate `other`. The client driver
@@ -396,7 +410,7 @@ abstract class RopeSimulationContactConstraints extends RopeSimulationTerrainCon
         // convergence costs
         // ~1 extra tick on settle but jitter goes away.
         if (parallelPhase())
-            dlambda *= ROPE_ROPE_PARALLEL_RELAX;
+            dlambda *= ropeRopeParallelRelax;
 
         double cx = nx * dlambda, cy = ny * dlambda, cz = nz * dlambda;
         applyRopeRopeCorrection(i, (1.0D - s) * (pinned[i] ? 0.0D : 1.0D),
@@ -415,7 +429,7 @@ abstract class RopeSimulationContactConstraints extends RopeSimulationTerrainCon
         // can still
         // be lifted upward (so the upper rope is the one that visibly shifts).
         if (supportNode[i] && dy < 0.0D)
-            dy *= SUPPORT_DOWN_INV_MASS;
+            dy *= supportDownInvMass;
         x[i] += dx;
         y[i] += dy;
         z[i] += dz;

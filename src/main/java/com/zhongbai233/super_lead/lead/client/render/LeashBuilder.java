@@ -16,6 +16,8 @@ public final class LeashBuilder {
     public static final int DEFAULT_HIGHLIGHT = 0x66FFEE84;
 
     private static final double HIGHLIGHT_RIBBON_DISTANCE_SQR = 24.0D * 24.0D;
+    private static final double STEEP_RENDER_VERTICALITY = 0.984807753012208D; // sin(80deg)
+    private static final double SHARP_JOINT_DOT = 0.7071067811865476D; // cos(45deg)
 
     private static double halfThickness(RopeTuning tuning) {
         return effectiveTuning(tuning).halfThickness();
@@ -135,8 +137,23 @@ public final class LeashBuilder {
             int tier,
             float[] pulsePositions,
             int extractEnd) {
+        return collect(sim, blockA, blockB, skyA, skyB, highlightColor,
+                kind, powered, tier, pulsePositions, extractEnd, false);
+    }
+
+    public static RopeJob collect(
+            RopeSimulation sim,
+            int blockA, int blockB,
+            int skyA, int skyB,
+            int highlightColor,
+            LeadKind kind,
+            boolean powered,
+            int tier,
+            float[] pulsePositions,
+            int extractEnd,
+            boolean chunkMeshActive) {
         return new RopeJob(sim, blockA, blockB, skyA, skyB, highlightColor,
-                kind, powered, tier, pulsePositions, extractEnd);
+                kind, powered, tier, pulsePositions, extractEnd, chunkMeshActive);
     }
 
     private static final PoseStack BATCH_POSE = new PoseStack();
@@ -234,13 +251,15 @@ public final class LeashBuilder {
                 stride = maxStride;
         }
 
-        // Static bake fast-path: any non-highlighted rope (3D box OR flat ribbon)
+        // Static bake fast-path: the opaque base rope (3D box OR flat ribbon)
         // reuses
         // baked world-space vertices until positions, light or material change. Ribbon
         // bakes additionally key on a coarse camera bin since the ribbon's side vector
         // depends on view direction; bin size of 4 blocks keeps re-bakes rare during
         // normal walking while drift stays visually negligible.
-        boolean canBake = job.highlightColor == NO_HIGHLIGHT;
+        boolean hasHighlight = job.highlightColor != NO_HIGHLIGHT;
+        boolean skipBasePass = hasHighlight && job.chunkMeshActive;
+        boolean canBake = !skipBasePass;
         if (canBake) {
             int pulsesHash = pulsesHash(job.pulsePositions, job.extractEnd);
             int kindOrd = job.kind.ordinal()
@@ -255,6 +274,8 @@ public final class LeashBuilder {
                     curHalfThickness)) {
                 cacheHits++;
                 emitBaked(buffer, poseState, cameraPos, sim);
+                renderHighlightPass(buffer, poseState, cameraPos, job, sim, nodeCount, totalLength,
+                        effectiveBlockA, effectiveBlockB, ribbonLod, cheapHighlight, stride);
                 return;
             }
             cacheMisses++;
@@ -287,35 +308,30 @@ public final class LeashBuilder {
                     kindOrd, job.powered, job.tier, pulsesHash, colorHash, cameraBin,
                     curHalfThickness);
             emitBaked(buffer, poseState, cameraPos, sim);
+            renderHighlightPass(buffer, poseState, cameraPos, job, sim, nodeCount, totalLength,
+                    effectiveBlockA, effectiveBlockB, ribbonLod, cheapHighlight, stride);
             return;
         }
 
-        if (ribbonLod) {
+        renderHighlightPass(buffer, poseState, cameraPos, job, sim, nodeCount, totalLength,
+                effectiveBlockA, effectiveBlockB, ribbonLod, cheapHighlight, stride);
+    }
+
+    private static void renderHighlightPass(VertexConsumer buffer, PoseStack.Pose poseState, Vec3 cameraPos,
+            RopeJob job, RopeSimulation sim, int nodeCount, double totalLength,
+            int effectiveBlockA, int effectiveBlockB, boolean ribbonLod, boolean cheapHighlight, int stride) {
+        if (job.highlightColor == NO_HIGHLIGHT) {
+            return;
+        }
+        if (ribbonLod || cheapHighlight) {
             renderRibbon(buffer, poseState, cameraPos, sim, nodeCount, totalLength,
                     effectiveBlockA, effectiveBlockB, job.skyA, job.skyB,
-                    NO_HIGHLIGHT, job.kind, job.powered, job.tier, job.pulsePositions, job.extractEnd);
-            if (job.highlightColor != NO_HIGHLIGHT) {
-                renderRibbon(buffer, poseState, cameraPos, sim, nodeCount, totalLength,
-                        effectiveBlockA, effectiveBlockB, job.skyA, job.skyB,
-                        job.highlightColor, job.kind, job.powered, job.tier, job.pulsePositions, job.extractEnd);
-            }
-            return;
-        }
-
-        renderSquare(buffer, poseState, cameraPos, sim, nodeCount, totalLength,
-                effectiveBlockA, effectiveBlockB, job.skyA, job.skyB,
-                NO_HIGHLIGHT, job.kind, job.powered, job.tier, job.pulsePositions, job.extractEnd, stride);
-        if (job.highlightColor != NO_HIGHLIGHT) {
-            if (cheapHighlight) {
-                renderRibbon(buffer, poseState, cameraPos, sim, nodeCount, totalLength,
-                        effectiveBlockA, effectiveBlockB, job.skyA, job.skyB,
-                        job.highlightColor, job.kind, job.powered, job.tier, job.pulsePositions, job.extractEnd);
-            } else {
-                renderSquare(buffer, poseState, cameraPos, sim, nodeCount, totalLength,
-                        effectiveBlockA, effectiveBlockB, job.skyA, job.skyB,
-                        job.highlightColor, job.kind, job.powered, job.tier, job.pulsePositions, job.extractEnd,
-                        stride);
-            }
+                    job.highlightColor, job.kind, job.powered, job.tier, job.pulsePositions, job.extractEnd);
+        } else {
+            renderSquare(buffer, poseState, cameraPos, sim, nodeCount, totalLength,
+                    effectiveBlockA, effectiveBlockB, job.skyA, job.skyB,
+                    job.highlightColor, job.kind, job.powered, job.tier, job.pulsePositions, job.extractEnd,
+                    stride);
         }
     }
 
@@ -347,8 +363,18 @@ public final class LeashBuilder {
             float[] sux = sim.bakedSegUpX();
             float[] suy = sim.bakedSegUpY();
             float[] suz = sim.bakedSegUpZ();
+            int emitted = 0;
             for (int s = 0; s < segCount; s++) {
                 if (!sim.isSegmentVisible(s)) {
+                    continue;
+                }
+                int base = s * 16;
+                if (needsFullRenderSegment(sim, s)) {
+                    emitBakedFace(buffer, base, bx, by, bz, bc, bl, camX, camY, camZ);
+                    emitBakedFace(buffer, base + 4, bx, by, bz, bc, bl, camX, camY, camZ);
+                    emitBakedFace(buffer, base + 8, bx, by, bz, bc, bl, camX, camY, camZ);
+                    emitBakedFace(buffer, base + 12, bx, by, bz, bc, bl, camX, camY, camZ);
+                    emitted += 16;
                     continue;
                 }
                 float dx = smx[s] - camX;
@@ -356,13 +382,13 @@ public final class LeashBuilder {
                 float dz = smz[s] - camZ;
                 float dotS = dx * ssx[s] + dy * ssy[s] + dz * ssz[s];
                 float dotU = dx * sux[s] + dy * suy[s] + dz * suz[s];
-                int base = s * 16;
                 int sideBase = dotS < 0f ? base : base + 8; // face 0 (+side) or face 2 (-side)
                 int upBase = dotU < 0f ? base + 12 : base + 4; // face 3 (+up) or face 1 (-up)
                 emitBakedFace(buffer, sideBase, bx, by, bz, bc, bl, camX, camY, camZ);
                 emitBakedFace(buffer, upBase, bx, by, bz, bc, bl, camX, camY, camZ);
+                emitted += 8;
             }
-            verticesEmitted += segCount * 8;
+            verticesEmitted += emitted;
             return;
         }
         verticesEmitted += totalVerts;
@@ -382,6 +408,50 @@ public final class LeashBuilder {
                     .setColor(bc[i])
                     .setLight(bl[i]);
         }
+    }
+
+    private static boolean isSteepRenderSegment(RopeSimulation sim, int segment) {
+        if (segment < 0 || segment + 1 >= sim.nodeCount()) {
+            return false;
+        }
+        return isSteepRenderSegment(
+                sim.renderX(segment), sim.renderY(segment), sim.renderZ(segment),
+                sim.renderX(segment + 1), sim.renderY(segment + 1), sim.renderZ(segment + 1));
+    }
+
+    private static boolean isSteepRenderSegment(
+            double sx, double sy, double sz,
+            double ex, double ey, double ez) {
+        double dx = ex - sx;
+        double dy = ey - sy;
+        double dz = ez - sz;
+        double lenSqr = dx * dx + dy * dy + dz * dz;
+        return lenSqr > 1.0e-12D && Math.abs(dy) / Math.sqrt(lenSqr) >= STEEP_RENDER_VERTICALITY;
+    }
+
+    private static boolean needsFullRenderSegment(RopeSimulation sim, int segment) {
+        return isSteepRenderSegment(sim, segment)
+                || isSharpRenderJoint(sim, segment)
+                || isSharpRenderJoint(sim, segment + 1);
+    }
+
+    private static boolean isSharpRenderJoint(RopeSimulation sim, int node) {
+        if (node <= 0 || node + 1 >= sim.nodeCount()) {
+            return false;
+        }
+        double ax = sim.renderX(node) - sim.renderX(node - 1);
+        double ay = sim.renderY(node) - sim.renderY(node - 1);
+        double az = sim.renderZ(node) - sim.renderZ(node - 1);
+        double bx = sim.renderX(node + 1) - sim.renderX(node);
+        double by = sim.renderY(node + 1) - sim.renderY(node);
+        double bz = sim.renderZ(node + 1) - sim.renderZ(node);
+        double aLenSqr = ax * ax + ay * ay + az * az;
+        double bLenSqr = bx * bx + by * by + bz * bz;
+        if (aLenSqr <= 1.0e-12D || bLenSqr <= 1.0e-12D) {
+            return false;
+        }
+        double dot = (ax * bx + ay * by + az * bz) / Math.sqrt(aLenSqr * bLenSqr);
+        return dot < SHARP_JOINT_DOT;
     }
 
     private static void renderSquare(
@@ -488,104 +558,6 @@ public final class LeashBuilder {
         double eUpY = upY[i] + (upY[j] - upY[i]) * b;
         double eUpZ = upZ[i] + (upZ[j] - upZ[i]) * b;
 
-        // Node frames are shared by the two strips meeting at that node. At a tight
-        // U-turn (common on a vertical hanging chain's folded tail), the node tangent can
-        // point along the next strip while the previous strip is emitted in the opposite
-        // direction. The prism winding assumes up == side x actual-strip-tangent; if the
-        // stored up vector was built from the opposite tangent, the face winding inverts
-        // and back-face culling exposes the inside of the fold. Rebuild side/up against
-        // this strip's real direction just before emitting/baking.
-        double dirX = exw - sxw;
-        double dirY = eyw - syw;
-        double dirZ = ezw - szw;
-        double dirLen = Math.sqrt(dirX * dirX + dirY * dirY + dirZ * dirZ);
-        if (dirLen > 1.0e-8D) {
-            double invDir = 1.0D / dirLen;
-            dirX *= invDir;
-            dirY *= invDir;
-            dirZ *= invDir;
-
-            double sThickness = Math.sqrt(sSideX * sSideX + sSideY * sSideY + sSideZ * sSideZ);
-            double sAlong = sSideX * dirX + sSideY * dirY + sSideZ * dirZ;
-            sSideX -= dirX * sAlong;
-            sSideY -= dirY * sAlong;
-            sSideZ -= dirZ * sAlong;
-            double sLenSqr = sSideX * sSideX + sSideY * sSideY + sSideZ * sSideZ;
-            if (sLenSqr < 1.0e-12D) {
-                sSideX = -dirZ;
-                sSideY = 0.0D;
-                sSideZ = dirX;
-                sLenSqr = sSideX * sSideX + sSideZ * sSideZ;
-                if (sLenSqr < 1.0e-12D) {
-                    sSideX = 1.0D;
-                    sSideY = 0.0D;
-                    sSideZ = 0.0D;
-                    sAlong = sSideX * dirX + sSideY * dirY + sSideZ * dirZ;
-                    sSideX -= dirX * sAlong;
-                    sSideY -= dirY * sAlong;
-                    sSideZ -= dirZ * sAlong;
-                    sLenSqr = sSideX * sSideX + sSideY * sSideY + sSideZ * sSideZ;
-                    if (sLenSqr < 1.0e-12D) {
-                        sSideX = 0.0D;
-                        sSideY = 0.0D;
-                        sSideZ = 1.0D;
-                        sAlong = sSideX * dirX + sSideY * dirY + sSideZ * dirZ;
-                        sSideX -= dirX * sAlong;
-                        sSideY -= dirY * sAlong;
-                        sSideZ -= dirZ * sAlong;
-                        sLenSqr = sSideX * sSideX + sSideY * sSideY + sSideZ * sSideZ;
-                    }
-                }
-            }
-            double sScale = sThickness / Math.sqrt(sLenSqr);
-            sSideX *= sScale;
-            sSideY *= sScale;
-            sSideZ *= sScale;
-            sUpX = sSideY * dirZ - sSideZ * dirY;
-            sUpY = sSideZ * dirX - sSideX * dirZ;
-            sUpZ = sSideX * dirY - sSideY * dirX;
-
-            double eThickness = Math.sqrt(eSideX * eSideX + eSideY * eSideY + eSideZ * eSideZ);
-            double eAlong = eSideX * dirX + eSideY * dirY + eSideZ * dirZ;
-            eSideX -= dirX * eAlong;
-            eSideY -= dirY * eAlong;
-            eSideZ -= dirZ * eAlong;
-            double eLenSqr = eSideX * eSideX + eSideY * eSideY + eSideZ * eSideZ;
-            if (eLenSqr < 1.0e-12D) {
-                eSideX = -dirZ;
-                eSideY = 0.0D;
-                eSideZ = dirX;
-                eLenSqr = eSideX * eSideX + eSideZ * eSideZ;
-                if (eLenSqr < 1.0e-12D) {
-                    eSideX = 1.0D;
-                    eSideY = 0.0D;
-                    eSideZ = 0.0D;
-                    eAlong = eSideX * dirX + eSideY * dirY + eSideZ * dirZ;
-                    eSideX -= dirX * eAlong;
-                    eSideY -= dirY * eAlong;
-                    eSideZ -= dirZ * eAlong;
-                    eLenSqr = eSideX * eSideX + eSideY * eSideY + eSideZ * eSideZ;
-                    if (eLenSqr < 1.0e-12D) {
-                        eSideX = 0.0D;
-                        eSideY = 0.0D;
-                        eSideZ = 1.0D;
-                        eAlong = eSideX * dirX + eSideY * dirY + eSideZ * dirZ;
-                        eSideX -= dirX * eAlong;
-                        eSideY -= dirY * eAlong;
-                        eSideZ -= dirZ * eAlong;
-                        eLenSqr = eSideX * eSideX + eSideY * eSideY + eSideZ * eSideZ;
-                    }
-                }
-            }
-            double eScale = eThickness / Math.sqrt(eLenSqr);
-            eSideX *= eScale;
-            eSideY *= eScale;
-            eSideZ *= eScale;
-            eUpX = eSideY * dirZ - eSideZ * dirY;
-            eUpY = eSideZ * dirX - eSideX * dirZ;
-            eUpZ = eSideX * dirY - eSideY * dirX;
-        }
-
         if (bakeSim != null) {
             bakeSim.appendBakedSegment(
                     (sxw + exw) * 0.5D,
@@ -607,7 +579,8 @@ public final class LeashBuilder {
                 ezw - cameraPos.z,
                 sSideX, sSideY, sSideZ, sUpX, sUpY, sUpZ,
                 eSideX, eSideY, eSideZ, eUpX, eUpY, eUpZ,
-                stripe, light0, light1, highlightColor, kind, powered, tier);
+                stripe, light0, light1, highlightColor, kind, powered, tier,
+                needsFullRenderSegment(sim, stripe));
     }
 
     private static void buildNodeFrames(
@@ -918,7 +891,8 @@ public final class LeashBuilder {
             int highlightColor,
             LeadKind kind,
             boolean powered,
-            int tier) {
+            int tier,
+            boolean forceAllFaces) {
         double ax = sx + startSideX + startUpX, ay = sy + startSideY + startUpY, az = sz + startSideZ + startUpZ;
         double bx = sx + startSideX - startUpX, by = sy + startSideY - startUpY, bz = sz + startSideZ - startUpZ;
         double cx = sx - startSideX - startUpX, cy = sy - startSideY - startUpY, cz = sz - startSideZ - startUpZ;
@@ -928,7 +902,7 @@ public final class LeashBuilder {
         double gx = ex - endSideX - endUpX, gy = ey - endSideY - endUpY, gz = ez - endSideZ - endUpZ;
         double hx = ex - endSideX + endUpX, hy = ey - endSideY + endUpY, hz = ez - endSideZ + endUpZ;
 
-        if (activeBakeSim == null && highlightColor == NO_HIGHLIGHT) {
+        if (!forceAllFaces && activeBakeSim == null && highlightColor == NO_HIGHLIGHT) {
             double mx = (sx + ex) * 0.5D;
             double my = (sy + ey) * 0.5D;
             double mz = (sz + ez) * 0.5D;

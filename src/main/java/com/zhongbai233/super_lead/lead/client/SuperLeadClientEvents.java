@@ -30,6 +30,7 @@ import com.zhongbai233.super_lead.lead.client.render.ZiplineClientState;
 import com.zhongbai233.super_lead.lead.client.sim.RopeForceField;
 import com.zhongbai233.super_lead.lead.client.sim.RopeSimulation;
 import com.zhongbai233.super_lead.lead.client.sim.RopeTuning;
+import com.zhongbai233.super_lead.lead.physics.RopeSagModel;
 import com.zhongbai233.super_lead.preset.client.PhysicsZonesClient;
 import com.zhongbai233.super_lead.tuning.ClientTuning;
 import java.util.ArrayList;
@@ -69,6 +70,7 @@ public final class SuperLeadClientEvents {
      */
     private static final double ATTACH_PICK_RADIUS = 0.50D;
     private static final int ATTACHMENT_HIGHLIGHT_COLOR = LeashBuilder.DEFAULT_HIGHLIGHT;
+    private static final int ATTACHMENT_REMOVAL_HIGHLIGHT_COLOR = 0x66FF6040;
     private static final int ZIPLINE_HIGHLIGHT_COLOR = 0x883FCBFF;
     /**
      * Beyond this nearest-rope-span distance (blocks) the rope is dropped entirely
@@ -97,6 +99,10 @@ public final class SuperLeadClientEvents {
      */
     private static final double ENTITY_QUERY_MARGIN = 1.0D;
     private static final float[] EMPTY_PULSES = new float[0];
+
+    // Cached per-frame for the shears+shift removal ghost.
+    private static volatile UUID removalPreviewConnId;
+    private static volatile UUID removalPreviewAttachId;
 
     private static final Map<UUID, RopeSimulation> SIMS = new HashMap<>();
     private static RopeSimulation previewSim;
@@ -215,7 +221,7 @@ public final class SuperLeadClientEvents {
             return false;
         if (!SuperLeadNetwork.canModifyRopes(mc.player))
             return false;
-        AttachmentPick pick = pickAttachment(mc, mc.getDeltaTracker().getGameTimeDeltaPartialTick(false));
+        AttachmentPick pick = pickAttachmentForRemoval(mc, mc.getDeltaTracker().getGameTimeDeltaPartialTick(false));
         if (pick == null)
             return false;
         net.neoforged.neoforge.client.network.ClientPacketDistributor.sendToServer(
@@ -540,13 +546,14 @@ public final class SuperLeadClientEvents {
             if (length < 1.0e-6D) {
                 continue;
             }
-            double sag = Math.min(0.70D, length * 0.055D);
+            RopeTuning tuning = RopeTuning.forConnection(connection);
+            Vec3 fallback = RopeSagModel.stableUnitVector(connection.id().getLeastSignificantBits());
             final int segments = 16;
             for (int i = 0; i < segments; i++) {
                 double t0 = i / (double) segments;
                 double t1 = (i + 1) / (double) segments;
-                Vec3 segA = simpleSagPoint(endpointA, endpointB, t0, sag);
-                Vec3 segB = simpleSagPoint(endpointA, endpointB, t1, sag);
+                Vec3 segA = simpleSagPoint(endpointA, endpointB, t0, tuning, fallback);
+                Vec3 segB = simpleSagPoint(endpointA, endpointB, t1, tuning, fallback);
                 for (int sample = 0; sample <= 4; sample++) {
                     double frac = sample / 4.0D;
                     double t = t0 + (t1 - t0) * frac;
@@ -570,11 +577,8 @@ public final class SuperLeadClientEvents {
         return bestId == null ? null : new AttachPick(bestId, bestT, bestPoint, bestA, bestB);
     }
 
-    private static Vec3 simpleSagPoint(Vec3 a, Vec3 b, double t, double sag) {
-        return new Vec3(
-                a.x + (b.x - a.x) * t,
-                a.y + (b.y - a.y) * t - Math.sin(Math.PI * t) * sag,
-                a.z + (b.z - a.z) * t);
+    private static Vec3 simpleSagPoint(Vec3 a, Vec3 b, double t, RopeTuning tuning, Vec3 fallback) {
+        return RopeSagModel.point(a, b, t, tuning.slack(), tuning.gravity(), fallback);
     }
 
     /** Picks the existing attachment closest to the player's crosshair. */
@@ -642,6 +646,107 @@ public final class SuperLeadClientEvents {
                 double d2 = distancePointToRaySqr(bodyCenter.x, bodyCenter.y, bodyCenter.z,
                         cameraPos.x, cameraPos.y, cameraPos.z, dirX, dirY, dirZ, maxDistance);
                 double d = Math.min(d1, d2);
+                if (d < bestDistSqr) {
+                    bestDistSqr = d;
+                    bestConnId = connection.id();
+                    bestAttachId = attachment.id();
+                }
+            }
+        }
+        return bestConnId == null ? null : new AttachmentPick(bestConnId, bestAttachId);
+    }
+
+    /**
+     * Wider, more forgiving pick for attachment removal. When multiple ropes stack
+     * on the same block face their attachments can overlap visually; this version
+     * uses a larger radius and extends the ray further past block hits so the
+     * player doesn't need to pixel-aim.
+     */
+    private static AttachmentPick pickAttachmentForRemoval(Minecraft mc, float partialTick) {
+        Player player = mc.player;
+        if (player == null)
+            return null;
+        ClientLevel level = mc.level;
+        if (level == null)
+            return null;
+        Camera camera = mc.gameRenderer.getMainCamera();
+        Vec3 cameraPos = camera.position();
+        var fwd = camera.forwardVector();
+        double dirX = fwd.x(), dirY = fwd.y(), dirZ = fwd.z();
+        double inv = 1.0D / Math.sqrt(dirX * dirX + dirY * dirY + dirZ * dirZ);
+        dirX *= inv;
+        dirY *= inv;
+        dirZ *= inv;
+        double maxDistance = SuperLeadNetwork.MAX_LEASH_DISTANCE;
+        net.minecraft.world.phys.HitResult hit = mc.hitResult;
+        if (hit != null && hit.getType() != net.minecraft.world.phys.HitResult.Type.MISS) {
+            maxDistance = Math.min(maxDistance, hit.getLocation().distanceTo(cameraPos) + 2.0D);
+        }
+        double bestDistSqr = 1.20D * 1.20D;
+        UUID bestConnId = null;
+        UUID bestAttachId = null;
+
+        for (LeadConnection connection : SuperLeadNetwork.connections(level)) {
+            if (connection.attachments().isEmpty())
+                continue;
+            RopeSimulation sim = SIMS.get(connection.id());
+            if (sim == null)
+                continue;
+            double total = sim.prepareRender(partialTick);
+            if (total <= 0.0D)
+                continue;
+            int nodeCount = sim.nodeCount();
+            for (com.zhongbai233.super_lead.lead.RopeAttachment attachment : connection.attachments()) {
+                double target = attachment.t() * total;
+                int seg = 0;
+                for (int i = 0; i < nodeCount - 1; i++) {
+                    if (target <= sim.renderLength(i + 1)) {
+                        seg = i;
+                        break;
+                    }
+                    seg = i;
+                }
+                double l0 = sim.renderLength(seg);
+                double l1 = sim.renderLength(seg + 1);
+                double span = l1 - l0;
+                double frac = span > 1.0e-6D ? (target - l0) / span : 0.0D;
+                double px = sim.renderX(seg) + (sim.renderX(seg + 1) - sim.renderX(seg)) * frac;
+                double py = sim.renderY(seg) + (sim.renderY(seg + 1) - sim.renderY(seg)) * frac;
+                double pz = sim.renderZ(seg) + (sim.renderZ(seg + 1) - sim.renderZ(seg)) * frac;
+                // Anchor point
+                double d1 = distancePointToRaySqr(px, py, pz,
+                        cameraPos.x, cameraPos.y, cameraPos.z, dirX, dirY, dirZ, maxDistance);
+                // Body centre
+                Vec3 bodyCenter = RopeAttachmentRenderer.attachmentBodyCenter(level,
+                        attachment.stack(), attachment.displayAsBlock(), attachment.frontSide(),
+                        px, py, pz,
+                        sim.renderX(seg), sim.renderY(seg), sim.renderZ(seg),
+                        sim.renderX(seg + 1), sim.renderY(seg + 1), sim.renderZ(seg + 1));
+                double d2 = distancePointToRaySqr(bodyCenter.x, bodyCenter.y, bodyCenter.z,
+                        cameraPos.x, cameraPos.y, cameraPos.z, dirX, dirY, dirZ, maxDistance);
+                // Extra sample points around the body for larger items (signs, lanterns, etc.)
+                double d3 = Double.POSITIVE_INFINITY;
+                double d4 = Double.POSITIVE_INFINITY;
+                double margin = 0.35D;
+                double d3p = distancePointToRaySqr(bodyCenter.x, bodyCenter.y - margin, bodyCenter.z,
+                        cameraPos.x, cameraPos.y, cameraPos.z, dirX, dirY, dirZ, maxDistance);
+                double d4p = distancePointToRaySqr(bodyCenter.x, bodyCenter.y + margin, bodyCenter.z,
+                        cameraPos.x, cameraPos.y, cameraPos.z, dirX, dirY, dirZ, maxDistance);
+                d3 = Math.min(d3p, d4p);
+                // Horizontal spread
+                double sx = sim.renderX(seg + 1) - sim.renderX(seg);
+                double sz = sim.renderZ(seg + 1) - sim.renderZ(seg);
+                double hLen = Math.sqrt(sx * sx + sz * sz);
+                if (hLen > 1.0e-6D) {
+                    double nx = -sz / hLen;
+                    double nz = sx / hLen;
+                    double d5 = distancePointToRaySqr(px + nx * margin, py, pz + nz * margin,
+                            cameraPos.x, cameraPos.y, cameraPos.z, dirX, dirY, dirZ, maxDistance);
+                    double d6 = distancePointToRaySqr(px - nx * margin, py, pz - nz * margin,
+                            cameraPos.x, cameraPos.y, cameraPos.z, dirX, dirY, dirZ, maxDistance);
+                    d3 = Math.min(d3, Math.min(d5, d6));
+                }
+                double d = Math.min(Math.min(d1, d2), Math.min(d3, d4));
                 if (d < bestDistSqr) {
                     bestDistSqr = d;
                     bestConnId = connection.id();
@@ -720,6 +825,7 @@ public final class SuperLeadClientEvents {
         List<LeadConnection> connections = SuperLeadNetwork.connections(level);
         StaticRopeChunkRegistry staticRopes = StaticRopeChunkRegistry.get();
         Set<UUID> active = new HashSet<>(Math.max(16, connections.size() * 2));
+        Map<UUID, Double> lodDistanceByConnection = new HashMap<>(connections.size());
         List<RenderEntry> simEntries = new ArrayList<>(connections.size());
         List<RenderEntry> renderEntries = new ArrayList<>(connections.size());
         Set<UUID> parrotWeightedRopes = new HashSet<>();
@@ -735,6 +841,7 @@ public final class SuperLeadClientEvents {
             Vec3 a = endpoints.from();
             Vec3 b = endpoints.to();
             double lodDistSqr = ropeDistanceSqr(a, b, cameraPos);
+            lodDistanceByConnection.put(connection.id(), lodDistSqr);
             if (lodDistSqr > MAX_RENDER_DISTANCE_SQR)
                 continue;
             if (lodDistSqr > PHYSICS_LOD_DISTANCE_SQR
@@ -748,7 +855,6 @@ public final class SuperLeadClientEvents {
             boolean rebuiltSim = false;
             if (sim == null || !sim.matchesLength(a, b, tuning)) {
                 sim = new RopeSimulation(a, b, connection.id().getLeastSignificantBits(), tuning);
-                sim.resetCatenary(a, b, initialSagFactor(tuning));
                 SIMS.put(connection.id(), sim);
                 rebuiltSim = true;
             } else {
@@ -828,27 +934,8 @@ public final class SuperLeadClientEvents {
                 .bakedAttachmentsForRender(tick);
         // LOD: drop baked attachments for ropes past the physics distance so far
         // ropes don't waste GPU on small decoration items nobody can see.
-        if (!bakedStaticAttachments.isEmpty()) {
-            java.util.Set<UUID> farConnectionIds = new HashSet<>();
-            for (LeadConnection connection : connections) {
-                LeadEndpointLayout.Endpoints endpoints = LeadEndpointLayout.endpoints(level, connection, connections);
-                Vec3 a = endpoints.from();
-                Vec3 b = endpoints.to();
-                if (ropeDistanceSqr(a, b, cameraPos) > PHYSICS_LOD_DISTANCE_SQR) {
-                    farConnectionIds.add(connection.id());
-                }
-            }
-            if (!farConnectionIds.isEmpty()) {
-                List<RopeAttachmentRenderer.BakedAttachment> filtered = new ArrayList<>(
-                        bakedStaticAttachments.size());
-                for (RopeAttachmentRenderer.BakedAttachment attachment : bakedStaticAttachments) {
-                    if (!farConnectionIds.contains(attachment.connectionId())) {
-                        filtered.add(attachment);
-                    }
-                }
-                bakedStaticAttachments = filtered.isEmpty() ? List.of() : List.copyOf(filtered);
-            }
-        }
+        bakedStaticAttachments = filterBakedStaticAttachments(
+                bakedStaticAttachments, lodDistanceByConnection, null);
         RopeDynamicLights.update(level, cameraPos, connections,
                 id -> staticRopes.isClaimed(id) && !staticRopes.shouldDynamicLinger(id, tick)
                         ? null
@@ -858,22 +945,17 @@ public final class SuperLeadClientEvents {
 
         ConnectionHighlight highlight = pickHighlightedConnection(minecraft, renderEntries, partialTick, cameraPos);
         UUID highlightedConnectionId = highlight == null ? null : highlight.id();
-        if (highlightedConnectionId != null && !bakedStaticAttachments.isEmpty()) {
-            List<RopeAttachmentRenderer.BakedAttachment> filtered = new ArrayList<>(bakedStaticAttachments.size());
-            for (RopeAttachmentRenderer.BakedAttachment attachment : bakedStaticAttachments) {
-                if (!attachment.connectionId().equals(highlightedConnectionId)) {
-                    filtered.add(attachment);
-                }
-            }
-            bakedStaticAttachments = filtered.isEmpty() ? List.of() : List.copyOf(filtered);
-        }
+        bakedStaticAttachments = filterBakedStaticAttachments(
+                bakedStaticAttachments, lodDistanceByConnection, highlightedConnectionId);
 
         List<RopeJob> ropeJobs = new ArrayList<>(renderEntries.size());
         for (RenderEntry entry : renderEntries) {
-            if (staticRopes.isClaimed(entry.connection().id())
-                    && !staticRopes.shouldDynamicLinger(entry.connection().id(), tick)
-                    && (highlightedConnectionId == null || !entry.connection().id().equals(highlightedConnectionId))) {
-                RopeSectionSnapshot snapshot = staticRopes.snapshotForRender(entry.connection().id(), tick);
+            UUID connectionId = entry.connection().id();
+            boolean chunkMeshActive = staticRopes.isClaimed(connectionId)
+                    && !staticRopes.shouldDynamicLinger(connectionId, tick);
+            if (chunkMeshActive
+                    && (highlightedConnectionId == null || !connectionId.equals(highlightedConnectionId))) {
+                RopeSectionSnapshot snapshot = staticRopes.snapshotForRender(connectionId, tick);
                 if (snapshot != null) {
                     spawnRedstoneParticles(level, snapshot, entry.connection(), entry.lodDistSqr());
                     spawnEnergyParticles(level, snapshot, entry.connection(), entry.lodDistSqr());
@@ -890,18 +972,18 @@ public final class SuperLeadClientEvents {
             int blockB = RopeDynamicLights.boostBlockLight(lightB, level.getBrightness(LightLayer.BLOCK, lightB));
             int skyA = level.getBrightness(LightLayer.SKY, lightA);
             int skyB = level.getBrightness(LightLayer.SKY, lightB);
-            int highlightColor = highlight != null && entry.connection().id().equals(highlight.id())
+            int highlightColor = highlight != null && connectionId.equals(highlight.id())
                     ? highlight.color()
                     : LeashBuilder.NO_HIGHLIGHT;
             float[] pulses = computeItemPulses(entry.connection(), tick, partialTick);
-                int extractEnd = (entry.connection().kind() == LeadKind.ITEM
+            int extractEnd = (entry.connection().kind() == LeadKind.ITEM
                     || entry.connection().kind() == LeadKind.FLUID
                     || entry.connection().kind() == LeadKind.PRESSURIZED)
                     ? entry.connection().extractAnchor()
                     : 0;
             ropeJobs.add(LeashBuilder.collect(sim, blockA, blockB, skyA, skyB, highlightColor,
                     entry.connection().kind(), entry.connection().powered(), entry.connection().tier(),
-                    pulses, extractEnd));
+                    pulses, extractEnd, chunkMeshActive));
             spawnRedstoneParticles(level, sim, partialTick, entry.connection(), entry.lodDistSqr());
             spawnEnergyParticles(level, sim, partialTick, entry.connection(), entry.lodDistSqr());
             if (!entry.connection().attachments().isEmpty()
@@ -915,7 +997,7 @@ public final class SuperLeadClientEvents {
         RopeAttachmentRenderer.submitBakedAll(event.getSubmitNodeCollector(), cameraPos, level, bakedStaticAttachments);
         LeashBuilder.flush(event.getSubmitNodeCollector(), cameraPos, partialTick, ropeJobs);
         ZiplineClientState.submitVisuals(event.getSubmitNodeCollector(), cameraPos, level, partialTick,
-            id -> SIMS.get(id));
+                id -> SIMS.get(id));
         publishDebugStats(connections, simEntries, renderEntries, staticRopes, ropeJobs);
         SIMS.keySet().retainAll(active);
         ItemFlowAnimator.retainAll(active);
@@ -923,6 +1005,28 @@ public final class SuperLeadClientEvents {
         HOVERED_CONNECTION = highlight == null ? null : findById(renderEntries, highlight.id());
         HOVERED_HIT_POINT = highlight == null ? null : highlight.hitPoint();
         HOVERED_HIT_T = highlight == null ? 0.5D : highlight.hitT();
+
+        // Attachment removal preview: while holding shears + shift and aiming at an
+        // existing attachment, draw a translucent ghost to confirm the target.
+        UUID removalConnId = removalPreviewConnId;
+        UUID removalAttachId = removalPreviewAttachId;
+        if (removalConnId != null && removalAttachId != null) {
+            RopeSimulation removalSim = SIMS.get(removalConnId);
+            if (removalSim != null) {
+                for (LeadConnection c : SuperLeadNetwork.connections(minecraft.level)) {
+                    if (!c.id().equals(removalConnId))
+                        continue;
+                    for (com.zhongbai233.super_lead.lead.RopeAttachment a : c.attachments()) {
+                        if (a.id().equals(removalAttachId)) {
+                            RopeAttachmentRenderer.submitGhost(event.getSubmitNodeCollector(),
+                                    cameraPos, level, removalSim, a.stack(), a.t(), partialTick);
+                            break;
+                        }
+                    }
+                    break;
+                }
+            }
+        }
 
         // Attachment placement preview: while holding a non-empty item (and NOT
         // sneaking,
@@ -1018,6 +1122,36 @@ public final class SuperLeadClientEvents {
         int skyB = level.getBrightness(LightLayer.SKY, lightB);
         LeashBuilder.submit(event.getSubmitNodeCollector(), cameraPos, previewSim, partialTick,
                 blockA, blockB, skyA, skyB, false, kind, false);
+    }
+
+    private static List<RopeAttachmentRenderer.BakedAttachment> filterBakedStaticAttachments(
+            List<RopeAttachmentRenderer.BakedAttachment> attachments,
+            Map<UUID, Double> lodDistanceByConnection,
+            UUID highlightedConnectionId) {
+        if (attachments.isEmpty()) {
+            return attachments;
+        }
+        List<RopeAttachmentRenderer.BakedAttachment> filtered = null;
+        for (int i = 0; i < attachments.size(); i++) {
+            RopeAttachmentRenderer.BakedAttachment attachment = attachments.get(i);
+            Double lodDistSqr = lodDistanceByConnection.get(attachment.connectionId());
+            boolean drop = lodDistSqr != null && lodDistSqr > PHYSICS_LOD_DISTANCE_SQR;
+            if (!drop && highlightedConnectionId != null
+                    && attachment.connectionId().equals(highlightedConnectionId)) {
+                drop = true;
+            }
+            if (drop) {
+                if (filtered == null) {
+                    filtered = new ArrayList<>(attachments.size());
+                    for (int j = 0; j < i; j++) {
+                        filtered.add(attachments.get(j));
+                    }
+                }
+            } else if (filtered != null) {
+                filtered.add(attachment);
+            }
+        }
+        return filtered == null ? attachments : filtered.isEmpty() ? List.of() : List.copyOf(filtered);
     }
 
     private static float[] computeItemPulses(LeadConnection connection, long currentTick, float partialTick) {
@@ -1309,10 +1443,6 @@ public final class SuperLeadClientEvents {
         return value < 0.0D ? 0.0D : (value > 1.0D ? 1.0D : value);
     }
 
-    private static double initialSagFactor(RopeTuning tuning) {
-        return Math.abs(tuning.gravity()) < 1.0e-9D ? 0.0D : 0.035D;
-    }
-
     private static ConnectionHighlight pickHighlightedConnection(Minecraft minecraft, List<RenderEntry> entries,
             float partialTick, Vec3 cameraPos) {
         Player player = minecraft.player;
@@ -1325,6 +1455,10 @@ public final class SuperLeadClientEvents {
         }
         if (!SuperLeadNetwork.canModifyRopes(player)) {
             return null;
+        }
+        ConnectionHighlight removalHighlight = pickAttachmentRemovalHighlight(minecraft, partialTick);
+        if (removalHighlight != null) {
+            return removalHighlight;
         }
         ConnectionHighlight attachmentHighlight = pickAttachmentPlacementHighlight(minecraft, partialTick);
         if (attachmentHighlight != null) {
@@ -1428,6 +1562,43 @@ public final class SuperLeadClientEvents {
         }
         return new ConnectionHighlight(pick.connectionId(), ZIPLINE_HIGHLIGHT_COLOR,
                 pick.point(), pick.t());
+    }
+
+    private static ConnectionHighlight pickAttachmentRemovalHighlight(Minecraft minecraft, float partialTick) {
+        removalPreviewConnId = null;
+        removalPreviewAttachId = null;
+        Player player = minecraft.player;
+        if (player == null) {
+            return null;
+        }
+        if (!SuperLeadNetwork.canModifyRopes(player)) {
+            return null;
+        }
+        if (!player.isShiftKeyDown()) {
+            return null;
+        }
+        net.minecraft.world.item.ItemStack main = player.getMainHandItem();
+        net.minecraft.world.item.ItemStack off = player.getOffhandItem();
+        if (!main.is(net.minecraft.world.item.Items.SHEARS) && !off.is(net.minecraft.world.item.Items.SHEARS)) {
+            return null;
+        }
+        AttachmentPick pick = pickAttachmentForRemoval(minecraft, partialTick);
+        if (pick == null) {
+            return null;
+        }
+        for (LeadConnection connection : SuperLeadNetwork.connections(minecraft.level)) {
+            if (!connection.id().equals(pick.connectionId()))
+                continue;
+            for (com.zhongbai233.super_lead.lead.RopeAttachment a : connection.attachments()) {
+                if (a.id().equals(pick.attachmentId())) {
+                    removalPreviewConnId = pick.connectionId();
+                    removalPreviewAttachId = pick.attachmentId();
+                    return new ConnectionHighlight(pick.connectionId(), ATTACHMENT_REMOVAL_HIGHLIGHT_COLOR,
+                            Vec3.ZERO, a.t());
+                }
+            }
+        }
+        return null;
     }
 
     private static ConnectionHighlight pickAttachmentPlacementHighlight(Minecraft minecraft, float partialTick) {

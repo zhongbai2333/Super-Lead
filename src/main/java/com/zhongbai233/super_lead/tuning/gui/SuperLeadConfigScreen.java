@@ -21,7 +21,9 @@ public final class SuperLeadConfigScreen extends Screen {
     static final int WIDGET_H = 16;
 
     private static final int PADDING = 8;
-    private static final int TAB_HEIGHT = 18;
+    private static final int SIDEBAR_W = 100;
+    private static final int TAB_BTN_H = 20;
+    private static final int TAB_GAP = 2;
     private static final int DESC_GAP = 2;
     private static final int DESC_H = 9;
     private static final int ROW_HEIGHT = WIDGET_H + DESC_GAP + DESC_H;
@@ -63,42 +65,46 @@ public final class SuperLeadConfigScreen extends Screen {
 
         preview.setViewport(0, 0, this.width, this.height);
 
-        int tabsY = PADDING + 12;
-        int tabX = PADDING;
-        for (int i = 0; i < groups.size(); i++) {
-            int index = i;
-            net.minecraft.network.chat.Component label = groupLabel(groups.get(i));
-            int tabWidth = Math.max(60, this.font.width(label) + 12);
-            Button tab = Button.builder(label, button -> {
-                this.activeTab = index;
-                this.scrollOffset = 0;
-                this.rebuildWidgets();
-            }).bounds(tabX, tabsY, tabWidth, TAB_HEIGHT).build();
-            tab.active = i != activeTab;
-            addRenderableWidget(tab);
-            tabX += tabWidth + 4;
-        }
-
-        rebuildBody(tabsY + TAB_HEIGHT + 6);
+        // --- Top bar: title + action buttons ---
+        int topBarY = PADDING;
 
         Button close = Button.builder(Component.translatable("super_lead.config.close"), button -> onClose())
-                .bounds(this.width - PADDING - 60, PADDING, 60, 14)
+                .bounds(this.width - PADDING - 60, topBarY, 60, 14)
                 .build();
         addRenderableWidget(close);
 
         Button opPresets = Button.builder(
                 Component.translatable("super_lead.server_config.button"),
                 button -> com.zhongbai233.super_lead.preset.client.ServerConfigScreen.open(this))
-                .bounds(this.width - PADDING - 60 - 86, PADDING, 84, 14)
+                .bounds(this.width - PADDING - 60 - 86, topBarY, 84, 14)
                 .build();
         addRenderableWidget(opPresets);
 
         Button blockProps = Button.builder(
                 Component.literal("Block Props"),
                 button -> com.zhongbai233.super_lead.data.BlockPropertyEditScreen.open(this))
-                .bounds(this.width - PADDING - 60 - 86 - 90, PADDING, 86, 14)
+                .bounds(this.width - PADDING - 60 - 86 - 90, topBarY, 86, 14)
                 .build();
         addRenderableWidget(blockProps);
+
+        // --- Left sidebar: vertical tab buttons ---
+        int sidebarTop = topBarY + 20;
+        int tabY = sidebarTop;
+        for (int i = 0; i < groups.size(); i++) {
+            int index = i;
+            Component label = groupLabel(groups.get(i));
+            Button tab = Button.builder(label, button -> {
+                this.activeTab = index;
+                this.scrollOffset = 0;
+                this.rebuildWidgets();
+            }).bounds(PADDING, tabY, SIDEBAR_W - 4, TAB_BTN_H).build();
+            tab.active = i != activeTab;
+            addRenderableWidget(tab);
+            tabY += TAB_BTN_H + TAB_GAP;
+        }
+
+        // --- Right body: config rows for active tab ---
+        rebuildBody(sidebarTop);
     }
 
     private void rebuildBody(int startY) {
@@ -110,17 +116,18 @@ public final class SuperLeadConfigScreen extends Screen {
         String group = groups.get(activeTab);
         bodyTop = startY;
         bodyBottom = this.height - PADDING;
+        int contentX = PADDING + SIDEBAR_W;
 
-        int rowW = this.width - PADDING * 2 - SCROLLBAR_W - 2;
-        int sliderW = Math.max(100, rowW * 4 / 12);
-        int labelW = rowW - sliderW - INPUT_W - VALUE_TEXT_W - RESET_BTN_W - 12;
+        int contentW = this.width - contentX - PADDING - SCROLLBAR_W - 2;
+        int sliderW = Math.max(100, contentW * 4 / 12);
+        int labelW = contentW - sliderW - INPUT_W - VALUE_TEXT_W - RESET_BTN_W - 12;
         if (labelW < 60) {
             labelW = 60;
-            sliderW = rowW - labelW - INPUT_W - VALUE_TEXT_W - RESET_BTN_W - 12;
+            sliderW = contentW - labelW - INPUT_W - VALUE_TEXT_W - RESET_BTN_W - 12;
         }
-        int sliderX = PADDING + labelW + 4;
+        int sliderX = contentX + labelW + 4;
         int inputX = sliderX + sliderW + 4;
-        int resetX = PADDING + rowW - RESET_BTN_W;
+        int resetX = contentX + contentW - RESET_BTN_W;
 
         int baseY = startY;
         for (TuningKey<?> key : ClientTuning.allKeys()) {
@@ -258,12 +265,21 @@ public final class SuperLeadConfigScreen extends Screen {
     public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float partialTick) {
         preview.render(graphics);
 
+        int contentX = PADDING + SIDEBAR_W;
+
+        // Top bar background
         graphics.fill(0, 0, this.width, bodyTop, 0x80000000);
-        graphics.fill(0, bodyTop, this.width, this.height, 0xA0000000);
+        // Sidebar background
+        graphics.fill(0, bodyTop, contentX, this.height, 0x90000000);
+        // Content area background
+        graphics.fill(contentX, bodyTop, this.width, this.height, 0xA0000000);
+
         graphics.text(this.font, this.title, PADDING, PADDING, 0xFFFFFFAA);
 
         int sepY = bodyTop - 2;
-        graphics.fill(PADDING, sepY, this.width - PADDING, sepY + 1, 0xFF40484F);
+        graphics.fill(contentX, sepY, this.width - PADDING, sepY + 1, 0xFF40484F);
+        // Sidebar separator
+        graphics.fill(contentX - 1, bodyTop, contentX, this.height, 0xFF40484F);
 
         super.extractRenderState(graphics, mouseX, mouseY, partialTick);
 
@@ -274,6 +290,7 @@ public final class SuperLeadConfigScreen extends Screen {
     }
 
     private void renderRows(GuiGraphicsExtractor graphics) {
+        int contentX = PADDING + SIDEBAR_W;
         for (ConfigRow row : rows) {
             AbstractWidget widget = row.widget();
             if (!widget.visible) {
@@ -284,7 +301,7 @@ public final class SuperLeadConfigScreen extends Screen {
             int rowY = widget.getY() + (widget.getHeight() - this.font.lineHeight) / 2;
             Component label = Component.translatableWithFallback(
                     "super_lead.tuning." + key.id + ".label", key.id);
-            graphics.text(this.font, label, PADDING, rowY, 0xFFE8E8E8);
+            graphics.text(this.font, label, contentX, rowY, 0xFFE8E8E8);
 
             String value = key.formatEffective();
             int color = key.isPresetActive() ? 0xFFFFAAFF
@@ -296,11 +313,11 @@ public final class SuperLeadConfigScreen extends Screen {
 
             if (key.description != null && !key.description.isEmpty()) {
                 int descY = widget.getY() + WIDGET_H + DESC_GAP;
-                int maxWidth = this.width - PADDING * 2 - SCROLLBAR_W - 2;
+                int maxWidth = this.width - contentX - PADDING - SCROLLBAR_W - 2;
                 Component desc = Component.translatableWithFallback(
                         "super_lead.tuning." + key.id + ".desc", key.description);
                 String descStr = truncateToWidth(desc.getString(), maxWidth);
-                graphics.text(this.font, Component.literal(descStr), PADDING, descY, 0xFF8090A0);
+                graphics.text(this.font, Component.literal(descStr), contentX, descY, 0xFF8090A0);
             }
         }
     }
@@ -315,14 +332,23 @@ public final class SuperLeadConfigScreen extends Screen {
         graphics.fill(trackX, bodyTop, trackX + SCROLLBAR_W, bodyBottom, 0x60000000);
         int thumbH = Math.max(16, viewport * viewport / contentHeight);
         int maxScroll = contentHeight - viewport;
-        int thumbY = bodyTop + scrollOffset * (viewport - thumbH) / maxScroll;
-        graphics.fill(trackX, thumbY, trackX + SCROLLBAR_W, thumbY + thumbH, 0xFF8090A0);
+        if (maxScroll > 0) {
+            int thumbY = bodyTop + scrollOffset * (viewport - thumbH) / maxScroll;
+            graphics.fill(trackX, thumbY, trackX + SCROLLBAR_W, thumbY + thumbH, 0xFF8090A0);
+        }
     }
 
     private static Component groupLabel(String group) {
         String fallback = switch (group) {
             case "physics.shape" -> "Shape";
             case "physics.solver" -> "Solver";
+            case "physics.solverExt" -> "Solver Ext";
+            case "physics.geom" -> "Geometry";
+            case "physics.settle" -> "Settle";
+            case "physics.sag" -> "Sag Model";
+            case "physics.step" -> "Step Control";
+            case "physics.contact" -> "Contact";
+            case "physics.zipline" -> "Zipline";
             case "render.mode" -> "Mode";
             case "render.geom" -> "Geometry";
             case "render.color" -> "Color";

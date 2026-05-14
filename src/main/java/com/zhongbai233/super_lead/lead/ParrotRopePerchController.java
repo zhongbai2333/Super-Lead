@@ -640,32 +640,11 @@ public final class ParrotRopePerchController {
         LeadEndpointLayout.Endpoints endpoints = LeadEndpointLayout.endpoints(level, connection, connections);
         Vec3 a = endpoints.from();
         Vec3 b = endpoints.to();
-        double sag = sag(level, connection, a, b);
         double clamped = Mth.clamp(t, 0.0D, 1.0D);
-        Vec3 position = new Vec3(
-                a.x + (b.x - a.x) * clamped,
-                a.y + (b.y - a.y) * clamped - Math.sin(Math.PI * clamped) * sag,
-                a.z + (b.z - a.z) * clamped);
-        Vec3 tangent = new Vec3(
-                b.x - a.x,
-                b.y - a.y - Math.PI * Math.cos(Math.PI * clamped) * sag,
-                b.z - a.z);
-        if (tangent.lengthSqr() < 1.0e-8D) {
-            tangent = new Vec3(1.0D, 0.0D, 0.0D);
-        } else {
-            tangent = tangent.normalize();
-        }
+        ServerRopeCurve.Shape shape = ServerRopeCurve.from(level, connection, a, b);
+        Vec3 position = ServerRopeCurve.point(shape, clamped);
+        Vec3 tangent = ServerRopeCurve.tangent(shape, clamped);
         return new RopePoint(position, tangent);
-    }
-
-    private static double sag(ServerLevel level, LeadConnection connection, Vec3 a, Vec3 b) {
-        ServerPhysicsTuning tuning = ServerPhysicsTuning.loadServerPhysicsTuning(level, connection.physicsPreset());
-        double dist = a.distanceTo(b);
-        if (dist < 1.0e-6D || Math.abs(tuning.gravity()) < 1.0e-9D) {
-            return 0.0D;
-        }
-        double slackExtra = Math.max(0.0D, tuning.slack() - 1.0D);
-        return Math.min(1.35D, dist * (0.055D + slackExtra * 2.0D));
     }
 
     private static Map<UUID, LeadConnection> byId(List<LeadConnection> connections) {

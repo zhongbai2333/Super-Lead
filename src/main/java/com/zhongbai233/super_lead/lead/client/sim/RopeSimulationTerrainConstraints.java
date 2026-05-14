@@ -16,7 +16,7 @@ abstract class RopeSimulationTerrainConstraints extends RopeSimulationVisualStat
     protected boolean hasTerrainNearby(Level level, Vec3 a, Vec3 b) {
         updateBounds();
         blockCache.reset();
-        double r = TERRAIN_RADIUS + COLLISION_EPS + TERRAIN_PROXIMITY_MARGIN;
+        double r = terrainRadius + collisionEps + terrainProximityMargin;
         double qMinX = Math.min(Math.min(minX, a.x), b.x) - r;
         double qMinY = Math.min(Math.min(minY, a.y), b.y) - r;
         double qMinZ = Math.min(Math.min(minZ, a.z), b.z) - r;
@@ -58,7 +58,7 @@ abstract class RopeSimulationTerrainConstraints extends RopeSimulationVisualStat
         // Tunneling protection: run a true segment sweep when an endpoint moved fast
         // enough to
         // potentially skip past a whole block in a single substep.
-        final double tunnelThresholdSqr = 0.25D; // 0.5 block movement
+        final double tunnelThresholdSqr = tuning.tunnelThresholdSqr();
         for (int i = 0; i < segments; i++) {
             int a = i, b = i + 1;
             double dax = x[a] - xPrev[a], day = y[a] - yPrev[a], daz = z[a] - zPrev[a];
@@ -84,7 +84,7 @@ abstract class RopeSimulationTerrainConstraints extends RopeSimulationVisualStat
             return;
         double ax = x[a], ay = y[a], az = z[a];
         double bx = x[b], by = y[b], bz = z[b];
-        double r = TERRAIN_RADIUS + COLLISION_EPS;
+        double r = terrainRadius + collisionEps;
         int bxMin = (int) Math.floor(Math.min(ax, bx) - r) - 1;
         int bxMax = (int) Math.floor(Math.max(ax, bx) + r) + 1;
         int byMin = (int) Math.floor(Math.min(ay, by) - r) - 1;
@@ -97,7 +97,7 @@ abstract class RopeSimulationTerrainConstraints extends RopeSimulationVisualStat
                     if (isAnchorColumn(cx, cy, cz))
                         continue;
                     for (AABB box : blockCache.aabbsAt(level, cx, cy, cz)) {
-                        pushSegmentOutOfBox(a, b, box, TERRAIN_RADIUS + COLLISION_EPS);
+                        pushSegmentOutOfBox(a, b, box, terrainRadius + collisionEps);
                     }
                 }
             }
@@ -234,12 +234,12 @@ abstract class RopeSimulationTerrainConstraints extends RopeSimulationVisualStat
         // inflated box.
         for (int pass = 0; pass < 2; pass++) {
             boolean moved = false;
-            int bxMin = (int) Math.floor(x[node] - TERRAIN_RADIUS) - 1;
-            int bxMax = (int) Math.floor(x[node] + TERRAIN_RADIUS) + 1;
-            int byMin = (int) Math.floor(y[node] - TERRAIN_RADIUS) - 1;
-            int byMax = (int) Math.floor(y[node] + TERRAIN_RADIUS) + 1;
-            int bzMin = (int) Math.floor(z[node] - TERRAIN_RADIUS) - 1;
-            int bzMax = (int) Math.floor(z[node] + TERRAIN_RADIUS) + 1;
+            int bxMin = (int) Math.floor(x[node] - terrainRadius) - 1;
+            int bxMax = (int) Math.floor(x[node] + terrainRadius) + 1;
+            int byMin = (int) Math.floor(y[node] - terrainRadius) - 1;
+            int byMax = (int) Math.floor(y[node] + terrainRadius) + 1;
+            int bzMin = (int) Math.floor(z[node] - terrainRadius) - 1;
+            int bzMax = (int) Math.floor(z[node] + terrainRadius) + 1;
             for (int bx = bxMin; bx <= bxMax; bx++) {
                 for (int by = byMin; by <= byMax; by++) {
                     for (int bz = bzMin; bz <= bzMax; bz++) {
@@ -275,7 +275,7 @@ abstract class RopeSimulationTerrainConstraints extends RopeSimulationVisualStat
         double cpz = pz < original.minZ ? original.minZ : (pz > original.maxZ ? original.maxZ : pz);
         double dx = px - cpx, dy = py - cpy, dz = pz - cpz;
         double d2 = dx * dx + dy * dy + dz * dz;
-        double radius = TERRAIN_RADIUS + COLLISION_EPS;
+        double radius = terrainRadius + collisionEps;
         if (d2 > 1.0e-12D) {
             if (d2 >= radius * radius)
                 return false;
@@ -290,13 +290,13 @@ abstract class RopeSimulationTerrainConstraints extends RopeSimulationVisualStat
         // the inflated box, falling back to an upward push if every direction lands
         // inside another
         // block.
-        AABB box = original.inflate(TERRAIN_RADIUS);
-        double dxMin = box.minX - COLLISION_EPS - px;
-        double dxMax = box.maxX + COLLISION_EPS - px;
-        double dyMin = box.minY - COLLISION_EPS - py;
-        double dyMax = box.maxY + COLLISION_EPS - py;
-        double dzMin = box.minZ - COLLISION_EPS - pz;
-        double dzMax = box.maxZ + COLLISION_EPS - pz;
+        AABB box = original.inflate(terrainRadius);
+        double dxMin = box.minX - collisionEps - px;
+        double dxMax = box.maxX + collisionEps - px;
+        double dyMin = box.minY - collisionEps - py;
+        double dyMax = box.maxY + collisionEps - py;
+        double dzMin = box.minZ - collisionEps - pz;
+        double dzMax = box.maxZ + collisionEps - pz;
         double[] candDelta = { dxMin, dxMax, dyMin, dyMax, dzMin, dzMax };
         int[] candAxis = { 0, 0, 1, 1, 2, 2 };
         sortBySmallestAbs(candDelta, candAxis);
@@ -320,7 +320,7 @@ abstract class RopeSimulationTerrainConstraints extends RopeSimulationVisualStat
                 return true;
             }
         }
-        applyTerrainCorrection(node, 0.0D, COLLISION_EPS + box.maxY - py, 0.0D);
+        applyTerrainCorrection(node, 0.0D, collisionEps + box.maxY - py, 0.0D);
         return true;
     }
 
@@ -343,19 +343,19 @@ abstract class RopeSimulationTerrainConstraints extends RopeSimulationVisualStat
     }
 
     private boolean isInsideAnyInflatedBox(Level level, double wx, double wy, double wz) {
-        int bxMin = (int) Math.floor(wx - TERRAIN_RADIUS) - 1;
-        int bxMax = (int) Math.floor(wx + TERRAIN_RADIUS) + 1;
-        int byMin = (int) Math.floor(wy - TERRAIN_RADIUS) - 1;
-        int byMax = (int) Math.floor(wy + TERRAIN_RADIUS) + 1;
-        int bzMin = (int) Math.floor(wz - TERRAIN_RADIUS) - 1;
-        int bzMax = (int) Math.floor(wz + TERRAIN_RADIUS) + 1;
+        int bxMin = (int) Math.floor(wx - terrainRadius) - 1;
+        int bxMax = (int) Math.floor(wx + terrainRadius) + 1;
+        int byMin = (int) Math.floor(wy - terrainRadius) - 1;
+        int byMax = (int) Math.floor(wy + terrainRadius) + 1;
+        int bzMin = (int) Math.floor(wz - terrainRadius) - 1;
+        int bzMax = (int) Math.floor(wz + terrainRadius) + 1;
         for (int bx = bxMin; bx <= bxMax; bx++) {
             for (int by = byMin; by <= byMax; by++) {
                 for (int bz = bzMin; bz <= bzMax; bz++) {
                     if (isAnchorColumn(bx, by, bz))
                         continue;
                     for (AABB box : blockCache.aabbsAt(level, bx, by, bz)) {
-                        if (RopeMath.containsInclusive(box.inflate(TERRAIN_RADIUS), wx, wy, wz))
+                        if (RopeMath.containsInclusive(box.inflate(terrainRadius), wx, wy, wz))
                             return true;
                     }
                 }
@@ -367,7 +367,7 @@ abstract class RopeSimulationTerrainConstraints extends RopeSimulationVisualStat
     private void resolveSegmentSweep(Level level, int a, int b) {
         double fx = x[a], fy = y[a], fz = z[a];
         double tx = x[b], ty = y[b], tz = z[b];
-        double r = TERRAIN_RADIUS + COLLISION_EPS;
+        double r = terrainRadius + collisionEps;
         int bxMin = (int) Math.floor(Math.min(fx, tx) - r) - 1;
         int bxMax = (int) Math.floor(Math.max(fx, tx) + r) + 1;
         int byMin = (int) Math.floor(Math.min(fy, ty) - r) - 1;
@@ -382,9 +382,9 @@ abstract class RopeSimulationTerrainConstraints extends RopeSimulationVisualStat
                     if (isAnchorColumn(bx, by, bz))
                         continue;
                     for (AABB box : blockCache.aabbsAt(level, bx, by, bz)) {
-                        AABB inflated = box.inflate(TERRAIN_RADIUS);
+                        AABB inflated = box.inflate(terrainRadius);
                         if (RopeMath.intersectSegmentAabb(fx, fy, fz, tx, ty, tz, inflated,
-                                SEGMENT_CORNER_PUSH_EPS, SEGMENT_TOP_SUPPORT_EPS, hitScratch)) {
+                                segmentCornerPushEps, segmentTopSupportEps, hitScratch)) {
                             if (hitScratch.t < bestT) {
                                 bestT = hitScratch.t;
                                 bestDx = hitScratch.dx;

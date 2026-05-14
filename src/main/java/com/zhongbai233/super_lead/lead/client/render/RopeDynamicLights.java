@@ -4,6 +4,8 @@ import com.zhongbai233.super_lead.lead.LeadConnection;
 import com.zhongbai233.super_lead.lead.LeadEndpointLayout;
 import com.zhongbai233.super_lead.lead.RopeAttachment;
 import com.zhongbai233.super_lead.lead.client.sim.RopeSimulation;
+import com.zhongbai233.super_lead.lead.client.sim.RopeTuning;
+import com.zhongbai233.super_lead.lead.physics.RopeSagModel;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -34,8 +36,6 @@ public final class RopeDynamicLights {
     private static final int DIRTY_BLOCK_RADIUS = 8;
     private static final int MAX_LIGHT = 15;
     private static final int FALLBACK_NODE_COUNT = 16;
-    private static final double FALLBACK_SAG_PER_BLOCK = 0.055D;
-    private static final double FALLBACK_MAX_SAG = 0.55D;
     private static final Map<BlockPos, Source> ACTIVE = new ConcurrentHashMap<>();
     private static ClientLevel activeLevel;
 
@@ -153,23 +153,18 @@ public final class RopeDynamicLights {
         double len = a.distanceTo(b);
         if (len <= 1.0e-6D)
             return;
-        double sag = Math.min(FALLBACK_MAX_SAG, len * FALLBACK_SAG_PER_BLOCK);
+        RopeTuning tuning = RopeTuning.forConnection(connection);
+        Vec3 fallback = RopeSagModel.stableUnitVector(connection.id().getLeastSignificantBits());
         for (RopeAttachment attachment : connection.attachments()) {
             double t = attachment.t();
-            double px = a.x + (b.x - a.x) * t;
-            double py = a.y + (b.y - a.y) * t - Math.sin(Math.PI * t) * sag;
-            double pz = a.z + (b.z - a.z) * t;
+            Vec3 p = RopeSagModel.point(a, b, t, tuning.slack(), tuning.gravity(), fallback);
             double dt = 1.0D / (FALLBACK_NODE_COUNT - 1);
             double ta = Math.max(0.0D, t - dt);
             double tb = Math.min(1.0D, t + dt);
-            double ax = a.x + (b.x - a.x) * ta;
-            double ay = a.y + (b.y - a.y) * ta - Math.sin(Math.PI * ta) * sag;
-            double az = a.z + (b.z - a.z) * ta;
-            double bx = a.x + (b.x - a.x) * tb;
-            double by = a.y + (b.y - a.y) * tb - Math.sin(Math.PI * tb) * sag;
-            double bz = a.z + (b.z - a.z) * tb;
+            Vec3 pa = RopeSagModel.point(a, b, ta, tuning.slack(), tuning.gravity(), fallback);
+            Vec3 pb = RopeSagModel.point(a, b, tb, tuning.slack(), tuning.gravity(), fallback);
             Vec3 light = attachmentLightPosition(level, attachment.stack(), attachment.displayAsBlock(),
-                    attachment.frontSide(), px, py, pz, ax, ay, az, bx, by, bz);
+                attachment.frontSide(), p.x, p.y, p.z, pa.x, pa.y, pa.z, pb.x, pb.y, pb.z);
             addLight(level, cameraPos, attachment.stack(), redstonePowered,
                     light.x, light.y, light.z, desired);
         }

@@ -316,21 +316,19 @@ public final class SuperLeadPayloads {
         if (opt.isEmpty())
             return;
         LeadConnection connection = opt.get();
-        if (!SuperLeadNetwork.canTouchConnectionForAttachment(level, player, connection))
+        if (!SuperLeadNetwork.canTouchConnectionForAttachmentRemoval(level, player, connection))
             return;
         // Snapshot world position before removal so the particle lands where the item
         // was.
         net.minecraft.world.phys.Vec3 particlePos = null;
         for (RopeAttachment a : connection.attachments()) {
             if (a.id().equals(payload.attachmentId())) {
-            LeadEndpointLayout.Endpoints endpoints = LeadEndpointLayout.endpoints(level, connection,
-                SuperLeadNetwork.connections(level));
-            net.minecraft.world.phys.Vec3 from = endpoints.from();
-            net.minecraft.world.phys.Vec3 to = endpoints.to();
-                double dist = from.distanceTo(to);
-                double sag = Math.min(0.70D, dist * 0.055D);
-                particlePos = from.lerp(to, a.t())
-                        .add(0.0D, -Math.sin(Math.PI * a.t()) * sag - 0.25D, 0.0D);
+                LeadEndpointLayout.Endpoints endpoints = LeadEndpointLayout.endpoints(level, connection,
+                        SuperLeadNetwork.connections(level));
+                net.minecraft.world.phys.Vec3 from = endpoints.from();
+                net.minecraft.world.phys.Vec3 to = endpoints.to();
+                ServerRopeCurve.Shape shape = ServerRopeCurve.from(level, connection, from, to);
+                particlePos = ServerRopeCurve.point(shape, a.t()).add(0.0D, -0.25D, 0.0D);
                 break;
             }
         }
@@ -339,7 +337,11 @@ public final class SuperLeadPayloads {
             level.sendParticles(
                     net.minecraft.core.particles.ParticleTypes.CRIT,
                     particlePos.x, particlePos.y, particlePos.z,
-                    8, 0.25D, 0.25D, 0.25D, 0.15D);
+                    12, 0.25D, 0.25D, 0.25D, 0.10D);
+            level.sendParticles(
+                    net.minecraft.core.particles.ParticleTypes.POOF,
+                    particlePos.x, particlePos.y, particlePos.z,
+                    6, 0.20D, 0.20D, 0.20D, 0.08D);
         }
     }
 

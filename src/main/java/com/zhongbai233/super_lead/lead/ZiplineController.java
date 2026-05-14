@@ -93,8 +93,7 @@ public final class ZiplineController {
         // Project the player's current motion onto the chosen direction so a running jump
         // keeps its momentum instead of being clamped to START_SPEED.
         double alongSpeed = player.getDeltaMovement().dot(curve.tangent().scale(direction));
-        ServerPhysicsTuning tuning = ServerPhysicsTuning.loadServerPhysicsTuning(level, connection.physicsPreset());
-        double maxV = maxSpeed(connection, tuning);
+        double maxV = maxSpeed(level, connection);
         double initialVelocity = clamp(direction * Math.max(START_SPEED, alongSpeed), -maxV, maxV);
 
         NetworkKey key = NetworkKey.of(level);
@@ -203,8 +202,7 @@ public final class ZiplineController {
 
         boolean powered = isPoweredRedstone(connection);
         Vec3 tangent = curve.tangent();
-        ServerPhysicsTuning tuning = ServerPhysicsTuning.loadServerPhysicsTuning(level, connection.physicsPreset());
-        double maxV = maxSpeed(connection, tuning);
+        double maxV = maxSpeed(level, connection);
 
         // Acceleration along the curve. Gravity acts in world -Y; its component along the
         // unit tangent (which points from->to) is -G * tangent.y. This naturally produces
@@ -215,8 +213,7 @@ public final class ZiplineController {
         double aPower = 0.0D;
         if (powered) {
             int accelerationDirection = poweredAccelerationDirection(player, curve, state.velocity);
-            aPower = accelerationDirection * (POWERED_ACCEL_BASE + connection.power() * POWERED_ACCEL_PER_SIGNAL)
-                    * tuning.ziplineRedstoneAccelerationMultiplier();
+            aPower = accelerationDirection * (POWERED_ACCEL_BASE + connection.power() * POWERED_ACCEL_PER_SIGNAL);
         }
 
         double v = state.velocity * DRAG + aGrav + aPower;
@@ -248,7 +245,7 @@ public final class ZiplineController {
                 }
                 return true;
             }
-            finish(player, state, launchVelocity(player, tangent.scale(v)));
+            finish(player, state, tangent.scale(v));
             return false;
         }
 
@@ -340,8 +337,7 @@ public final class ZiplineController {
         }
         state.connectionId = best.id();
         state.t = entryTAfterKnot(level, best, bestDirection, anchor, overshootDistance);
-        ServerPhysicsTuning bestTuning = ServerPhysicsTuning.loadServerPhysicsTuning(level, best.physicsPreset());
-        double carriedSpeed = Math.min(Math.abs(state.velocity) * KNOT_SPEED_RETAIN, maxSpeed(best, bestTuning));
+        double carriedSpeed = Math.min(Math.abs(state.velocity) * KNOT_SPEED_RETAIN, maxSpeed(level, best));
         state.velocity = bestDirection * carriedSpeed;
         state.forceSnap = shouldSnapPastKnot(level, anchor);
         return true;
@@ -436,21 +432,6 @@ public final class ZiplineController {
                 : curve.tangent().scale(state.velocity);
     }
 
-    private static Vec3 launchVelocity(ServerPlayer player, Vec3 ropeVelocity) {
-        Vec3 ropeInertia = player.getDeltaMovement();
-        if (ropeInertia == null || ropeInertia.lengthSqr() <= 1.0e-8D) {
-            return ropeVelocity;
-        }
-        if (ropeVelocity == null || ropeVelocity.lengthSqr() <= 1.0e-8D) {
-            return ropeInertia;
-        }
-        // The player already has one tick of motion from being carried by the rope. When
-        // they leave the endpoint, preserve that on-rope inertia and add the freshly
-        // computed exit tangent speed on top, so powered redstone rope chains can build up
-        // enough launch velocity instead of replacing the previous motion each time.
-        return ropeVelocity.add(ropeInertia);
-    }
-
     private static boolean hasChain(Player player) {
         return isChain(player.getMainHandItem()) || isChain(player.getOffhandItem());
     }
@@ -485,15 +466,13 @@ public final class ZiplineController {
         return connection.kind() == LeadKind.REDSTONE && connection.powered();
     }
 
-    private static double maxSpeed(LeadConnection connection, ServerPhysicsTuning tuning) {
-        double configured = tuning.ziplineSpeedLimit();
-        if (Double.isNaN(configured)) {
+    private static double maxSpeed(ServerLevel level, LeadConnection connection) {
+        ServerPhysicsTuning tuning = ServerPhysicsTuning.loadServerPhysicsTuning(level, connection.physicsPreset());
+        double limit = tuning.ziplineSpeedLimit();
+        if (Double.isNaN(limit)) {
             return isPoweredRedstone(connection) ? MAX_POWERED_SPEED : MAX_NORMAL_SPEED;
         }
-        if (configured < 0.0D) {
-            return Double.POSITIVE_INFINITY;
-        }
-        return configured;
+        return limit < 0.0D ? Double.MAX_VALUE : limit;
     }
 
     private static int poweredAccelerationDirection(ServerPlayer player, Curve curve, double velocity) {

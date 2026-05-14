@@ -51,6 +51,8 @@ import net.neoforged.neoforge.transfer.transaction.Transaction;
 public final class SuperLeadNetwork {
     public static final double MAX_LEASH_DISTANCE = 12.0D;
     private static final double SERVER_CONFIRMED_PICK_RADIUS = 0.95D;
+    /** Wider envelope for attachment removal so multi-rope stacks don't foil the server check. */
+    private static final double SERVER_CONFIRMED_ATTACH_REMOVAL_RADIUS = 2.50D;
     private static final double SERVER_CONFIRMED_PICK_REACH = MAX_LEASH_DISTANCE + 1.5D;
     private static final int SERVER_CONFIRMED_CURVE_SAMPLES = 12;
     private static final double SERVER_CONFIRMED_CURVE_SAG_PER_BLOCK = 0.065D;
@@ -678,6 +680,25 @@ public final class SuperLeadNetwork {
         Vec3 a = endpoints.from();
         Vec3 b = endpoints.to();
         net.minecraft.world.phys.AABB envelope = connectionEnvelope(a, b, SERVER_CONFIRMED_PICK_RADIUS);
+        Vec3 reachEnd = origin.add(direction.scale(SERVER_CONFIRMED_PICK_REACH));
+        return envelope.clip(origin, reachEnd).isPresent();
+    }
+
+    /**
+     * Much wider envelope for attachment removal. When multiple ropes stack on the
+     * same block face the envelope of a single rope may be too narrow for the
+     * server's ray-vs-AABB test even though the client picker already confirmed
+     * the player's aim. This version accepts a larger surrounding box so the
+     * server doesn't veto a removal that the client already highlighted.
+     */
+    public static boolean canTouchConnectionForAttachmentRemoval(ServerLevel level, Player player,
+            LeadConnection connection) {
+        Vec3 origin = player.getEyePosition(1.0F);
+        Vec3 direction = player.getViewVector(1.0F).normalize();
+        LeadEndpointLayout.Endpoints endpoints = endpoints(level, connection);
+        Vec3 a = endpoints.from();
+        Vec3 b = endpoints.to();
+        net.minecraft.world.phys.AABB envelope = connectionEnvelope(a, b, SERVER_CONFIRMED_ATTACH_REMOVAL_RADIUS);
         Vec3 reachEnd = origin.add(direction.scale(SERVER_CONFIRMED_PICK_REACH));
         return envelope.clip(origin, reachEnd).isPresent();
     }

@@ -1,5 +1,6 @@
 package com.zhongbai233.super_lead.lead;
 
+import com.zhongbai233.super_lead.lead.physics.RopeSagModel;
 import java.util.Arrays;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.phys.Vec3;
@@ -12,7 +13,6 @@ final class ServerRopeCurve {
     private static final int MIN_RELAX_TICKS = 36;
     private static final int MAX_RELAX_TICKS = 96;
     private static final double GRAVITY_SCALE = 1.0D;
-    private static final double INITIAL_SAG_FACTOR = 0.06D;
     private static final double MAX_INITIAL_SAG = 8.0D;
 
     private ServerRopeCurve() {
@@ -32,6 +32,10 @@ final class ServerRopeCurve {
         }
 
         double targetLength = targetLength(a, b, tuning);
+        if (targetLength <= chord + 1.0e-5D) {
+            return straight(a, b);
+        }
+
         int segments = segmentCount(chord, tuning);
         int nodes = segments + 1;
         double[] x = new double[nodes];
@@ -45,13 +49,17 @@ final class ServerRopeCurve {
         double[] vz = new double[nodes];
         double[] lambda = new double[segments];
 
-        initialiseNodes(a, b, Math.abs(targetLength - chord), tuning, x, y, z);
+        initialiseNodes(a, b, tuning, x, y, z);
         System.arraycopy(x, 0, px, 0, nodes);
         System.arraycopy(y, 0, py, 0, nodes);
         System.arraycopy(z, 0, pz, 0, nodes);
 
         double targetSegment = targetLength / segments;
-        int iterations = Math.max(tuning.iterAir(), (segments + 1) / 2);
+        double tautWeight = RopeSagModel.tautProjectionWeight(tuning.slack());
+        double gravityScale = 1.0D - tautWeight;
+        int minPasses = Math.max((segments + 1) / 2,
+            (int) Math.ceil(segments * (1.0D + tautWeight * 3.0D)));
+        int iterations = Math.max(tuning.iterAir(), minPasses);
         int relaxTicks = relaxTicks(segments, iterations);
         double damping = clamp(tuning.damping(), 0.0D, 0.999D);
         double alpha = Math.max(0.0D, tuning.compliance());
@@ -62,7 +70,7 @@ final class ServerRopeCurve {
                 py[i] = y[i];
                 pz[i] = z[i];
                 vx[i] *= damping;
-                vy[i] = vy[i] * damping + tuning.gravity() * GRAVITY_SCALE;
+                vy[i] = vy[i] * damping + tuning.gravity() * GRAVITY_SCALE * gravityScale;
                 vz[i] *= damping;
                 x[i] += vx[i];
                 y[i] += vy[i];
@@ -88,6 +96,7 @@ final class ServerRopeCurve {
                 vy[i] = y[i] - py[i];
                 vz[i] = z[i] - pz[i];
             }
+            applyTautProjection(a, b, tautWeight, x, y, z, vx, vy, vz);
         }
 
         return shapeFromNodes(a, b, targetLength, x, y, z);
@@ -144,7 +153,7 @@ final class ServerRopeCurve {
         if (tuning == null || !tuning.physicsEnabled() || Math.abs(tuning.gravity()) < EPS) {
             return 0.0D;
         }
-        return Math.abs(targetLength(a, b, tuning) - a.distanceTo(b));
+        return Math.max(0.0D, targetLength(a, b, tuning) - a.distanceTo(b));
     }
 
     private static Shape straight(Vec3 a, Vec3 b) {
@@ -156,21 +165,53 @@ final class ServerRopeCurve {
         return new Shape(a, b, x, y, z, lengths, length, length);
     }
 
-    private static void initialiseNodes(Vec3 a, Vec3 b, double freeSlack, ServerPhysicsTuning tuning,
+    private static void initialiseNodes(Vec3 a, Vec3 b, ServerPhysicsTuning tuning,
             double[] x, double[] y, double[] z) {
         int last = x.length - 1;
-        double sagSign = tuning.gravity() < 0.0D ? -1.0D : 1.0D;
         double sag = Math.min(MAX_INITIAL_SAG,
-                Math.max(Math.abs(tuning.gravity()) * 2.5D,
-                        Math.max(freeSlack * 6.0D, a.distanceTo(b) * INITIAL_SAG_FACTOR)));
+                RopeSagModel.midspanSag(a, b, tuning.slack(), tuning.gravity()));
+        Vec3 sagDir = RopeSagModel.sagDirection(a, b, tuning.gravity(), null);
         for (int i = 0; i <= last; i++) {
             double t = i / (double) last;
-            double bend = Math.sin(Math.PI * t) * sag * sagSign;
-            x[i] = a.x + (b.x - a.x) * t;
-            y[i] = a.y + (b.y - a.y) * t + bend;
-            z[i] = a.z + (b.z - a.z) * t;
+            double bend = Math.sin(Math.PI * t) * sag;
+            x[i] = a.x + (b.x - a.x) * t + sagDir.x * bend;
+            y[i] = a.y + (b.y - a.y) * t + sagDir.y * bend;
+            z[i] = a.z + (b.z - a.z) * t + sagDir.z * bend;
         }
+        applyTautProjection(a, b, RopeSagModel.tautProjectionWeight(tuning.slack()), x, y, z, null, null, null);
         pin(a, b, x, y, z);
+    }
+
+    private static void applyTautProjection(Vec3 a, Vec3 b, double weight,
+            double[] x, double[] y, double[] z,
+            double[] vx, double[] vy, double[] vz) {
+        if (weight <= 0.0D || x.length < 3) {
+            return;
+        }
+        double clamped = Math.min(1.0D, weight);
+        double keepVelocity = 1.0D - clamped;
+        int last = x.length - 1;
+        double dx = b.x - a.x;
+        double dy = b.y - a.y;
+        double dz = b.z - a.z;
+        for (int i = 1; i < last; i++) {
+            double t = i / (double) last;
+            double tx = a.x + dx * t;
+            double ty = a.y + dy * t;
+            double tz = a.z + dz * t;
+            x[i] += (tx - x[i]) * clamped;
+            y[i] += (ty - y[i]) * clamped;
+            z[i] += (tz - z[i]) * clamped;
+            if (vx != null) {
+                vx[i] *= keepVelocity;
+            }
+            if (vy != null) {
+                vy[i] *= keepVelocity;
+            }
+            if (vz != null) {
+                vz[i] *= keepVelocity;
+            }
+        }
     }
 
     private static void solveDistance(int seg, double targetLen, double alpha,
@@ -270,18 +311,7 @@ final class ServerRopeCurve {
     }
 
     private static double targetLength(Vec3 a, Vec3 b, ServerPhysicsTuning tuning) {
-        double chord = a.distanceTo(b);
-        return Math.max(EPS, chord * slackFactor(a, b, tuning));
-    }
-
-    private static double slackFactor(Vec3 a, Vec3 b, ServerPhysicsTuning tuning) {
-        if (Math.abs(tuning.gravity()) < EPS) {
-            return 1.0D;
-        }
-        if (a.distanceToSqr(b) < EPS * EPS) {
-            return 1.0D;
-        }
-        return tuning.slack();
+        return Math.max(EPS, RopeSagModel.physicsTargetLength(a, b, tuning.slack(), tuning.gravity()));
     }
 
     private static double closestPointOnSegment(

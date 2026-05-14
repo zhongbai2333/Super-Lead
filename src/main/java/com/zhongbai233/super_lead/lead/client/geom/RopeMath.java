@@ -1,7 +1,6 @@
 package com.zhongbai233.super_lead.lead.client.geom;
 
 import net.minecraft.world.phys.AABB;
-import net.minecraft.world.phys.Vec3;
 
 public final class RopeMath {
     public static final double EPS = 1.0e-8D;
@@ -150,12 +149,6 @@ public final class RopeMath {
 
     public static double clamp01(double v) {
         return v < 0.0 ? 0.0 : (v > 1.0 ? 1.0 : v);
-    }
-
-    public static Vec3 stableUnitVector(long seed) {
-        long h = seed * 0x9E3779B97F4A7C15L + 0xBF58476D1CE4E5B9L;
-        double angle = ((h ^ (h >>> 33)) & 0xFFFFL) / 65535.0D * Math.PI * 2.0;
-        return new Vec3(Math.cos(angle), 0.35, Math.sin(angle)).normalize();
     }
 
 }

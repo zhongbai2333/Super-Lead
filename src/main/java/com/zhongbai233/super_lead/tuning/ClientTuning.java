@@ -25,8 +25,8 @@ public final class ClientTuning {
     private static volatile long physicsEpoch;
 
     public static final TuningKey<Double> SLACK = registerD(
-            "slack", "physics.shape", 1.005D, 1.000D, 1.20D,
-            "Slack multiplier for ropes. Higher values sag more.");
+            "slack", "physics.shape", 0.30D, 0.0D, 1.20D,
+            "Slack dial for ropes. 0.0 is taut, 0.1 is very tight, 0.3 is normal, and higher values sag more.");
     public static final TuningKey<Double> SEGMENT_LENGTH = registerD(
             "segment.length", "physics.shape", 0.30D, 0.15D, 0.60D,
             "Target segment length for newly created rope simulations.");
@@ -38,7 +38,7 @@ public final class ClientTuning {
             "gravity", "physics.solver", -0.065D, -0.20D, 0.0D,
             "Per-tick gravity acceleration in blocks per tick squared.");
     public static final TuningKey<Double> DAMPING = registerD(
-            "damping", "physics.solver", 0.80D, 0.50D, 0.99D,
+            "damping", "physics.solver", 0.92D, 0.50D, 0.99D,
             "Velocity damping. 1.0 means no damping.");
     public static final TuningKey<Integer> ITER_AIR = registerI(
             "iterations.air", "physics.solver", 3, 1, 16,
@@ -177,6 +177,107 @@ public final class ClientTuning {
     public static final TuningKey<Double> RENDER_MAX_DISTANCE = registerD(
             "render.maxDistance", "misc", 96.0D, 16.0D, 256.0D,
             "Distance beyond which ropes do not render or simulate.");
+
+    // ====================================================================================
+    // Physics geometry (physics.geom)
+    // ====================================================================================
+    public static final TuningKey<Double> ROPE_RADIUS_K = registerD(
+            "ropeRadius", "physics.geom", 0.045D, 0.01D, 0.20D,
+            "Rope collision radius in blocks.");
+    public static final TuningKey<Double> TERRAIN_RADIUS_K = registerD(
+            "terrainRadius", "physics.geom", 0.085D, 0.02D, 0.30D,
+            "Rope-vs-terrain collision radius. Larger than ropeRadius so highlights don't clip.");
+    public static final TuningKey<Double> ROPE_REPEL_DISTANCE = registerD(
+            "ropeRepelDistance", "physics.geom", 0.06D, 0.01D, 0.30D,
+            "Rope-to-rope repel distance.");
+    public static final TuningKey<Double> COLLISION_EPS = registerD(
+            "collisionEps", "physics.geom", 0.015D, 0.0D, 0.10D,
+            "General collision epsilon / slop margin.");
+    public static final TuningKey<Double> TERRAIN_PROXIMITY_MARGIN = registerD(
+            "terrainProximityMargin", "physics.geom", 0.35D, 0.05D, 1.0D,
+            "Extra margin when checking for nearby terrain.");
+    public static final TuningKey<Double> SEGMENT_CORNER_PUSH_FACTOR = registerD(
+            "segmentCornerPushFactor", "physics.geom", 0.65D, 0.10D, 1.50D,
+            "Multiplier on ropeRadius for segment-corner push eps.");
+    public static final TuningKey<Double> SEGMENT_TOP_SUPPORT_FACTOR = registerD(
+            "segmentTopSupportFactor", "physics.geom", 1.80D, 0.50D, 4.0D,
+            "Multiplier on ropeRadius for segment top-support eps.");
+
+    // ====================================================================================
+    // Physics solver extras (physics.solverExt)
+    // ====================================================================================
+    public static final TuningKey<Integer> MIN_SEGMENTS = registerI(
+            "minSegments", "physics.solverExt", 4, 2, 16,
+            "Minimum segment count for one rope.");
+    public static final TuningKey<Integer> MAX_SUBSTEPS = registerI(
+            "maxSubsteps", "physics.solverExt", 5, 1, 20,
+            "Maximum substeps per game tick.");
+    public static final TuningKey<Double> SUBSTEP_SPEED_TIER1 = registerD(
+            "substepSpeedTier1", "physics.solverExt", 0.35D, 0.05D, 2.0D,
+            "Speed threshold (blocks/tick) for 1 to 2 substeps.");
+    public static final TuningKey<Double> SUBSTEP_SPEED_TIER2 = registerD(
+            "substepSpeedTier2", "physics.solverExt", 0.75D, 0.10D, 3.0D,
+            "Speed threshold (blocks/tick) for 2 to 3 substeps.");
+    public static final TuningKey<Double> SUBSTEP_SPEED_TIER3 = registerD(
+            "substepSpeedTier3", "physics.solverExt", 1.20D, 0.20D, 4.0D,
+            "Speed threshold (blocks/tick) for 3 to max substeps.");
+    public static final TuningKey<Double> SUPPORT_DOWN_INV_MASS = registerD(
+            "supportDownInvMass", "physics.solverExt", 1.0D, 0.0D, 2.0D,
+            "Inverse-mass multiplier for downward push on terrain-supported nodes. <1 = harder to push down.");
+    public static final TuningKey<Double> CONTACT_PUSH_GAIN = registerD(
+            "contactPushGain", "physics.solverExt", 0.45D, 0.0D, 2.0D,
+            "Gain applied to external (server-broadcast) contact pushes.");
+    public static final TuningKey<Double> SERVER_BLEND_ALPHA = registerD(
+            "serverBlendAlpha", "physics.solverExt", 0.20D, 0.0D, 1.0D,
+            "Blend factor for server-authoritative node positions. 0 = ignore server.");
+    public static final TuningKey<Double> ROPE_ROPE_PARALLEL_RELAX = registerD(
+            "ropeRopeParallelRelax", "physics.solverExt", 0.60D, 0.10D, 1.0D,
+            "Under-relaxation for rope-rope corrections in parallel solve.");
+    public static final TuningKey<Double> CONTACT_NODE_DAMPING = registerD(
+            "contactNodeDamping", "physics.solverExt", 0.50D, 0.0D, 1.0D,
+            "Velocity damping applied to nodes that had terrain/rope contact in the current substep.");
+    public static final TuningKey<Double> INITIAL_VELOCITY_KICK = registerD(
+            "initialVelocityKick", "physics.solverExt", 0.06D, 0.0D, 0.50D,
+            "Initial lateral velocity kick to avoid perfectly straight ropes.");
+
+    // ====================================================================================
+    // Physics settle (physics.settle)
+    // ====================================================================================
+    public static final TuningKey<Integer> SETTLE_THRESHOLD_TICKS = registerI(
+            "settleThresholdTicks", "physics.settle", 4, 1, 20,
+            "Number of consecutive low-motion ticks before a rope is considered settled.");
+    public static final TuningKey<Double> SETTLE_MOTION_SQR = registerD(
+            "settleMotionSqr", "physics.settle", 1.0e-5D, 1.0e-10D, 1.0e-2D,
+            "Squared motion threshold for settle detection.");
+    public static final TuningKey<Double> ENDPOINT_WAKE_DISTANCE_SQR = registerD(
+            "endpointWakeDistanceSqr", "physics.settle", 1.0e-5D, 1.0e-10D, 1.0e-2D,
+            "Squared endpoint movement threshold for wake-up.");
+
+    // ====================================================================================
+    // Physics sag model (physics.sag)
+    // ====================================================================================
+    public static final TuningKey<Double> SAG_ARC_APPROX_FACTOR = registerD(
+            "sagArcApproxFactor", "physics.sag", 0.375D, 0.10D, 1.0D,
+            "Arc-length approximation factor for the parabolic sag model.");
+    public static final TuningKey<Double> FULL_SLACK_HORIZONTAL_RATIO = registerD(
+            "fullSlackHorizontalRatio", "physics.sag", 0.45D, 0.10D, 1.0D,
+            "Horizontal ratio used in effective-slack calculation.");
+    public static final TuningKey<Double> STEEP_ANGLE_DEG = registerD(
+            "steepAngleDeg", "physics.sag", 80.0D, 60.0D, 89.0D,
+            "Angle threshold (degrees from horizontal) above which a rope is considered steep.");
+
+    // ====================================================================================
+    // Physics step control (physics.step)
+    // ====================================================================================
+    public static final TuningKey<Integer> MAX_TICK_DELTA = registerI(
+            "maxTickDelta", "physics.step", 2, 1, 10,
+            "Maximum tick delta to catch up in one step.");
+    public static final TuningKey<Double> TUNNEL_THRESHOLD_SQR = registerD(
+            "tunnelThresholdSqr", "physics.step", 0.25D, 0.01D, 2.0D,
+            "Squared movement threshold for sweep-and-prune tunnel detection.");
+    public static final TuningKey<Integer> SERVER_BLEND_STALE_TICKS = registerI(
+            "serverBlendStaleTicks", "physics.step", 6, 1, 40,
+            "Ticks after which server-broadcast node positions are considered stale.");
 
     private ClientTuning() {
     }

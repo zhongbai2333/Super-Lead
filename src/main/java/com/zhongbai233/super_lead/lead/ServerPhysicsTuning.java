@@ -22,13 +22,19 @@ record ServerPhysicsTuning(
         double velocityDamping,
         double maxRecoilPerTick,
         double ziplineSpeedLimit,
-        double ziplineRedstoneAccelerationMultiplier) {
+        double ziplineRedstoneAccelerationMultiplier,
+        double maxSolvedSag,
+        double sagArcApproxFactor,
+        double fullSlackHorizontalRatio) {
     private static final double CONTACT_RADIUS_FALLBACK = ClientTuning.CONTACT_RADIUS.defaultValue;
     private static final double SPRING_K_FALLBACK = ClientTuning.CONTACT_SPRING.defaultValue;
     private static final double SPRING_K_MINIMUM = 0.30D;
     private static final double VELOCITY_DAMPING_FALLBACK = ClientTuning.CONTACT_VELOCITY_DAMPING.defaultValue;
     private static final double MAX_RECOIL_PER_TICK_FALLBACK = ClientTuning.CONTACT_MAX_RECOIL_PER_TICK.defaultValue;
     private static final double MAX_RECOIL_PER_TICK_MINIMUM = 0.20D;
+    private static final double MAX_SOLVED_SAG_FALLBACK = 64.0D;
+    private static final double SAG_ARC_APPROX_FACTOR_FALLBACK = 0.375D;
+    private static final double FULL_SLACK_HORIZONTAL_RATIO_FALLBACK = 0.45D;
 
     static ServerPhysicsTuning loadServerPhysicsTuning(ServerLevel level, String presetName) {
         Map<String, String> overrides = RopePresetLibrary.forServer(level.getServer())
@@ -71,7 +77,8 @@ record ServerPhysicsTuning(
         return new ServerPhysicsTuning(physicsEnabled, gravity, slack,
                 segmentLength, segmentMax, damping, iterAir, compliance,
                 pushbackEnabled, contactRadius, springK, velocityDamping, maxRecoilPerTick,
-                ziplineSpeedLimit, ziplineRedstoneAccelerationMultiplier);
+                ziplineSpeedLimit, ziplineRedstoneAccelerationMultiplier,
+                MAX_SOLVED_SAG_FALLBACK, SAG_ARC_APPROX_FACTOR_FALLBACK, FULL_SLACK_HORIZONTAL_RATIO_FALLBACK);
     }
 
     private static double parseDouble(String raw, TuningKey<Double> key, double fallback) {
