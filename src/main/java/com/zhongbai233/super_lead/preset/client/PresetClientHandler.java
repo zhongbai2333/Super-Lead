@@ -75,10 +75,10 @@ public final class PresetClientHandler {
      */
     public static void applyOverrides(Map<String, String> overrides) {
         ClientTuning.loadOnce();
-        Map<String, String> map = new HashMap<>(overrides);
+        Map<String, String> map = new HashMap<>(ClientTuning.normalizeOverrides(overrides));
         List<String> failures = new ArrayList<>();
         for (TuningKey<?> key : ClientTuning.allKeys()) {
-            String raw = map.get(key.id);
+            String raw = ClientTuning.overrideValue(map, key);
             if (raw == null) {
                 key.clearPreset();
             } else if (!setPresetValue(key, raw)) {
@@ -91,15 +91,10 @@ public final class PresetClientHandler {
     }
 
     private static boolean setPresetValue(TuningKey<?> key, String raw) {
-        if (acceptsUncheckedFiniteDouble(key)) {
+        if (ClientTuning.isUncheckedFiniteDoubleKey(key)) {
             return key.setPresetUncheckedFromString(raw);
         }
         return key.setPresetFromString(raw);
-    }
-
-    private static boolean acceptsUncheckedFiniteDouble(TuningKey<?> key) {
-        return key.id.equals(ClientTuning.SLACK_LOOSE.id)
-                || key.id.equals(ClientTuning.SLACK_TIGHT.id);
     }
 
     public static void clearAllPresets() {

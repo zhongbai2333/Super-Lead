@@ -1,6 +1,8 @@
 package com.zhongbai233.super_lead.lead;
 
 import com.zhongbai233.super_lead.Config;
+import com.zhongbai233.super_lead.lead.cargo.CargoManifestData;
+import com.zhongbai233.super_lead.lead.integration.ae2.AE2NetworkBridge;
 import com.zhongbai233.super_lead.lead.integration.mekanism.MekanismChemicalBridge;
 import com.zhongbai233.super_lead.lead.integration.mekanism.MekanismHeatBridge;
 import com.zhongbai233.super_lead.preset.PresetServerManager;
@@ -40,6 +42,9 @@ import net.neoforged.neoforge.capabilities.BlockCapability;
 import net.neoforged.neoforge.capabilities.Capabilities;
 import net.neoforged.neoforge.transfer.ResourceHandler;
 import net.neoforged.neoforge.transfer.energy.EnergyHandler;
+import net.neoforged.neoforge.transfer.fluid.FluidResource;
+import net.neoforged.neoforge.transfer.fluid.FluidUtil;
+import net.neoforged.neoforge.transfer.item.ItemResource;
 import net.neoforged.neoforge.transfer.resource.Resource;
 import net.neoforged.neoforge.transfer.transaction.Transaction;
 
@@ -496,6 +501,10 @@ public final class SuperLeadNetwork {
         return upgradeNearestToKindInView(level, player, radius, LeadKind.THERMAL);
     }
 
+    public static boolean upgradeNearestToAeNetworkInView(Level level, Player player, double radius) {
+        return upgradeNearestToKindInView(level, player, radius, LeadKind.AE_NETWORK);
+    }
+
     /**
      * Toggle the extract-source anchor for any ITEM connection attached at the
      * given block position.
@@ -581,6 +590,12 @@ public final class SuperLeadNetwork {
                 Config.thermalTierMax(), costMatcher);
     }
 
+    public static boolean upgradeNearestAeChannelTierInView(Level level, Player player, double radius,
+            Predicate<ItemStack> costMatcher) {
+        return upgradeNearestKindTierInView(level, player, radius, LeadKind.AE_NETWORK,
+                Config.aeChannelTierMax(), costMatcher);
+    }
+
     /** Find a known connection by id in the given level (server or client). */
     public static Optional<LeadConnection> findConnectionById(Level level, UUID id) {
         for (LeadConnection connection : connections(level)) {
@@ -636,7 +651,7 @@ public final class SuperLeadNetwork {
             return false;
         }
 
-        return isClaimedHitNearConnection(a, b, claimedHitPoint, clamp01(claimedT));
+        return isClaimedHitNearConnection(level, connection, a, b, claimedHitPoint, clamp01(claimedT));
     }
 
     /**
@@ -695,10 +710,18 @@ public final class SuperLeadNetwork {
         return Math.min(baseReach, blockHit.getLocation().distanceTo(origin) + blockSlack);
     }
 
-    private static boolean isClaimedHitNearConnection(Vec3 a, Vec3 b, Vec3 hit, double hitT) {
+    private static boolean isClaimedHitNearConnection(ServerLevel level, LeadConnection connection,
+            Vec3 a, Vec3 b, Vec3 hit, double hitT) {
         double radiusSqr = SERVER_CLAIM_ROPE_RADIUS * SERVER_CLAIM_ROPE_RADIUS;
         if (distancePointToSegmentSqr(hit, a, b) <= radiusSqr) {
             return true;
+        }
+        if (!connection.physicsPreset().isBlank()) {
+            double[] closest = new double[4];
+            if (ServerRopeCurve.distancePointToCurveSqr(ServerRopeCurve.from(level, connection, a, b), hit, closest)
+                    <= radiusSqr) {
+                return true;
+            }
         }
         if (distancePointToApproximateSaggedCurveSqr(hit, a, b) <= radiusSqr) {
             return true;
@@ -868,13 +891,14 @@ public final class SuperLeadNetwork {
             SuperLeadPayloads.sendToDimension(level);
             return true;
         }
-        net.minecraft.world.item.ItemStack drop = removedFinal.stack().copy();
+        LeadEndpointLayout.Endpoints endpoints = endpoints(level, connection);
+        Vec3 point = endpoints.from().lerp(endpoints.to(), removedFinal.t());
+        net.minecraft.world.item.ItemStack drop = prepareAttachmentDropStack(level, removedFinal, point);
         if (player != null && !player.getInventory().add(drop)) {
             player.drop(drop, false);
         } else if (player == null) {
-            Vec3 mid = midpoint(level, connection);
             net.minecraft.world.entity.item.ItemEntity entity = new net.minecraft.world.entity.item.ItemEntity(level,
-                    mid.x, mid.y, mid.z, drop);
+                    point.x, point.y, point.z, drop);
             entity.setDefaultPickUpDelay();
             level.addFreshEntity(entity);
         }
@@ -924,6 +948,41 @@ public final class SuperLeadNetwork {
             return changed ? c.withAttachments(updated) : c;
         }, true);
         if (ok) {
+            SuperLeadPayloads.sendToDimension(level);
+        }
+        return ok;
+    }
+
+    public static boolean updateAttachmentStack(ServerLevel level, java.util.UUID connectionId,
+            java.util.UUID attachmentId, java.util.function.UnaryOperator<ItemStack> updater, boolean sync) {
+        if (updater == null)
+            return false;
+        boolean ok = SuperLeadSavedData.get(level).update(connectionId, c -> {
+            if (c.attachments().isEmpty())
+                return c;
+            List<RopeAttachment> updated = new ArrayList<>(c.attachments().size());
+            boolean changed = false;
+            for (RopeAttachment attachment : c.attachments()) {
+                if (!attachment.id().equals(attachmentId)) {
+                    updated.add(attachment);
+                    continue;
+                }
+                ItemStack stack = updater.apply(attachment.stack().copyWithCount(1));
+                if (stack == null || stack.isEmpty()) {
+                    updated.add(attachment);
+                    continue;
+                }
+                stack = stack.copyWithCount(1);
+                if (ItemStack.isSameItemSameComponents(stack, attachment.stack())) {
+                    updated.add(attachment);
+                } else {
+                    updated.add(attachment.withStack(stack));
+                    changed = true;
+                }
+            }
+            return changed ? c.withAttachments(updated) : c;
+        }, true);
+        if (ok && sync) {
             SuperLeadPayloads.sendToDimension(level);
         }
         return ok;
@@ -1439,6 +1498,19 @@ public final class SuperLeadNetwork {
         }
     }
 
+    public static void tickAeNetwork(ServerLevel level) {
+        if (!isAe2Loaded()) {
+            return;
+        }
+        List<LeadConnection> aeConnections = new ArrayList<>();
+        for (LeadConnection connection : SuperLeadSavedData.get(level).connections()) {
+            if (connection.kind() == LeadKind.AE_NETWORK) {
+                aeConnections.add(connection);
+            }
+        }
+        AE2NetworkBridge.reconcile(level, aeConnections);
+    }
+
     private static void tickPressurizedTransfer(ServerLevel level) {
         SuperLeadSavedData data = SuperLeadSavedData.get(level);
 
@@ -1546,6 +1618,10 @@ public final class SuperLeadNetwork {
 
     private static boolean isMekanismLoaded() {
         return net.neoforged.fml.ModList.get().isLoaded("mekanism");
+    }
+
+    private static boolean isAe2Loaded() {
+        return net.neoforged.fml.ModList.get().isLoaded("ae2");
     }
 
     private static <R extends Resource> void tickTransfer(
@@ -1658,7 +1734,7 @@ public final class SuperLeadNetwork {
             List<RrChoice> rrChoices) {
         ResourceHandler<R> h = handler(level, current, cap);
         if (h != null) {
-            return transferOne(sourceHandler, h, batch);
+            return transferOne(sourceHandler, h, batch, resource -> pathAllowsResource(path, resource));
         }
 
         BlockPos knot = current.pos().immutable();
@@ -1709,7 +1785,7 @@ public final class SuperLeadNetwork {
             List<RrChoice> rrChoices) {
         if (MekanismChemicalBridge.hasHandler(level, current)) {
             return MekanismChemicalBridge.transferOne(level, sourceAnchor, current, batch,
-                    MekanismChemicalBridge.ChemicalFilter.ANY) > 0L;
+                    MekanismChemicalBridge.ChemicalFilter.ANY, pathConnections(path)) > 0L;
         }
 
         BlockPos knot = current.pos().immutable();
@@ -1758,17 +1834,90 @@ public final class SuperLeadNetwork {
         return h;
     }
 
+    private static List<LeadConnection> pathConnections(List<PathStep> path) {
+        List<LeadConnection> connections = new ArrayList<>(path.size());
+        for (PathStep step : path) {
+            connections.add(step.rope());
+        }
+        return connections;
+    }
+
+    private static <R extends Resource> boolean pathAllowsResource(List<PathStep> path, R resource) {
+        for (PathStep step : path) {
+            if (!connectionAllowsResource(step.rope(), resource)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static <R extends Resource> boolean connectionAllowsResource(LeadConnection connection, R resource) {
+        if (connection == null || resource == null || resource.isEmpty() || connection.attachments().isEmpty()) {
+            return true;
+        }
+        if (resource instanceof ItemResource itemResource) {
+            return connectionAllowsItemResource(connection, itemResource);
+        }
+        if (resource instanceof FluidResource fluidResource) {
+            return connectionAllowsFluidResource(connection, fluidResource);
+        }
+        return true;
+    }
+
+    private static boolean connectionAllowsItemResource(LeadConnection connection, ItemResource resource) {
+        boolean hasItemFilter = false;
+        ItemStack candidate = null;
+        for (RopeAttachment attachment : connection.attachments()) {
+            ItemStack sample = attachment.stack();
+            if (sample.isEmpty()) {
+                continue;
+            }
+            if (CargoManifestData.isManifestStack(sample)) {
+                hasItemFilter = true;
+                if (candidate == null) {
+                    candidate = resource.toStack(1);
+                }
+                if (CargoManifestData.matches(sample, candidate)) {
+                    return true;
+                }
+                continue;
+            }
+            hasItemFilter = true;
+            if (resource.matches(sample)) {
+                return true;
+            }
+        }
+        return !hasItemFilter;
+    }
+
+    private static boolean connectionAllowsFluidResource(LeadConnection connection, FluidResource resource) {
+        boolean hasFluidFilter = false;
+        for (RopeAttachment attachment : connection.attachments()) {
+            var sample = FluidUtil.getFirstStackContained(attachment.stack());
+            if (sample.isEmpty()) {
+                continue;
+            }
+            hasFluidFilter = true;
+            if (resource.matches(sample)) {
+                return true;
+            }
+        }
+        return !hasFluidFilter;
+    }
+
     /**
      * Try to extract up to {@code batch} units from any source slot whose contents
      * the target
      * accepts entirely. Returns true if anything was moved.
      */
     private static <R extends Resource> boolean transferOne(ResourceHandler<R> source, ResourceHandler<R> target,
-            int batch) {
+            int batch, Predicate<R> filter) {
         int slots = source.size();
         for (int slot = 0; slot < slots; slot++) {
             R res = source.getResource(slot);
             if (res == null || res.isEmpty())
+                continue;
+            if (filter != null && !filter.test(res))
                 continue;
             long avail = source.getAmountAsLong(slot);
             if (avail <= 0L)
@@ -2270,9 +2419,23 @@ public final class SuperLeadNetwork {
         Vec3 b = endpoints.to();
         for (RopeAttachment attachment : connection.attachments()) {
             Vec3 point = a.lerp(b, attachment.t());
-            ItemEntity drop = new ItemEntity(level, point.x, point.y, point.z, attachment.stack().copy());
+            ItemEntity drop = new ItemEntity(level, point.x, point.y, point.z,
+                    prepareAttachmentDropStack(level, attachment, point));
             drop.setDefaultPickUpDelay();
             level.addFreshEntity(drop);
+        }
+    }
+
+    private static ItemStack prepareAttachmentDropStack(ServerLevel level, RopeAttachment attachment, Vec3 point) {
+        ItemStack stack = attachment.stack().copy();
+        if (!net.neoforged.fml.ModList.get().isLoaded("ae2")) {
+            return stack;
+        }
+        try {
+            return com.zhongbai233.super_lead.lead.integration.ae2.AE2NetworkBridge
+                    .dropStoredContents(level, stack, point);
+        } catch (RuntimeException | LinkageError ignored) {
+            return stack;
         }
     }
 

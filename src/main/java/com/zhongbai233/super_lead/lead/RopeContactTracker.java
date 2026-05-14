@@ -149,7 +149,7 @@ public final class RopeContactTracker {
                 normal = orthogonalizeNormal(normal, tangent);
                 normal = orientTowardPlayer(normal, reportedPoint, playerCenter);
                 double slack = clamp(report.slack(), 0.0D, radius * 3.0D);
-                contact = new ContactEstimate(clamp01(report.t()), reportedPoint, normal, tangent, reportDepth, slack);
+                contact = new ContactEstimate(clamp01(report.t()), reportedPoint, normal, reportDepth, slack);
             }
         }
 
@@ -177,10 +177,13 @@ public final class RopeContactTracker {
         // Only sync-zone ropes send contact reports; pass syncZone=true here.
         // If this method were ever called for a non-sync rope (preset blank),
         // the early-return above prevents reaching this point.
-        AppliedPush push = applyVelocityThisTick
-                ? applyContactImpulse(player, contact.normal(), contact.tangent(),
-                        contact.depth(), contact.slack(), radius, tuning, impulseScale, inputAway, true)
-                : (previous == null ? AppliedPush.NONE : previous.push());
+        AppliedPush push;
+        if (applyVelocityThisTick) {
+            push = applyContactImpulse(player, contact.normal(),
+                contact.depth(), contact.slack(), radius, tuning, impulseScale, inputAway, true);
+        } else {
+            push = previous == null ? AppliedPush.NONE : previous.push();
+        }
 
         double visualMag = Math.min(Math.max(contact.depth() * 0.75D, push.mag() * 0.35D), VISUAL_MAX_DEFLECT);
         Vec3 n = contact.normal();
@@ -220,7 +223,7 @@ public final class RopeContactTracker {
      *
      * @param syncZone true when the rope belongs to a synced physics zone
      */
-    private static AppliedPush applyContactImpulse(ServerPlayer player, Vec3 normal, Vec3 tangent,
+    private static AppliedPush applyContactImpulse(ServerPlayer player, Vec3 normal,
             double depth, double slack, double radius, ServerPhysicsTuning tuning,
             double impulseScale, double inputAway, boolean syncZone) {
         if (!syncZone)
@@ -353,7 +356,7 @@ public final class RopeContactTracker {
         if (depth <= 1.0e-4D)
             return null;
         double t = clamp01(closest[3]);
-        return new ContactEstimate(t, point, box.normal(), fallbackTangent(a, b), depth,
+        return new ContactEstimate(t, point, box.normal(), depth,
                 estimatedSlackAllowance(a, b, t, tuning, radius));
     }
 
@@ -430,8 +433,7 @@ public final class RopeContactTracker {
     }
 
     private static double estimatedSlackAllowance(Vec3 a, Vec3 b, double t, ServerPhysicsTuning tuning, double radius) {
-        double dist = a.distanceTo(b);
-        double freeSlack = Math.max(0.0D, dist * (tuning.slackTight() - 1.0D));
+        double freeSlack = ServerRopeCurve.freeSlack(a, b, tuning);
         double midspan = Math.sin(Math.PI * clamp01(t));
         return clamp(freeSlack * midspan, 0.0D, radius * 3.0D);
     }
@@ -490,7 +492,7 @@ public final class RopeContactTracker {
     private record ContactKey(UUID ropeId, UUID playerId) {
     }
 
-    private record ContactEstimate(double t, Vec3 point, Vec3 normal, Vec3 tangent, double depth, double slack) {
+    private record ContactEstimate(double t, Vec3 point, Vec3 normal, double depth, double slack) {
     }
 
     private record BoxContact(Vec3 normal, double separation) {

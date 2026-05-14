@@ -664,7 +664,7 @@ public final class ParrotRopePerchController {
         if (dist < 1.0e-6D || Math.abs(tuning.gravity()) < 1.0e-9D) {
             return 0.0D;
         }
-        double slackExtra = Math.max(0.0D, tuning.slackTight() - 1.0D);
+        double slackExtra = Math.max(0.0D, tuning.slack() - 1.0D);
         return Math.min(1.35D, dist * (0.055D + slackExtra * 2.0D));
     }
 

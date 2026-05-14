@@ -24,55 +24,7 @@ final class RopeContactGeometry {
             return closestPointOnSegment(a, b, p, out, 0.0D, 0.0D, 1.0D);
         }
 
-        // Client ropes start from a catenary-like sag and then settle under a higher
-        // precision
-        // XPBD solver. Server validation should check a plausible envelope, not the
-        // straight
-        // endpoint chord; otherwise long ropes lose all mid-span collision because the
-        // client
-        // rope is visibly lower than the server's cheap model.
-        double slackExtra = Math.max(0.0D, tuning.slackTight() - 1.0D);
-        double sag = Math.min(1.35D, dist * (0.055D + slackExtra * 2.0D));
-        int samples = Math.max(8, Math.min(32, (int) Math.ceil(dist * 3.0D)));
-        double best = Double.POSITIVE_INFINITY;
-        Vec3 prev = sagPoint(a, b, 0.0D, sag);
-        double walked = 0.0D;
-        double total = approximateSagLength(a, b, sag, samples);
-        double[] candidate = new double[4];
-        for (int i = 1; i <= samples; i++) {
-            double t1 = i / (double) samples;
-            Vec3 next = sagPoint(a, b, t1, sag);
-            double segLen = prev.distanceTo(next);
-            double d = closestPointOnSegment(prev, next, p, candidate, walked, segLen, total);
-            if (d < best) {
-                best = d;
-                out[0] = candidate[0];
-                out[1] = candidate[1];
-                out[2] = candidate[2];
-                out[3] = candidate[3];
-            }
-            walked += segLen;
-            prev = next;
-        }
-        return best;
-    }
-
-    private static Vec3 sagPoint(Vec3 a, Vec3 b, double t, double sag) {
-        return new Vec3(
-                a.x + (b.x - a.x) * t,
-                a.y + (b.y - a.y) * t - Math.sin(Math.PI * t) * sag,
-                a.z + (b.z - a.z) * t);
-    }
-
-    private static double approximateSagLength(Vec3 a, Vec3 b, double sag, int samples) {
-        double total = 0.0D;
-        Vec3 prev = sagPoint(a, b, 0.0D, sag);
-        for (int i = 1; i <= samples; i++) {
-            Vec3 next = sagPoint(a, b, i / (double) samples, sag);
-            total += prev.distanceTo(next);
-            prev = next;
-        }
-        return Math.max(total, a.distanceTo(b));
+        return ServerRopeCurve.distancePointToCurveSqr(ServerRopeCurve.from(a, b, tuning), p, out);
     }
 
     private static double closestPointOnSegment(

@@ -10,12 +10,19 @@ import net.minecraft.server.level.ServerLevel;
 record ServerPhysicsTuning(
         boolean physicsEnabled,
         double gravity,
-        double slackTight,
+    double slack,
+        double segmentLength,
+        int segmentMax,
+        double damping,
+        int iterAir,
+        double compliance,
         boolean pushbackEnabled,
         double contactRadius,
         double springK,
         double velocityDamping,
-        double maxRecoilPerTick) {
+        double maxRecoilPerTick,
+        double ziplineSpeedLimit,
+        double ziplineRedstoneAccelerationMultiplier) {
     private static final double CONTACT_RADIUS_FALLBACK = ClientTuning.CONTACT_RADIUS.defaultValue;
     private static final double SPRING_K_FALLBACK = ClientTuning.CONTACT_SPRING.defaultValue;
     private static final double SPRING_K_MINIMUM = 0.30D;
@@ -31,8 +38,18 @@ record ServerPhysicsTuning(
         boolean physicsEnabled = parseBool(overrides.get(ClientTuning.MODE_PHYSICS.id),
                 ClientTuning.MODE_PHYSICS.defaultValue);
         double gravity = parseServerGravity(overrides.get(ClientTuning.GRAVITY.id));
-        double slackTight = parseDouble(overrides.get(ClientTuning.SLACK_TIGHT.id),
-                ClientTuning.SLACK_TIGHT, ClientTuning.SLACK_TIGHT.defaultValue, true);
+        double slack = parseDouble(ClientTuning.overrideValue(overrides, ClientTuning.SLACK),
+            ClientTuning.SLACK, ClientTuning.SLACK.defaultValue, true);
+        double segmentLength = parseDouble(overrides.get(ClientTuning.SEGMENT_LENGTH.id),
+                ClientTuning.SEGMENT_LENGTH, ClientTuning.SEGMENT_LENGTH.defaultValue);
+        int segmentMax = parseInt(overrides.get(ClientTuning.SEGMENT_MAX.id),
+                ClientTuning.SEGMENT_MAX, ClientTuning.SEGMENT_MAX.defaultValue);
+        double damping = parseDouble(overrides.get(ClientTuning.DAMPING.id),
+                ClientTuning.DAMPING, ClientTuning.DAMPING.defaultValue);
+        int iterAir = parseInt(overrides.get(ClientTuning.ITER_AIR.id),
+                ClientTuning.ITER_AIR, ClientTuning.ITER_AIR.defaultValue);
+        double compliance = parseDouble(overrides.get(ClientTuning.COMPLIANCE.id),
+                ClientTuning.COMPLIANCE, ClientTuning.COMPLIANCE.defaultValue);
         boolean pushbackEnabled = parseBool(overrides.get(ClientTuning.CONTACT_PUSHBACK.id),
                 ClientTuning.CONTACT_PUSHBACK.defaultValue);
         double contactRadius = parseDouble(overrides.get(ClientTuning.CONTACT_RADIUS.id),
@@ -45,8 +62,16 @@ record ServerPhysicsTuning(
         double maxRecoilPerTick = Math.max(MAX_RECOIL_PER_TICK_MINIMUM,
                 parseDouble(overrides.get(ClientTuning.CONTACT_MAX_RECOIL_PER_TICK.id),
                         ClientTuning.CONTACT_MAX_RECOIL_PER_TICK, MAX_RECOIL_PER_TICK_FALLBACK));
-        return new ServerPhysicsTuning(physicsEnabled, gravity, slackTight,
-                pushbackEnabled, contactRadius, springK, velocityDamping, maxRecoilPerTick);
+        double ziplineSpeedLimit = parseDouble(overrides.get(ClientTuning.ZIPLINE_SPEED_LIMIT.id),
+                ClientTuning.ZIPLINE_SPEED_LIMIT, Double.NaN);
+        double ziplineRedstoneAccelerationMultiplier = parseDouble(
+                overrides.get(ClientTuning.ZIPLINE_REDSTONE_ACCELERATION_MULTIPLIER.id),
+                ClientTuning.ZIPLINE_REDSTONE_ACCELERATION_MULTIPLIER,
+                ClientTuning.ZIPLINE_REDSTONE_ACCELERATION_MULTIPLIER.defaultValue);
+        return new ServerPhysicsTuning(physicsEnabled, gravity, slack,
+                segmentLength, segmentMax, damping, iterAir, compliance,
+                pushbackEnabled, contactRadius, springK, velocityDamping, maxRecoilPerTick,
+                ziplineSpeedLimit, ziplineRedstoneAccelerationMultiplier);
     }
 
     private static double parseDouble(String raw, TuningKey<Double> key, double fallback) {
@@ -74,6 +99,17 @@ record ServerPhysicsTuning(
             return Double.isFinite(clientGravity) ? clientGravity : ClientTuning.GRAVITY.defaultValue;
         } catch (RuntimeException ignored) {
             return ClientTuning.GRAVITY.defaultValue;
+        }
+    }
+
+    private static int parseInt(String raw, TuningKey<Integer> key, int fallback) {
+        if (raw == null)
+            return fallback;
+        try {
+            int value = key.type.parse(raw);
+            return key.type.validate(value) ? value : fallback;
+        } catch (RuntimeException ignored) {
+            return fallback;
         }
     }
 

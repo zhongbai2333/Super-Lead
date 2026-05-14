@@ -42,7 +42,7 @@ public record RopeAttachment(UUID id, double t, ItemStack stack, boolean display
     }
 
     public static RopeAttachment create(double t, ItemStack stack, int frontSide) {
-        boolean asBlock = RopeAttachmentItems.isBlockItem(stack);
+        boolean asBlock = RopeAttachmentItems.isBlockItem(stack) || RopeAttachmentItems.isPanelLikeItem(stack);
         return new RopeAttachment(UUID.randomUUID(), t, stack, asBlock, frontSide);
     }
 

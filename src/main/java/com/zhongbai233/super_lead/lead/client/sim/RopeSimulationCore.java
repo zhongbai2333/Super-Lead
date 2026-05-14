@@ -27,14 +27,6 @@ abstract class RopeSimulationCore {
      */
     protected static final double TERRAIN_RADIUS = 0.085D;
     protected static final double ROPE_REPEL_DISTANCE = 0.06D;
-    /**
-     * Vertical proximity within which rope-rope normals get biased toward the Y
-     * axis for stable layering.
-     * Decoupled from ROPE_REPEL_DISTANCE so very tight stacking still produces a
-     * strong layer
-     * bias instead of degenerating into sideways tug-of-war between layers.
-     */
-    protected static final double LAYER_CAPTURE_HEIGHT = 0.20D;
 
     // ============================================================================================
     // Solver
@@ -51,23 +43,10 @@ abstract class RopeSimulationCore {
     protected static final double SUBSTEP_SPEED_TIER2 = 0.75D;
     protected static final double SUBSTEP_SPEED_TIER3 = 1.20D;
     /**
-     * Layered repulsion blends the raw normal toward the Y axis when ropes are
-     * vertically close.
-     * Near 1.0 = almost pure vertical separation, which is what we want for stacked
-     * ropes;
-     * any sideways residue makes the sandwiched middle layer tremble.
-     */
-    protected static final double LAYER_BLEND_STRENGTH = 0.95D;
-    /**
      * Y-axis correction multiplier for nodes resting on terrain. <1 = harder to
      * push downward.
      */
     protected static final double SUPPORT_DOWN_INV_MASS = 1.0D;
-    /**
-     * Endpoint fade window (fraction of rope) for rope-rope pushes near anchor
-     * points.
-     */
-    protected static final double ENDPOINT_FADE = 0.08D;
     protected static final double COLLISION_EPS = 0.015D;
     protected static final double TERRAIN_PROXIMITY_MARGIN = 0.35D;
     protected static final double SEGMENT_CORNER_PUSH_EPS = ROPE_RADIUS * 0.65D;
@@ -87,9 +66,7 @@ abstract class RopeSimulationCore {
     // ============================================================================================
     protected final int segments;
     protected final int nodes;
-    protected final boolean tight;
     protected RopeTuning tuning;
-    protected final double layerPriority;
     protected final Vec3 stableSeparation;
 
     // Positions (current solver state).
@@ -331,12 +308,10 @@ abstract class RopeSimulationCore {
     protected int anchorAColX = Integer.MIN_VALUE, anchorAColY = 0, anchorAColZ = 0;
     protected int anchorBColX = Integer.MIN_VALUE, anchorBColY = 0, anchorBColZ = 0;
 
-    protected RopeSimulationCore(Vec3 a, Vec3 b, long seed, boolean tight, RopeTuning tuning) {
-        this.tight = tight;
+    protected RopeSimulationCore(Vec3 a, Vec3 b, long seed, RopeTuning tuning) {
         this.tuning = tuning != null ? tuning : RopeTuning.localDefaults();
         this.segments = segmentCount(a, b, this.tuning);
         this.nodes = segments + 1;
-        this.layerPriority = RopeMath.stableLayerPriority(seed);
         this.stableSeparation = RopeMath.stableUnitVector(seed);
 
         x = new double[nodes];
@@ -734,15 +709,9 @@ abstract class RopeSimulationCore {
         // spend the extra length, making a gravity=0 preset still look sagged.
         if (Math.abs(tuning.gravity()) < 1.0e-9D)
             return 1.0D;
-        double dx = b.x - a.x;
-        double dz = b.z - a.z;
-        double dist = a.distanceTo(b);
-        if (dist < 1e-6)
+        if (a.distanceToSqr(b) < 1.0e-12D)
             return 1.0D;
-        double horizontal = Math.sqrt(dx * dx + dz * dz);
-        double t = Math.min(1.0D, horizontal / (dist * 0.45D));
-        double maxSlackFactor = tight ? tuning.slackTight() : tuning.slackLoose();
-        return 1.0D + (maxSlackFactor - 1.0D) * t;
+        return tuning.slack();
     }
 
     protected boolean anyNeighborAwake(List<RopeSimulation> neighbors) {

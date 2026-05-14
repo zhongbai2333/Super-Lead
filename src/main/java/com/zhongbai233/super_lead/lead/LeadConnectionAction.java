@@ -1,6 +1,7 @@
 package com.zhongbai233.super_lead.lead;
 
 import com.zhongbai233.super_lead.Config;
+import com.zhongbai233.super_lead.lead.integration.ae2.AE2LeadMaterials;
 import com.zhongbai233.super_lead.lead.integration.mekanism.MekanismLeadMaterials;
 import java.util.Optional;
 import net.minecraft.server.level.ServerLevel;
@@ -281,12 +282,12 @@ public enum LeadConnectionAction {
     PRESSURIZED_UPGRADE(0x88B8C8D8) {
         @Override
         public boolean matches(ItemStack stack) {
-            return MekanismLeadMaterials.isSteelIngot(stack);
+            return MekanismLeadMaterials.isSteelBlock(stack);
         }
 
         @Override
         public net.minecraft.world.item.Item iconItem() {
-            return MekanismLeadMaterials.steelIngotIcon();
+            return MekanismLeadMaterials.steelBlockIcon();
         }
 
         @Override
@@ -318,12 +319,12 @@ public enum LeadConnectionAction {
     THERMAL_UPGRADE(0x88D98B35) {
         @Override
         public boolean matches(ItemStack stack) {
-            return MekanismLeadMaterials.isMekanismLoaded() && stack.is(Items.COPPER_INGOT);
+            return MekanismLeadMaterials.isMekanismLoaded() && stack.is(Items.COPPER_BLOCK);
         }
 
         @Override
         public net.minecraft.world.item.Item iconItem() {
-            return Items.COPPER_INGOT;
+            return Items.COPPER_BLOCK;
         }
 
         @Override
@@ -339,6 +340,78 @@ public enum LeadConnectionAction {
         @Override
         public boolean applyTo(ServerLevel level, Player player, LeadConnection connection) {
             return SuperLeadNetwork.upgradeConnectionKind(level, connection, LeadKind.THERMAL);
+        }
+
+        @Override
+        public void consumeSuccessfulUse(ItemStack stack, Player player, InteractionHand hand) {
+            if (!player.isCreative()) {
+                stack.shrink(1);
+            }
+        }
+    },
+    AE_NETWORK_UPGRADE(0x889B7CFF) {
+        @Override
+        public boolean matches(ItemStack stack) {
+            return AE2LeadMaterials.isFluixBlock(stack);
+        }
+
+        @Override
+        public net.minecraft.world.item.Item iconItem() {
+            return AE2LeadMaterials.fluixBlockIcon();
+        }
+
+        @Override
+        public boolean canTarget(LeadConnection connection) {
+            return connection.kind() != LeadKind.AE_NETWORK;
+        }
+
+        @Override
+        public boolean apply(Level level, Player player, double radius) {
+            return SuperLeadNetwork.upgradeNearestToAeNetworkInView(level, player, radius);
+        }
+
+        @Override
+        public boolean applyTo(ServerLevel level, Player player, LeadConnection connection) {
+            return SuperLeadNetwork.upgradeConnectionKind(level, connection, LeadKind.AE_NETWORK);
+        }
+
+        @Override
+        public void consumeSuccessfulUse(ItemStack stack, Player player, InteractionHand hand) {
+            if (!player.isCreative()) {
+                stack.shrink(1);
+            }
+        }
+    },
+    AE_CHANNEL_UPGRADE(0x88C49BFF) {
+        @Override
+        public boolean matches(ItemStack stack) {
+            return AE2LeadMaterials.isSpatialCellComponent16(stack);
+        }
+
+        @Override
+        public net.minecraft.world.item.Item iconItem() {
+            return AE2LeadMaterials.spatialCellComponent16Icon();
+        }
+
+        @Override
+        public boolean canTarget(LeadConnection connection) {
+            return connection.kind() == LeadKind.AE_NETWORK
+                    && Config.aeChannelCapacity(connection.tier()) < Config.aeChannelMax();
+        }
+
+        @Override
+        public boolean apply(Level level, Player player, double radius) {
+            return SuperLeadNetwork.upgradeNearestAeChannelTierInView(level, player, radius,
+                    AE2LeadMaterials::isSpatialCellComponent16);
+        }
+
+        @Override
+        public boolean applyTo(ServerLevel level, Player player, LeadConnection connection) {
+            if (connection.kind() != LeadKind.AE_NETWORK) {
+                return false;
+            }
+            return SuperLeadNetwork.upgradeConnectionTier(level, player, connection,
+                    Config.aeChannelTierMax(), AE2LeadMaterials::isSpatialCellComponent16);
         }
 
         @Override

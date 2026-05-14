@@ -12,12 +12,12 @@ import net.minecraft.world.item.Items;
  * Mekanism material matching without a hard dependency on Mekanism item classes.
  */
 public final class MekanismLeadMaterials {
-    private static final Identifier STEEL_INGOT_ID = Identifier.fromNamespaceAndPath("mekanism", "ingot_steel");
+    private static final Identifier STEEL_BLOCK_ID = Identifier.fromNamespaceAndPath("mekanism", "block_steel");
     private static final Identifier REINFORCED_ALLOY_ID = Identifier.fromNamespaceAndPath("mekanism",
             "alloy_reinforced");
 
-    private static final TagKey<Item> C_STEEL_INGOTS = TagKey.create(Registries.ITEM,
-            Identifier.fromNamespaceAndPath("c", "ingots/steel"));
+    private static final TagKey<Item> C_STEEL_BLOCKS = TagKey.create(Registries.ITEM,
+        Identifier.fromNamespaceAndPath("c", "storage_blocks/steel"));
     /** Mekanism 26.1 tags reinforced alloy as c:alloys/elite. */
     private static final TagKey<Item> C_REINFORCED_ALLOYS = TagKey.create(Registries.ITEM,
             Identifier.fromNamespaceAndPath("c", "alloys/elite"));
@@ -31,9 +31,9 @@ public final class MekanismLeadMaterials {
         return net.neoforged.fml.ModList.get().isLoaded("mekanism");
     }
 
-    public static boolean isSteelIngot(ItemStack stack) {
+    public static boolean isSteelBlock(ItemStack stack) {
         return isMekanismLoaded() && stack != null && !stack.isEmpty()
-                && (stack.is(C_STEEL_INGOTS) || hasId(stack, STEEL_INGOT_ID));
+                && (stack.is(C_STEEL_BLOCKS) || hasId(stack, STEEL_BLOCK_ID));
     }
 
     public static boolean isReinforcedAlloy(ItemStack stack) {
@@ -43,8 +43,8 @@ public final class MekanismLeadMaterials {
                         || hasId(stack, REINFORCED_ALLOY_ID));
     }
 
-    public static Item steelIngotIcon() {
-        return itemOrFallback(STEEL_INGOT_ID, Items.IRON_INGOT);
+    public static Item steelBlockIcon() {
+        return itemOrFallback(STEEL_BLOCK_ID, Items.IRON_BLOCK);
     }
 
     public static Item reinforcedAlloyIcon() {

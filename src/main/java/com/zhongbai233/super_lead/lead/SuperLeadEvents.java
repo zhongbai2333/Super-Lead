@@ -1,6 +1,7 @@
 package com.zhongbai233.super_lead.lead;
 
 import com.zhongbai233.super_lead.Super_lead;
+import com.zhongbai233.super_lead.lead.integration.ae2.AE2LeadMaterials;
 import com.zhongbai233.super_lead.lead.integration.mekanism.MekanismLeadMaterials;
 import java.util.Optional;
 import net.minecraft.ChatFormatting;
@@ -32,6 +33,13 @@ public final class SuperLeadEvents {
     public static void onRightClickBlock(PlayerInteractEvent.RightClickBlock event) {
         ItemStack stack = event.getItemStack();
 
+        if (tryUsePresetBinder(event.getEntity(), event.getHand(), event.getLevel(),
+                event.getEntity().isShiftKeyDown())) {
+            event.setCanceled(true);
+            event.setCancellationResult(InteractionResult.SUCCESS);
+            return;
+        }
+
         if (tryUseZoneSelectionTool(event)) {
             return;
         }
@@ -57,7 +65,7 @@ public final class SuperLeadEvents {
             if (stack.is(Items.CAULDRON) && tryToggleFluidExtract(event)) {
                 return;
             }
-            if (MekanismLeadMaterials.isSteelIngot(stack) && tryTogglePressurizedExtract(event)) {
+            if (MekanismLeadMaterials.isSteelBlock(stack) && tryTogglePressurizedExtract(event)) {
                 return;
             }
             if (tryUseConnectionAction(event)) {
@@ -69,6 +77,11 @@ public final class SuperLeadEvents {
                 return;
             }
         } else {
+            if (tryOpenRopeAttachmentAeTerminal(event.getEntity(), event.getLevel(), stack)) {
+                event.setCanceled(true);
+                event.setCancellationResult(InteractionResult.SUCCESS);
+                return;
+            }
             if (tryEditRopeAttachmentSign(event.getEntity(), event.getLevel(), stack)) {
                 event.setCanceled(true);
                 event.setCancellationResult(InteractionResult.SUCCESS);
@@ -265,6 +278,12 @@ public final class SuperLeadEvents {
         ItemStack stack = event.getItemStack();
         boolean shift = event.getEntity().isShiftKeyDown();
 
+        if (tryUsePresetBinder(event.getEntity(), event.getHand(), event.getLevel(), shift)) {
+            event.setCanceled(true);
+            event.setCancellationResult(InteractionResult.SUCCESS);
+            return;
+        }
+
         if (ZiplineController.isChain(stack) && tryStartZiplineItem(event)) {
             event.setCanceled(true);
             event.setCancellationResult(InteractionResult.SUCCESS);
@@ -330,10 +349,16 @@ public final class SuperLeadEvents {
             tryStartZiplineEmpty(event);
             return;
         }
+        if (tryUsePresetBinder(event.getEntity(), event.getHand(), event.getLevel(), shift)) {
+            return;
+        }
         if (shift) {
             if (stack.isEmpty()) {
                 tryRemoveRopeAttachment(event.getEntity(), event.getLevel());
             }
+            return;
+        }
+        if (tryOpenRopeAttachmentAeTerminal(event.getEntity(), event.getLevel(), stack)) {
             return;
         }
         if (tryRopeAttachmentSignDye(event.getEntity(), event.getLevel(), stack)) {
@@ -382,6 +407,20 @@ public final class SuperLeadEvents {
                 .trySendAddRopeAttachment(hand);
     }
 
+    private static boolean tryUsePresetBinder(Player player, InteractionHand hand, Level level, boolean shift) {
+        ItemStack stack = player.getItemInHand(hand);
+        if (!SuperLeadItems.isPresetBinder(stack))
+            return false;
+        if (level.isClientSide()) {
+            if (shift) {
+                com.zhongbai233.super_lead.preset.client.PresetBinderClient.sendToggleRope(hand);
+            } else {
+                com.zhongbai233.super_lead.preset.client.PresetBinderClient.openOrEdit(stack, hand);
+            }
+        }
+        return true;
+    }
+
     /**
      * Lightweight server-side check: is the player aiming at a rope that can accept
      * attachments? Used to suppress vanilla block placement when the client will
@@ -394,8 +433,6 @@ public final class SuperLeadEvents {
         if (!player.getOffhandItem().is(Items.STRING))
             return false;
         for (LeadConnection connection : SuperLeadNetwork.connections(level)) {
-            if (connection.kind() != LeadKind.NORMAL && connection.kind() != LeadKind.REDSTONE)
-                continue;
             if (SuperLeadNetwork.canTouchConnectionForAttachment(serverLevel, player, connection)) {
                 return true;
             }
@@ -436,6 +473,17 @@ public final class SuperLeadEvents {
             return false;
         return com.zhongbai233.super_lead.lead.client.SuperLeadClientEvents
                 .tryOpenRopeAttachmentSignEditor();
+    }
+
+    /** Attempt to open an AE2 terminal attachment. Client-only. */
+    private static boolean tryOpenRopeAttachmentAeTerminal(Player player, Level level, ItemStack heldStack) {
+        if (!level.isClientSide())
+            return false;
+        // Keep this empty-hand only so normal item use/attachment placement remains predictable.
+        if (!heldStack.isEmpty())
+            return false;
+        return com.zhongbai233.super_lead.lead.client.SuperLeadClientEvents
+                .tryOpenRopeAttachmentAeTerminal();
     }
 
     /** Attempt to dye a sign attachment. Client-only. */
@@ -573,6 +621,7 @@ public final class SuperLeadEvents {
                 SuperLeadNetwork.tickFluid(serverLevel);
                 SuperLeadNetwork.tickPressurized(serverLevel);
                 SuperLeadNetwork.tickThermal(serverLevel);
+                SuperLeadNetwork.tickAeNetwork(serverLevel);
                 RopeContactTracker.tickRopeContacts(serverLevel);
                 ParrotRopePerchController.tick(serverLevel);
                 ZiplineController.tick(serverLevel);
@@ -659,11 +708,14 @@ public final class SuperLeadEvents {
         if (stack.is(Items.CAULDRON)) {
             return LeadKind.FLUID;
         }
-        if (MekanismLeadMaterials.isSteelIngot(stack)) {
+        if (MekanismLeadMaterials.isSteelBlock(stack)) {
             return LeadKind.PRESSURIZED;
         }
-        if (MekanismLeadMaterials.isMekanismLoaded() && stack.is(Items.COPPER_INGOT)) {
+        if (MekanismLeadMaterials.isMekanismLoaded() && stack.is(Items.COPPER_BLOCK)) {
             return LeadKind.THERMAL;
+        }
+        if (AE2LeadMaterials.isFluixBlock(stack)) {
+            return LeadKind.AE_NETWORK;
         }
         return null;
     }

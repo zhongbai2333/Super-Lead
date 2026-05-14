@@ -17,17 +17,16 @@ import net.neoforged.neoforge.client.event.RegisterClientCommandsEvent;
 public final class ClientTuning {
     private static final Map<String, TuningKey<?>> KEYS = new LinkedHashMap<>();
     private static final List<BiConsumer<TuningKey<?>, Object>> LISTENERS = new CopyOnWriteArrayList<>();
+    private static final String LEGACY_SLACK_LOOSE_ID = "slack.loose";
+    private static final String LEGACY_SLACK_TIGHT_ID = "slack.tight";
 
     private static volatile boolean loaded;
     private static volatile long renderEpoch;
     private static volatile long physicsEpoch;
 
-    public static final TuningKey<Double> SLACK_LOOSE = registerD(
-            "slack.loose", "physics.shape", 1.010D, 1.000D, 1.05D,
-            "Slack multiplier for normal ropes. Higher values sag more.");
-    public static final TuningKey<Double> SLACK_TIGHT = registerD(
-            "slack.tight", "physics.shape", 1.005D, 1.000D, 1.03D,
-            "Slack multiplier for loaded or tight ropes.");
+    public static final TuningKey<Double> SLACK = registerD(
+            "slack", "physics.shape", 1.005D, 1.000D, 1.20D,
+            "Slack multiplier for ropes. Higher values sag more.");
     public static final TuningKey<Double> SEGMENT_LENGTH = registerD(
             "segment.length", "physics.shape", 0.30D, 0.15D, 0.60D,
             "Target segment length for newly created rope simulations.");
@@ -69,6 +68,19 @@ public final class ClientTuning {
     public static final TuningKey<Double> CONTACT_MAX_RECOIL_PER_TICK = registerD(
             "contact.maxRecoilPerTick", "physics.contact", 0.20D, 0.0D, 0.50D,
             "Maximum 3D contact velocity added to the player per server tick before support scaling.");
+    public static final TuningKey<Boolean> CONTACT_PARROT_PATHFINDING = registerB(
+            "contact.parrotPathfinding", "physics.contact", Boolean.TRUE,
+            "Whether parrots can pathfind to ropes in this zone.");
+    public static final TuningKey<Boolean> CONTACT_PLAYER_ZIPLINE = registerB(
+            "contact.playerZipline", "physics.contact", Boolean.TRUE,
+            "Whether players can use ropes in this zone as ziplines.");
+
+    public static final TuningKey<Double> ZIPLINE_SPEED_LIMIT = registerD(
+            "zipline.speedLimit", "physics.zipline", 1.35D, -1.0D, 64.0D,
+            "Maximum zipline speed in blocks per tick. Use -1 to disable the speed cap.");
+    public static final TuningKey<Double> ZIPLINE_REDSTONE_ACCELERATION_MULTIPLIER = registerD(
+            "zipline.redstoneAccelerationMultiplier", "physics.zipline", 1.0D, 0.0D, 32.0D,
+            "Multiplier applied to powered redstone zipline acceleration.");
 
     public static final TuningKey<Boolean> MODE_PHYSICS = registerB(
             "mode.physics", "render.mode", Boolean.TRUE,
@@ -129,6 +141,12 @@ public final class ClientTuning {
     public static final TuningKey<Integer> COLOR_THERMAL_ACCENT = registerC(
             "color.thermal.accent", "render.color", 0xF39A4A,
             "Mekanism thermal rope accent stripe color.");
+    public static final TuningKey<Integer> COLOR_AE_NETWORK_BASE = registerC(
+            "color.ae_network.base", "render.color", 0x5B4F9F,
+            "AE2 ME cable rope base stripe color.");
+    public static final TuningKey<Integer> COLOR_AE_NETWORK_ACCENT = registerC(
+            "color.ae_network.accent", "render.color", 0xC8A8FF,
+            "AE2 ME cable rope accent stripe and channel-band color.");
 
     public static final TuningKey<Double> LOD_RIBBON_DISTANCE = registerD(
             "lod.ribbonDistance", "render.lod", 48.0D, 8.0D, 256.0D,
@@ -196,8 +214,41 @@ public final class ClientTuning {
     }
 
     public static TuningKey<?> byId(String id) {
+                if (LEGACY_SLACK_LOOSE_ID.equals(id) || LEGACY_SLACK_TIGHT_ID.equals(id)) {
+                        return SLACK;
+                }
         return KEYS.get(id);
     }
+
+        public static <T> String overrideValue(Map<String, String> overrides, TuningKey<T> key) {
+                if (overrides == null || overrides.isEmpty()) {
+                        return null;
+                }
+                String raw = overrides.get(key.id);
+                if (raw != null || key != SLACK) {
+                        return raw;
+                }
+                raw = overrides.get(LEGACY_SLACK_TIGHT_ID);
+                return raw != null ? raw : overrides.get(LEGACY_SLACK_LOOSE_ID);
+        }
+
+        public static Map<String, String> normalizeOverrides(Map<String, String> overrides) {
+                if (overrides == null || overrides.isEmpty()) {
+                        return Map.of();
+                }
+                LinkedHashMap<String, String> normalized = new LinkedHashMap<>(overrides);
+                String slack = overrideValue(normalized, SLACK);
+                normalized.remove(LEGACY_SLACK_LOOSE_ID);
+                normalized.remove(LEGACY_SLACK_TIGHT_ID);
+                if (slack != null) {
+                        normalized.put(SLACK.id, slack);
+                }
+                return Map.copyOf(normalized);
+        }
+
+        public static boolean isUncheckedFiniteDoubleKey(TuningKey<?> key) {
+                return key == SLACK;
+        }
 
     public static Collection<TuningKey<?>> allKeys() {
         return KEYS.values();

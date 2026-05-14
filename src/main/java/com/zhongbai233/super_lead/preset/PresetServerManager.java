@@ -7,19 +7,25 @@ import com.zhongbai233.super_lead.lead.LeadEndpointLayout;
 import com.zhongbai233.super_lead.lead.SuperLeadNetwork;
 import com.zhongbai233.super_lead.lead.SuperLeadPayloads;
 import com.zhongbai233.super_lead.lead.SuperLeadSavedData;
+import com.zhongbai233.super_lead.lead.cargo.SuperLeadDataComponents;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.Predicate;
+import java.util.regex.Pattern;
+import net.minecraft.ChatFormatting;
+import net.minecraft.network.chat.Component;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.permissions.Permission;
 import net.minecraft.server.permissions.PermissionLevel;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import net.neoforged.neoforge.network.PacketDistributor;
@@ -40,6 +46,8 @@ import org.slf4j.Logger;
 public final class PresetServerManager {
     private static final Logger LOG = LogUtils.getLogger();
     private static final Permission.HasCommandLevel OP = new Permission.HasCommandLevel(PermissionLevel.GAMEMASTERS);
+    private static final Pattern PLAYER_PRESET_BASE = Pattern.compile("^[A-Za-z0-9_\\-]{1,23}$");
+    private static final double BINDER_PICK_RADIUS = 0.95D;
 
     private PresetServerManager() {
     }
@@ -52,6 +60,22 @@ public final class PresetServerManager {
         return player != null
                 && Config.allowOpVisualPresets()
                 && player.permissions().hasPermission(OP);
+    }
+
+    public static boolean canEditPreset(ServerPlayer player, String presetName) {
+        if (player == null || !Config.allowOpVisualPresets() || !RopePresetLibrary.isValidName(presetName)) {
+            return false;
+        }
+        if (player.permissions().hasPermission(OP)) {
+            return true;
+        }
+        MinecraftServer server = player.level().getServer();
+        if (server == null) {
+            return false;
+        }
+        return library(server).load(presetName)
+                .map(preset -> preset.ownedBy(player.getUUID()))
+                .orElse(false);
     }
 
     // =============================================================================================
@@ -197,10 +221,16 @@ public final class PresetServerManager {
     public static String resolvePresetForConnection(ServerLevel level, LeadConnection connection) {
         if (!Config.allowOpVisualPresets())
             return LeadConnection.NO_PHYSICS_PRESET;
+        RopePresetLibrary lib = library(level.getServer());
+        if (!connection.manualPhysicsPreset().isBlank()) {
+            return lib.load(connection.manualPhysicsPreset()).isPresent()
+                    ? connection.manualPhysicsPreset()
+                    : LeadConnection.NO_PHYSICS_PRESET;
+        }
         PhysicsZone zone = findZoneForConnection(level, connection);
         if (zone == null)
             return LeadConnection.NO_PHYSICS_PRESET;
-        return library(level.getServer()).load(zone.presetName()).isPresent()
+        return lib.load(zone.presetName()).isPresent()
                 ? zone.presetName()
                 : LeadConnection.NO_PHYSICS_PRESET;
     }
@@ -248,6 +278,9 @@ public final class PresetServerManager {
         for (LeadConnection connection : SuperLeadSavedData.get(level).connections()) {
             if (!connection.physicsPreset().isBlank()) {
                 names.add(connection.physicsPreset());
+            }
+            if (!connection.manualPhysicsPreset().isBlank()) {
+                names.add(connection.manualPhysicsPreset());
             }
         }
 
@@ -367,6 +400,139 @@ public final class PresetServerManager {
         return true;
     }
 
+    public static boolean editKey(MinecraftServer server, ServerPlayer player, PresetEditKey edit) {
+        if (!Config.allowOpVisualPresets())
+            return false;
+        if (!RopePresetLibrary.isValidName(edit.presetName()))
+            return false;
+        if (!canEditPreset(player, edit.presetName()))
+            return false;
+        RopePresetLibrary lib = library(server);
+        Optional<RopePreset> existing = lib.load(edit.presetName());
+        boolean op = player.permissions().hasPermission(OP);
+        if (existing.isEmpty() && !op)
+            return false;
+        RopePreset preset = existing.orElseGet(() -> new RopePreset(edit.presetName(), Map.of()));
+        RopePreset updated = edit.clear()
+                ? preset.withoutOverride(edit.keyId())
+                : preset.withOverride(edit.keyId(), edit.value());
+        if (!lib.save(updated))
+            return false;
+
+        refreshPresetUsage(server, updated.name());
+        return true;
+    }
+
+    public static Optional<String> createPlayerPreset(ServerPlayer player, ItemStack binderStack, String displayName) {
+        if (!Config.allowOpVisualPresets()) {
+            player.sendSystemMessage(Component.translatable("message.super_lead.preset_binder.disabled")
+                    .withStyle(ChatFormatting.RED));
+            return Optional.empty();
+        }
+        if (player == null || binderStack == null || binderStack.isEmpty()) {
+            return Optional.empty();
+        }
+        if (binderStack.has(SuperLeadDataComponents.PRESET_BINDER.get())) {
+            player.sendSystemMessage(Component.translatable("message.super_lead.preset_binder.already_bound")
+                    .withStyle(ChatFormatting.YELLOW));
+            return Optional.empty();
+        }
+        MinecraftServer server = player.level().getServer();
+        if (server == null) {
+            return Optional.empty();
+        }
+
+        String baseName = normalizePlayerPresetBase(displayName);
+        if (baseName.isEmpty()) {
+            player.sendSystemMessage(Component.translatable("message.super_lead.preset_binder.invalid_name")
+                    .withStyle(ChatFormatting.RED));
+            return Optional.empty();
+        }
+        String suffix = player.getUUID().toString().replace("-", "").substring(0, 8).toLowerCase(Locale.ROOT);
+        String presetName = baseName + "-" + suffix;
+        RopePresetLibrary lib = library(server);
+        if (lib.load(presetName).isPresent()) {
+            player.sendSystemMessage(Component.translatable("message.super_lead.preset_binder.name_exists", presetName)
+                    .withStyle(ChatFormatting.RED));
+            return Optional.empty();
+        }
+
+        RopePreset preset = new RopePreset(presetName, Map.of(), player.getUUID());
+        if (!lib.save(preset)) {
+            player.sendSystemMessage(Component.translatable("message.super_lead.preset_binder.create_failed")
+                    .withStyle(ChatFormatting.RED));
+            return Optional.empty();
+        }
+
+        binderStack.set(SuperLeadDataComponents.PRESET_BINDER.get(), new PresetBinderData(presetName, player.getUUID()));
+        player.getInventory().setChanged();
+        player.sendSystemMessage(Component.translatable("message.super_lead.preset_binder.created", presetName)
+                .withStyle(ChatFormatting.GREEN));
+        return Optional.of(presetName);
+    }
+
+    public static boolean toggleBoundPresetInView(ServerPlayer player, ItemStack binderStack) {
+        if (!Config.allowOpVisualPresets()) {
+            player.sendSystemMessage(Component.translatable("message.super_lead.preset_binder.disabled")
+                    .withStyle(ChatFormatting.RED));
+            return false;
+        }
+        if (!(player.level() instanceof ServerLevel level)) {
+            return false;
+        }
+        PresetBinderData binder = binderStack.get(SuperLeadDataComponents.PRESET_BINDER.get());
+        if (binder == null || !binder.isBound()) {
+            player.sendSystemMessage(Component.translatable("message.super_lead.preset_binder.not_bound")
+                    .withStyle(ChatFormatting.YELLOW));
+            return false;
+        }
+        if (!canEditPreset(player, binder.presetName())) {
+            player.sendSystemMessage(Component.translatable("message.super_lead.preset_binder.no_permission")
+                    .withStyle(ChatFormatting.RED));
+            return false;
+        }
+        if (!SuperLeadNetwork.canModifyRopes(player)) {
+            player.sendSystemMessage(Component.translatable("message.super_lead.preset_binder.no_permission")
+                .withStyle(ChatFormatting.RED));
+            return false;
+        }
+
+        Optional<LeadConnection> opt = SuperLeadNetwork.findConnectionInView(level, player, BINDER_PICK_RADIUS);
+        if (opt.isEmpty()) {
+            player.sendSystemMessage(Component.translatable("message.super_lead.preset_binder.no_rope")
+                    .withStyle(ChatFormatting.YELLOW));
+            return false;
+        }
+
+        LeadConnection target = opt.get();
+        boolean removing = binder.presetName().equals(target.manualPhysicsPreset());
+        boolean changed = SuperLeadSavedData.get(level).update(target.id(), connection -> {
+            LeadConnection withManual = connection.withManualPhysicsPreset(removing
+                    ? LeadConnection.NO_PHYSICS_PRESET
+                    : binder.presetName());
+            return withManual.withPhysicsPreset(resolvePresetForConnection(level, withManual));
+        }, true);
+        if (!changed) {
+            return false;
+        }
+
+        syncDimensionPresets(level);
+        SuperLeadPayloads.sendToDimension(level);
+        player.sendSystemMessage(Component.translatable(removing
+                ? "message.super_lead.preset_binder.unbound_rope"
+                : "message.super_lead.preset_binder.bound_rope", binder.presetName())
+                .withStyle(removing ? ChatFormatting.YELLOW : ChatFormatting.GREEN));
+        return true;
+    }
+
+    private static String normalizePlayerPresetBase(String displayName) {
+        String base = displayName == null ? "" : displayName.trim();
+        if (!PLAYER_PRESET_BASE.matcher(base).matches()) {
+            return "";
+        }
+        return base;
+    }
+
     /** Re-sync preset package caches and re-stamp ropes after a preset is saved. */
     public static void refreshPresetUsage(MinecraftServer server, String presetName) {
         if (!Config.allowOpVisualPresets())
@@ -397,8 +563,11 @@ public final class PresetServerManager {
     }
 
     public static void handleDetailsRequest(ServerPlayer player, String name) {
-        if (!canManage(player))
+        boolean canView = canManage(player) || canEditPreset(player, name);
+        if (!canView) {
+            PacketDistributor.sendToPlayer(player, new PresetDetailsResponse(name, false, Map.of()));
             return;
+        }
         MinecraftServer server = player.level().getServer();
         if (server == null)
             return;

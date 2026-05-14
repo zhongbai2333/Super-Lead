@@ -1,0 +1,11 @@
+{
+  "type": "minecraft:crafting_shapeless",
+  "category": "misc",
+  "ingredients": [
+    "minecraft:paper",
+    "minecraft:string"
+  ],
+  "result": {
+    "id": "super_lead:basic_cargo_manifest"
+  }
+}

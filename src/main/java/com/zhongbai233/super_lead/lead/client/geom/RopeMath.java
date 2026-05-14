@@ -158,9 +158,4 @@ public final class RopeMath {
         return new Vec3(Math.cos(angle), 0.35, Math.sin(angle)).normalize();
     }
 
-    public static double stableLayerPriority(long seed) {
-        long h = seed * 0x94D049BB133111EBL + 0x9E3779B97F4A7C15L;
-        return ((h ^ (h >>> 33)) & 0xFFFFL) / 65535.0D;
-    }
-
 }

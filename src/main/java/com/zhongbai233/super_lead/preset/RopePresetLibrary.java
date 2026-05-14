@@ -14,6 +14,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
 import net.minecraft.server.MinecraftServer;
@@ -79,13 +80,24 @@ public final class RopePresetLibrary {
             JsonObject ov = root.has("overrides") && root.get("overrides").isJsonObject()
                     ? root.getAsJsonObject("overrides")
                     : new JsonObject();
+            UUID owner = null;
+            if (root.has("owner") && root.get("owner").isJsonPrimitive()) {
+                try {
+                    String rawOwner = root.get("owner").getAsString();
+                    if (rawOwner != null && !rawOwner.isBlank()) {
+                        owner = UUID.fromString(rawOwner);
+                    }
+                } catch (IllegalArgumentException ignored) {
+                    owner = null;
+                }
+            }
             Map<String, String> m = new LinkedHashMap<>();
             for (var e : ov.entrySet()) {
                 if (e.getValue().isJsonPrimitive()) {
                     m.put(e.getKey(), e.getValue().getAsString());
                 }
             }
-            return Optional.of(new RopePreset(name, m));
+            return Optional.of(new RopePreset(name, m, owner));
         } catch (IOException | RuntimeException e) {
             LOG.warn("[super_lead] cannot read preset {}: {}", name, e.toString());
             return Optional.empty();
@@ -99,6 +111,9 @@ public final class RopePresetLibrary {
         try {
             JsonObject root = new JsonObject();
             root.addProperty("name", preset.name());
+            if (preset.owner() != null) {
+                root.addProperty("owner", preset.owner().toString());
+            }
             JsonObject ov = new JsonObject();
             for (Map.Entry<String, String> e : preset.overrides().entrySet()) {
                 ov.addProperty(e.getKey(), e.getValue());

@@ -26,6 +26,7 @@ public final class StaticRopeChunkRegistry {
     private static final double CHUNK_MESH_QUIET_MOTION_SQR = 4.0e-5D; // ~0.0063 block/tick
     private static final int CHUNK_MESH_QUIET_TICKS = 6;
     private static final int CHUNK_MESH_LINGER_TICKS = 3;
+    private static final int CHUNK_MESH_DYNAMIC_HOLD_MIN_TICKS = 3;
 
     public static StaticRopeChunkRegistry get() {
         return INSTANCE;
@@ -39,6 +40,7 @@ public final class StaticRopeChunkRegistry {
     private Set<UUID> claimedFromSim = Set.of();
     private final Map<UUID, Set<Long>> connectionSections = new HashMap<>();
     private final Set<Long> pendingDirtySections = new HashSet<>();
+    private final Map<UUID, Long> dynamicHoldUntil = new HashMap<>();
     /**
      * Connections whose latest static bake was produced while at least one anchor
      * chunk was
@@ -188,7 +190,7 @@ public final class StaticRopeChunkRegistry {
 
     public synchronized void clear() {
         if (bySection.isEmpty() && byConnection.isEmpty() && bakedAttachments.isEmpty()
-                && claimed.isEmpty() && stressSources.isEmpty())
+                && claimed.isEmpty() && stressSources.isEmpty() && dynamicHoldUntil.isEmpty())
             return;
         Set<Long> toDirty = new HashSet<>(bySection.keySet());
         bySection = Map.of();
@@ -199,6 +201,7 @@ public final class StaticRopeChunkRegistry {
         claimedFromSim = Set.of();
         connectionSections.clear();
         bakedWithMissingAnchors.clear();
+        dynamicHoldUntil.clear();
         stressSources = List.of();
         clearDebugCounts();
         markSectionsDirty(toDirty);
@@ -304,6 +307,18 @@ public final class StaticRopeChunkRegistry {
         markSectionsDirty(dirty);
     }
 
+    public synchronized void holdDynamic(Level level, UUID connectionId, long untilTick) {
+        if (level == null || !level.isClientSide() || connectionId == null)
+            return;
+        long now = level.getGameTime();
+        long effectiveUntil = Math.max(untilTick, now + CHUNK_MESH_DYNAMIC_HOLD_MIN_TICKS);
+        Long previous = dynamicHoldUntil.get(connectionId);
+        if (previous == null || previous < effectiveUntil) {
+            dynamicHoldUntil.put(connectionId, effectiveUntil);
+        }
+        invalidateConnection(level, connectionId);
+    }
+
     public synchronized void rebuildFromCache(Level level) {
         if (level == null || !level.isClientSide())
             return;
@@ -313,6 +328,8 @@ public final class StaticRopeChunkRegistry {
     public synchronized void tickMaintain(Level level, Function<UUID, RopeSimulation> simLookup) {
         if (level == null || !level.isClientSide() || simLookup == null)
             return;
+        long now = level.getGameTime();
+        pruneDynamicHolds(now);
         boolean enabled = ClientTuning.MODE_CHUNK_MESH_STATIC_ROPES.get()
                 && ClientTuning.MODE_RENDER3D.get();
         // If any prior bake used air-defaulted anchors because the anchor chunk hadn't
@@ -347,6 +364,10 @@ public final class StaticRopeChunkRegistry {
                     continue;
                 }
                 eligible++;
+                if (isDynamicallyHeld(c.id(), now)) {
+                    waitingQuiet++;
+                    continue;
+                }
                 RopeSimulation sim = simLookup.apply(c.id());
                 if (sim != null) {
                     if (!isQuiescent(sim)) {
@@ -382,7 +403,8 @@ public final class StaticRopeChunkRegistry {
 
     private void rebuildInternal(Level level, Function<UUID, RopeSimulation> simLookup) {
         if (level == null) {
-            if (bySection.isEmpty() && byConnection.isEmpty() && bakedAttachments.isEmpty())
+            if (bySection.isEmpty() && byConnection.isEmpty() && bakedAttachments.isEmpty()
+                    && dynamicHoldUntil.isEmpty())
                 return;
             Set<Long> toDirty = new HashSet<>(bySection.keySet());
             bySection = Map.of();
@@ -392,9 +414,12 @@ public final class StaticRopeChunkRegistry {
             claimTick = Map.of();
             claimedFromSim = Set.of();
             connectionSections.clear();
+            dynamicHoldUntil.clear();
             markSectionsDirty(toDirty);
             return;
         }
+        long now = level.getGameTime();
+        pruneDynamicHolds(now);
         boolean enabled = ClientTuning.MODE_CHUNK_MESH_STATIC_ROPES.get()
                 && ClientTuning.MODE_RENDER3D.get();
 
@@ -408,6 +433,8 @@ public final class StaticRopeChunkRegistry {
         if (enabled) {
             for (LeadConnection c : realSources) {
                 if (!isEligible(c))
+                    continue;
+                if (isDynamicallyHeld(c.id(), now))
                     continue;
                 RopeSimulation sim = simLookup == null ? null : simLookup.apply(c.id());
                 RopeStaticGeometryResult r;
@@ -454,7 +481,6 @@ public final class StaticRopeChunkRegistry {
         Set<Long> toDirty = new HashSet<>(bySection.keySet());
         toDirty.addAll(publishedBySection.keySet());
 
-        long now = level.getGameTime();
         java.util.Map<UUID, Long> nextClaimTick = new java.util.HashMap<>(nextClaimed.size());
         for (UUID id : nextClaimed) {
             Long prev = claimTick.get(id);
@@ -493,6 +519,17 @@ public final class StaticRopeChunkRegistry {
                 && sim.maxNodeMotionSqr() < CHUNK_MESH_QUIET_MOTION_SQR)
             return true;
         return false;
+    }
+
+    private boolean isDynamicallyHeld(UUID connectionId, long currentTick) {
+        Long until = dynamicHoldUntil.get(connectionId);
+        return until != null && currentTick <= until;
+    }
+
+    private void pruneDynamicHolds(long currentTick) {
+        if (dynamicHoldUntil.isEmpty())
+            return;
+        dynamicHoldUntil.entrySet().removeIf(entry -> currentTick > entry.getValue());
     }
 
     private static boolean anchorsLoaded(Level level, LeadConnection connection) {

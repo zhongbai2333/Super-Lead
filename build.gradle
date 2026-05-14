@@ -16,6 +16,14 @@ repositories {
     mavenCentral()
 
     maven {
+        name = "Jared's Maven"
+        url = 'https://maven.blamejared.com/'
+        content {
+            includeGroup 'mezz.jei'
+        }
+    }
+
+    maven {
         name = 'Maven Central Snapshots'
         url = 'https://central.sonatype.com/repository/maven-snapshots/'
         content {
@@ -144,12 +152,18 @@ dependencies {
     // implementation project(":myproject")
 
     // Optional integration APIs. They are compileOnly so Super Lead stays usable without these mods installed.
+    // AE2 exposes its official public API via the `api` classifier; the full compileOnly jar is only used by
+    // the optional rope-terminal bridge because AE2's public API does not expose its menu opener/types.
+    compileOnly "org.appliedenergistics:appliedenergistics2:${ae2_version}:api"
     compileOnly "org.appliedenergistics:appliedenergistics2:${ae2_version}"
     compileOnly "com.github.QiuYe-123:Mekanism:${mekanism_version}"
+    compileOnly "mezz.jei:jei-${jei_minecraft_version}-common-api:${jei_version}"
+    compileOnly "mezz.jei:jei-${jei_minecraft_version}-neoforge-api:${jei_version}"
 
     // Local dev/runtime test flow. These are intentionally not published as required runtime dependencies.
     localRuntimeOnly "org.appliedenergistics:appliedenergistics2:${ae2_version}"
     localRuntimeOnly "com.github.QiuYe-123:Mekanism:${mekanism_version}"
+    localRuntimeOnly "mezz.jei:jei-${jei_minecraft_version}-neoforge:${jei_version}"
 
     // Drop a Mekanism: MoreMachine 26.1 jar into ./libs to test against that branch before it is published.
     localRuntimeOnly fileTree(dir: 'libs', include: ['Mekanism-MoreMachine-*.jar', 'mekmm-*.jar'])

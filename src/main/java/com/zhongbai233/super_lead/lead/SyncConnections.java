@@ -50,6 +50,7 @@ public record SyncConnections(List<LeadConnection> connections) implements Custo
         buffer.writeVarInt(connection.tier());
         buffer.writeVarInt(connection.extractAnchor());
         buffer.writeUtf(connection.physicsPreset(), 64);
+        buffer.writeUtf(connection.manualPhysicsPreset(), 64);
         buffer.writeBoolean(connection.adventurePlaced());
         if (connection.adventurePlaced()) {
             buffer.writeUUID(connection.adventureOwner());
@@ -69,6 +70,7 @@ public record SyncConnections(List<LeadConnection> connections) implements Custo
         int tier = buffer.readVarInt();
         int extract = buffer.readVarInt();
         String physicsPreset = buffer.readUtf(64);
+        String manualPhysicsPreset = buffer.readUtf(64);
         UUID adventureOwner = buffer.readBoolean()
                 ? buffer.readUUID()
                 : LeadConnection.NO_ADVENTURE_OWNER;
@@ -78,7 +80,7 @@ public record SyncConnections(List<LeadConnection> connections) implements Custo
             attachments.add(RopeAttachment.STREAM_CODEC.decode(buffer));
         }
         return new LeadConnection(id, from, to, kind, power, tier, extract, attachments, physicsPreset,
-                adventureOwner);
+            manualPhysicsPreset, adventureOwner);
     }
 
     private static void writeAnchor(RegistryFriendlyByteBuf buffer, LeadAnchor anchor) {

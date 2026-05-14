@@ -6,7 +6,7 @@
 
 新增可选联动绳索，而不是替换原模组自带管道：
 
-- AE 网络绳：用绳索视觉连接 AE2 网络节点。
+- AE 网络绳：用绳索连接 AE2 网络节点，服务端通过 AE2 官方 grid API 维护连接。
 - Mek 加压管道绳：气体与化学品二合一，走 Mekanism 统一 `IChemicalHandler`。
 - Mek 热导管道绳：走 Mekanism `IHeatHandler` 做热量均衡。
 
@@ -23,7 +23,7 @@ Gradle 中采用两层依赖：
 
 | Mod | 坐标 | 用途 |
 | --- | --- | --- |
-| Applied Energistics 2 | `org.appliedenergistics:appliedenergistics2:26.1.8-alpha` | AE 网络绳 API 与本地运行时测试 |
+| Applied Energistics 2 | 编译期 API `org.appliedenergistics:appliedenergistics2:26.1.8-alpha:api` + 完整 compileOnly `org.appliedenergistics:appliedenergistics2:26.1.8-alpha`；运行期完整 `org.appliedenergistics:appliedenergistics2:26.1.8-alpha` | AE 网络绳 API、本地运行时测试，以及绳挂终端打开 AE2 原生菜单 |
 | Mekanism | `com.github.QiuYe-123:Mekanism:26.1-SNAPSHOT` | Mek 气体/化学品 capability API 与本地运行时测试；该 26.1 线的 mod version 当前是 `10.8.0` |
 | Mekanism: MoreMachine | `./libs/Mekanism-MoreMachine-*.jar` 或 `com.github.lostmyself8:Mekanism-MoreMachine:v1.2.0-1.21.1` | 可选机器测试目标，默认未启用 |
 
@@ -48,8 +48,8 @@ MoreMachine 的 `26.1` 分支目前没有稳定可解析的 JitPack 坐标；Jit
 
 实现上采用一个 `LeadKind.PRESSURIZED`：
 
-- 钢锭把普通绳升级为加压管道绳。
-- 钢锭 Shift+右键端点方块切换抽取端；再次点同一端关闭抽取。
+- 钢块把普通绳升级为加压管道绳。
+- 钢块 Shift+右键端点方块切换抽取端；再次点同一端关闭抽取。
 - 强化合金升级传输速度。
 - 客户端沿用物品/流体绳的流动脉冲与端点膨胀表现。
 - 化学过滤使用 `ChemicalFilter.ANY`，因此气体与非气态化学品都可通过同一种绳传输。
@@ -69,12 +69,22 @@ MoreMachine 的 `26.1` 分支目前没有稳定可解析的 JitPack 坐标；Jit
 
 热导管道同样可行，但不应该套用物品/流体/加压管道的抽取端模型：
 
-- `LeadKind.THERMAL` 使用铜锭升级。
+- `LeadKind.THERMAL` 使用铜块升级。
 - 强化合金升级热量均衡速度。
 - 不保存 `extractAnchor`，没有主从端点，也不渲染端点膨胀或流动脉冲。
 - 服务端按同一热导绳网络组件收集端点热能力，并调用 `MekanismHeatBridge.balance` 在端点之间做热量均衡。
 
 这样更接近热导管道的“网络内温度趋于均衡”语义，也避免把不适用的抽取/插入 UI 套到热量系统上。
+
+### 挂件白名单过滤
+
+所有种类绳子都允许挂物品。对传输型绳子，挂件同时作为无 GUI 的默认白名单过滤器：
+
+- 物品绳：任意挂件都是物品样本；路径上的每根物品绳若挂了物品，只允许匹配该挂件物品与组件的物品通过。
+- 流体绳：只把能读出流体内容的挂件计入过滤，例如水桶、岩浆桶或其他带 NeoForge fluid item capability 的容器；非流体装饰不会锁死流体。
+- 加压管道绳：只把能读出 Mekanism 化学品内容的挂件计入过滤，例如装有氧气/氢气等化学品的 Mek 容器；非化学品装饰不会锁死管道。
+- 一条路径上每根绳子的过滤都要通过，因此可以在分支绳上挂不同样本来做无 GUI 路由。
+- 没有可识别样本挂件时，该类型传输保持不过滤。
 
 ### AE2 ME 网络
 
@@ -87,17 +97,37 @@ MoreMachine 的 `26.1` 分支目前没有稳定可解析的 JitPack 坐标；Jit
 推荐把 AE 网络绳作为一个独立联动层实现：
 
 1. Super Lead 存档仍只保存绳索端点和类型。
-2. 当 AE2 已加载且目标区块有效时，为每条 AE 网络绳创建临时 grid host/node。
-3. 两端 anchor 对应节点通过 AE2 API 建立网格连接。
+2. 当 AE2 已加载且目标区块有效时，为每条 AE 网络绳创建临时 managed grid node。
+3. 使用 `GridHelper.getExposedNode(level, pos, side)` 找到两端 AE2 暴露节点，再用 `GridHelper.createConnection(a, b)` 建立连接。
 4. 绳子断开或端点失效时销毁连接。
 
-AE2 通道平衡建议默认保守：先按普通 cable 连接行为做，不绕过 AE2 自身频道/供能规则；后续再通过配置暴露“无通道展示绳”等实验玩法。
+AE2 通道平衡默认保守：按官方 cable 节点行为做，不绕过 AE2 自身频道/供能规则。官方 API 公开的容量开关是普通 cable（8）与 `GridFlags.DENSE_CAPACITY`（32，受 AE2 全局 channel mode 影响）；没有公开的“任意设置为 256 通道”的 per-node API。因此 Super Lead 的 AE 网络绳采用 8 → 32 的官方容量模型，避免 UI 显示 256 但实际 AE2 不承认。
+
+当前交互与容量规则：
+
+- `LeadKind.AE_NETWORK` 使用福鲁伊克斯水晶块（`ae2:fluix_block`）升级。
+- 默认频道容量为 8。
+- 使用 16³ 空间组件（`ae2:spatial_cell_component_16`）升级为 AE2 官方致密容量。
+- 频道容量按 AE2 官方 API 显示为 8 → 32。
+
+### AE2 绳挂终端
+
+第一版已支持把 `ae2:terminal` 作为挂件挂在 AE 网络绳上，然后空手右键该挂件打开 AE2 原生 ME Terminal 菜单。实现方式不是客户端伪造 GUI，而是复用告示牌挂件的“客户端命中挂件 → 发包给服务端”入口，并在服务端通过 AE2 菜单系统打开：
+
+1. 客户端选中绳子挂件并发送 `OpenRopeAeTerminal`。
+2. 服务端校验目标绳子为 `AE_NETWORK`、挂件为 `ae2:terminal`、玩家仍在可触达范围内。
+3. `AE2NetworkBridge` 注册自定义 `MenuHostLocator`，让 AE2 菜单能在服务端与客户端都定位到同一个“绳挂终端 Host”。
+4. Host 实现 `ITerminalHost` / `IActionHost`，存储视图来自该 AE 绳当前接入的 AE grid。
+
+当前版本刻意只开放普通 ME Terminal，暂不开放合成终端、样板终端或样板访问终端。原因是这些终端需要额外持久化合成格、样板槽或供应器视图，应该单独做持久化设计。
+
+注意：该第一版 Host 复用 AE 绳自身维护的 bridge node 作为 action host，因此主要用于验证“绳上挂终端并打开 AE2 原生菜单”的可行性。若要完全贴近 AE2 Part 行为，后续应为每个终端挂件维护独立 `REQUIRE_CHANNEL` 节点，让终端本身也消耗频道。
 
 ## 后续实现拆分
 
-1. 已新增 Mek 联动 `LeadKind`：`PRESSURIZED`、`THERMAL`。
+1. 已新增联动 `LeadKind`：`PRESSURIZED`、`THERMAL`、`AE_NETWORK`。
 2. 已补物品显示名、语言、颜色映射、服务端配置项与运行时配置入口。
 3. 已新增 `integration/mekanism` 桥接层，并在 tick 入口用 `ModList` 判断 Mekanism 是否加载。
 4. 已落地 PRESSURIZED chemical capability 传输 tick 与 THERMAL heat balance tick。
-5. AE2 后续再落地 grid node 生命周期管理。
+5. AE2 已接入材料、官方 grid node 连接维护、频道容量和视觉/提示层。
 6. 后续分别增加 gametest 或最小 dev-world 测试步骤。

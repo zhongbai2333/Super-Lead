@@ -1,0 +1,13 @@
+{
+  "type": "minecraft:crafting_shapeless",
+  "category": "misc",
+  "ingredients": [
+    "minecraft:paper",
+    "minecraft:string",
+    "minecraft:redstone",
+    "minecraft:iron_ingot"
+  ],
+  "result": {
+    "id": "super_lead:preset_binder"
+  }
+}

@@ -193,6 +193,10 @@ public final class RopeStaticGeometry {
             float[] sx, float[] sy, float[] sz,
             float[] ux, float[] uy, float[] uz) {
         int n = x.length;
+        double prevSideX = 0.0D;
+        double prevSideY = 0.0D;
+        double prevSideZ = 0.0D;
+        boolean hasPrevSide = false;
         for (int i = 0; i < n; i++) {
             double tx, ty, tz;
             if (i == 0) {
@@ -242,13 +246,45 @@ public final class RopeStaticGeometry {
                 tz /= tLen;
             }
 
-            double s0x = -tz, s0y = 0.0D, s0z = tx;
-            double sLenSqr = s0x * s0x + s0z * s0z;
+            double s0x;
+            double s0y;
+            double s0z;
+            if (hasPrevSide) {
+                double along = prevSideX * tx + prevSideY * ty + prevSideZ * tz;
+                s0x = prevSideX - tx * along;
+                s0y = prevSideY - ty * along;
+                s0z = prevSideZ - tz * along;
+            } else {
+                s0x = -tz;
+                s0y = 0.0D;
+                s0z = tx;
+            }
+            double sLenSqr = s0x * s0x + s0y * s0y + s0z * s0z;
             if (sLenSqr < 1.0e-8D) {
-                s0x = 0.0D;
-                s0y = tz;
-                s0z = -ty;
-                sLenSqr = s0y * s0y + s0z * s0z;
+                s0x = -tz;
+                s0y = 0.0D;
+                s0z = tx;
+                sLenSqr = s0x * s0x + s0z * s0z;
+            }
+            if (sLenSqr < 1.0e-8D) {
+                s0x = 1.0D;
+                s0y = 0.0D;
+                s0z = 0.0D;
+                double fallbackAlong = s0x * tx + s0y * ty + s0z * tz;
+                s0x -= tx * fallbackAlong;
+                s0y -= ty * fallbackAlong;
+                s0z -= tz * fallbackAlong;
+                sLenSqr = s0x * s0x + s0y * s0y + s0z * s0z;
+                if (sLenSqr < 1.0e-8D) {
+                    s0x = 0.0D;
+                    s0y = 0.0D;
+                    s0z = 1.0D;
+                    fallbackAlong = s0x * tx + s0y * ty + s0z * tz;
+                    s0x -= tx * fallbackAlong;
+                    s0y -= ty * fallbackAlong;
+                    s0z -= tz * fallbackAlong;
+                    sLenSqr = s0x * s0x + s0y * s0y + s0z * s0z;
+                }
             }
             double invSide = 1.0D / Math.sqrt(sLenSqr);
             s0x *= invSide;
@@ -262,6 +298,20 @@ public final class RopeStaticGeometry {
             u0x *= invUp;
             u0y *= invUp;
             u0z *= invUp;
+
+            if (hasPrevSide && s0x * prevSideX + s0y * prevSideY + s0z * prevSideZ < 0.0D) {
+                s0x = -s0x;
+                s0y = -s0y;
+                s0z = -s0z;
+                u0x = -u0x;
+                u0y = -u0y;
+                u0z = -u0z;
+            }
+
+            prevSideX = s0x;
+            prevSideY = s0y;
+            prevSideZ = s0z;
+            hasPrevSide = true;
 
             sx[i] = (float) (s0x * halfThickness);
             sy[i] = (float) (s0y * halfThickness);

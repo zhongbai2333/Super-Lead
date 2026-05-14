@@ -6,8 +6,8 @@ import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 
 abstract class RopeSimulationTerrainConstraints extends RopeSimulationVisualState {
-    protected RopeSimulationTerrainConstraints(Vec3 a, Vec3 b, long seed, boolean tight, RopeTuning tuning) {
-        super(a, b, seed, tight, tuning);
+    protected RopeSimulationTerrainConstraints(Vec3 a, Vec3 b, long seed, RopeTuning tuning) {
+        super(a, b, seed, tuning);
     }
 
     // ============================================================================================

@@ -96,6 +96,14 @@ versionRange = "[1.2.0,)"
 ordering = "AFTER"
 side = "BOTH"
 
+[[dependencies."${mod_id}"]]
+modId = "jei"
+type = "optional"
+reason = "Enables dragging JEI ingredients into Super Lead cargo manifest ghost slots."
+versionRange = "[29.5.0,)"
+ordering = "AFTER"
+side = "CLIENT"
+
 # Features are specific properties of the game environment, that you may want to declare you require. This example declares
 # that your mod requires GL version 3.2 or higher. Other features will be added. They are side aware so declaring this won't
 # stop your mod loading on the server for example.

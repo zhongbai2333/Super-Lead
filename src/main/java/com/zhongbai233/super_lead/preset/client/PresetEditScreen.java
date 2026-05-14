@@ -187,8 +187,12 @@ public final class PresetEditScreen extends Screen {
         if (loaded && overrides.equals(response.overrides())) {
             return;
         }
+        Map<String, String> normalized = ClientTuning.normalizeOverrides(response.overrides());
+        if (loaded && overrides.equals(normalized)) {
+            return;
+        }
         overrides.clear();
-        overrides.putAll(response.overrides());
+        overrides.putAll(normalized);
         loaded = true;
         preview.setOverrides(overrides, true);
         if (rebuild)
@@ -359,7 +363,7 @@ public final class PresetEditScreen extends Screen {
     }
 
     private static boolean isUnboundedInputKey(TuningKey<Double> key) {
-        return key == ClientTuning.SLACK_LOOSE || key == ClientTuning.SLACK_TIGHT;
+        return ClientTuning.isUncheckedFiniteDoubleKey(key);
     }
 
     private static double parseDouble(String raw, double fallback) {
@@ -554,6 +558,7 @@ public final class PresetEditScreen extends Screen {
         String fallback = switch (group) {
             case "physics.shape" -> "Shape";
             case "physics.solver" -> "Solver";
+            case "physics.contact" -> "Contact";
             case "render.mode" -> "Mode";
             case "render.geom" -> "Geometry";
             case "render.color" -> "Color";

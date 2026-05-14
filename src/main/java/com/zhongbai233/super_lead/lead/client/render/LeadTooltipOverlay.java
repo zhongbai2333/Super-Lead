@@ -5,6 +5,7 @@ import com.zhongbai233.super_lead.Super_lead;
 import com.zhongbai233.super_lead.lead.LeadConnection;
 import com.zhongbai233.super_lead.lead.LeadKind;
 import com.zhongbai233.super_lead.lead.client.SuperLeadClientEvents;
+import com.zhongbai233.super_lead.lead.integration.ae2.AE2LeadMaterials;
 import com.zhongbai233.super_lead.lead.integration.mekanism.MekanismLeadMaterials;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
@@ -62,7 +63,11 @@ public final class LeadTooltipOverlay {
         Font font = mc.font;
         Component title = Component.translatable("tooltip.super_lead.kind." + hovered.kind().serializedName());
         Component subtitle;
-        if (hovered.kind() == LeadKind.ENERGY || hovered.kind() == LeadKind.ITEM || hovered.kind() == LeadKind.FLUID
+        if (hovered.kind() == LeadKind.AE_NETWORK) {
+            subtitle = Component.translatable("tooltip.super_lead.channels",
+                Config.aeChannelCapacity(hovered.tier()), Config.aeChannelMax());
+        } else if (hovered.kind() == LeadKind.ENERGY || hovered.kind() == LeadKind.ITEM
+            || hovered.kind() == LeadKind.FLUID
             || hovered.kind() == LeadKind.PRESSURIZED || hovered.kind() == LeadKind.THERMAL) {
             int mult = hovered.speedMultiplier();
             subtitle = Component.translatable("tooltip.super_lead.tier",
@@ -134,10 +139,12 @@ public final class LeadTooltipOverlay {
                         Component.translatable("tooltip.super_lead.upgrade.item")));
                 rows.add(new UpgradeRow(new ItemStack(Items.CAULDRON),
                         Component.translatable("tooltip.super_lead.upgrade.fluid")));
-                rows.add(new UpgradeRow(new ItemStack(MekanismLeadMaterials.steelIngotIcon()),
+                rows.add(new UpgradeRow(new ItemStack(MekanismLeadMaterials.steelBlockIcon()),
                     Component.translatable("tooltip.super_lead.upgrade.pressurized")));
-                rows.add(new UpgradeRow(new ItemStack(Items.COPPER_INGOT),
+                rows.add(new UpgradeRow(new ItemStack(Items.COPPER_BLOCK),
                     Component.translatable("tooltip.super_lead.upgrade.thermal")));
+                rows.add(new UpgradeRow(new ItemStack(AE2LeadMaterials.fluixBlockIcon()),
+                    Component.translatable("tooltip.super_lead.upgrade.ae_network")));
             }
             case ENERGY -> {
                 if (hovered.tier() < Config.energyTierMaxLevel()) {
@@ -172,6 +179,14 @@ public final class LeadTooltipOverlay {
                     rows.add(new UpgradeRow(new ItemStack(MekanismLeadMaterials.reinforcedAlloyIcon()),
                             Component.translatable("tooltip.super_lead.upgrade.tier_up",
                                     hovered.tier() + 1)));
+                }
+            }
+            case AE_NETWORK -> {
+                int current = Config.aeChannelCapacity(hovered.tier());
+                if (current < Config.aeChannelMax()) {
+                    rows.add(new UpgradeRow(new ItemStack(AE2LeadMaterials.spatialCellComponent16Icon()),
+                            Component.translatable("tooltip.super_lead.upgrade.channels_up",
+                                    Config.aeChannelCapacity(hovered.tier() + 1))));
                 }
             }
             default -> {

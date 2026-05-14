@@ -16,8 +16,7 @@ import net.minecraft.world.phys.Vec3;
  * that preset fall back to the player's local/default tuning.
  */
 public record RopeTuning(
-        double slackLoose,
-        double slackTight,
+    double slack,
         double segmentLength,
         int segmentMax,
         double gravity,
@@ -42,6 +41,8 @@ public record RopeTuning(
         int pressurizedAccentColor,
         int thermalBaseColor,
         int thermalAccentColor,
+        int aeNetworkBaseColor,
+        int aeNetworkAccentColor,
         boolean modePhysics) {
 
     public static RopeTuning forMidpoint(Vec3 a, Vec3 b) {
@@ -66,8 +67,7 @@ public record RopeTuning(
 
     private static RopeTuning fromOverrides(Map<String, String> overrides) {
         return new RopeTuning(
-                resolve(overrides, ClientTuning.SLACK_LOOSE),
-                resolve(overrides, ClientTuning.SLACK_TIGHT),
+                resolve(overrides, ClientTuning.SLACK),
                 resolve(overrides, ClientTuning.SEGMENT_LENGTH),
                 resolve(overrides, ClientTuning.SEGMENT_MAX),
                 resolve(overrides, ClientTuning.GRAVITY),
@@ -92,6 +92,8 @@ public record RopeTuning(
                 resolve(overrides, ClientTuning.COLOR_PRESSURIZED_ACCENT),
                 resolve(overrides, ClientTuning.COLOR_THERMAL_BASE),
                 resolve(overrides, ClientTuning.COLOR_THERMAL_ACCENT),
+                resolve(overrides, ClientTuning.COLOR_AE_NETWORK_BASE),
+                resolve(overrides, ClientTuning.COLOR_AE_NETWORK_ACCENT),
                 resolve(overrides, ClientTuning.MODE_PHYSICS));
     }
 
@@ -103,6 +105,7 @@ public record RopeTuning(
             case FLUID -> fluidBaseColor;
             case PRESSURIZED -> pressurizedBaseColor;
             case THERMAL -> thermalBaseColor;
+            case AE_NETWORK -> aeNetworkBaseColor;
             default -> normalBaseColor;
         } & 0xFFFFFF;
     }
@@ -115,6 +118,7 @@ public record RopeTuning(
             case FLUID -> fluidAccentColor;
             case PRESSURIZED -> pressurizedAccentColor;
             case THERMAL -> thermalAccentColor;
+            case AE_NETWORK -> aeNetworkAccentColor;
             default -> normalAccentColor;
         } & 0xFFFFFF;
     }
@@ -128,7 +132,7 @@ public record RopeTuning(
     }
 
     private static <T> T resolve(Map<String, String> overrides, TuningKey<T> key) {
-        String raw = overrides.get(key.id);
+        String raw = ClientTuning.overrideValue(overrides, key);
         if (raw != null) {
             try {
                 T parsed = key.type.parse(raw);
@@ -141,8 +145,7 @@ public record RopeTuning(
     }
 
     private static <T> boolean acceptsUncheckedFiniteDouble(TuningKey<T> key, T parsed) {
-        if (!key.id.equals(ClientTuning.SLACK_LOOSE.id)
-                && !key.id.equals(ClientTuning.SLACK_TIGHT.id)) {
+        if (!ClientTuning.isUncheckedFiniteDoubleKey(key)) {
             return false;
         }
         return parsed instanceof Double d && Double.isFinite(d);

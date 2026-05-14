@@ -254,7 +254,7 @@ public final class SuperLeadStressTest {
             double mz = origin.z + fz * gridX + uz * gridY;
             Vec3 a = new Vec3(mx - rx * length * 0.5D, my - ry * length * 0.5D, mz - rz * length * 0.5D);
             Vec3 b = new Vec3(mx + rx * length * 0.5D, my + ry * length * 0.5D, mz + rz * length * 0.5D);
-            RopeSimulation sim = new RopeSimulation(a, b, 0x9E3779B97F4A7C15L + i * 0xBF58476D1CE4E5B9L, true);
+            RopeSimulation sim = new RopeSimulation(a, b, 0x9E3779B97F4A7C15L + i * 0xBF58476D1CE4E5B9L);
             sim.resetCatenary(a, b, 0.035D);
             double phase = i * 0.61803398875D;
             generated.add(new StressRope(UUID.randomUUID(), sim, a, b, rx, ry, rz, phase, amplitude, speed, moving));

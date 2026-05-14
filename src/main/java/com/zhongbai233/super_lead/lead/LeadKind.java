@@ -9,7 +9,8 @@ public enum LeadKind {
     ITEM("item"),
     FLUID("fluid"),
     PRESSURIZED("pressurized"),
-    THERMAL("thermal");
+    THERMAL("thermal"),
+    AE_NETWORK("ae_network");
 
     public static final Codec<LeadKind> CODEC = Codec.STRING.xmap(LeadKind::byName, LeadKind::serializedName);
 
@@ -31,6 +32,7 @@ public enum LeadKind {
             case "fluid" -> FLUID;
             case "pressurized" -> PRESSURIZED;
             case "thermal" -> THERMAL;
+            case "ae_network" -> AE_NETWORK;
             default -> NORMAL;
         };
     }

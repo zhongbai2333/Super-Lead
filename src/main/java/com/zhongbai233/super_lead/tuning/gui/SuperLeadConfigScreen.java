@@ -55,6 +55,7 @@ public final class SuperLeadConfigScreen extends Screen {
         ClientTuning.loadOnce();
         if (groups == null) {
             groups = new ArrayList<>(ClientTuning.groups());
+            groups.remove("physics.contact");
         }
         if (activeTab >= groups.size()) {
             activeTab = 0;
@@ -231,7 +232,7 @@ public final class SuperLeadConfigScreen extends Screen {
     }
 
     private static boolean isUnboundedInputKey(TuningKey<Double> key) {
-        return key == ClientTuning.SLACK_LOOSE || key == ClientTuning.SLACK_TIGHT;
+        return ClientTuning.isUncheckedFiniteDoubleKey(key);
     }
 
     private static Component boolLabel(boolean value) {

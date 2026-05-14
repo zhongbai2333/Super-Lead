@@ -5,6 +5,14 @@ import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.neoforge.common.ModConfigSpec;
 
 public final class Config {
+    public static final int AE_CHANNEL_BASE = 8;
+    /**
+     * AE2's public networking API exposes ordinary cable capacity (8 channels)
+     * and dense cable capacity (32 channels) via {@code GridFlags.DENSE_CAPACITY}.
+     * It does not expose an arbitrary per-node channel limit such as 256.
+     */
+    public static final int AE_CHANNEL_MAX = 32;
+
     public static final ModConfigSpec SPEC;
     public static final ModConfigSpec.IntValue ENERGY_TIER_MAX_LEVEL;
     public static final ModConfigSpec.IntValue ENERGY_BASE_TRANSFER;
@@ -132,6 +140,22 @@ public final class Config {
 
     public static double thermalBaseTransfer() {
         return cachedThermalTransfer;
+    }
+
+    public static int aeChannelBase() {
+        return AE_CHANNEL_BASE;
+    }
+
+    public static int aeChannelMax() {
+        return AE_CHANNEL_MAX;
+    }
+
+    public static int aeChannelTierMax() {
+        return 1;
+    }
+
+    public static int aeChannelCapacity(int tier) {
+        return tier <= 0 ? AE_CHANNEL_BASE : AE_CHANNEL_MAX;
     }
 
     public static int itemTransferIntervalTicks() {

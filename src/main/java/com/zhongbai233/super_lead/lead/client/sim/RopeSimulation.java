@@ -6,15 +6,15 @@ import net.minecraft.world.phys.Vec3;
 public final class RopeSimulation extends RopeSimulationStepper {
 
     public RopeSimulation(Vec3 a, Vec3 b) {
-        this(a, b, 0L, false, RopeTuning.forMidpoint(a, b));
+        this(a, b, 0L, RopeTuning.forMidpoint(a, b));
     }
 
-    public RopeSimulation(Vec3 a, Vec3 b, long seed, boolean tight) {
-        this(a, b, seed, tight, RopeTuning.forMidpoint(a, b));
+    public RopeSimulation(Vec3 a, Vec3 b, long seed) {
+        this(a, b, seed, RopeTuning.forMidpoint(a, b));
     }
 
-    public RopeSimulation(Vec3 a, Vec3 b, long seed, boolean tight, RopeTuning tuning) {
-        super(a, b, seed, tight, tuning);
+    public RopeSimulation(Vec3 a, Vec3 b, long seed, RopeTuning tuning) {
+        super(a, b, seed, tuning);
     }
 
     public static RopeSimulation visualLeash(Vec3 a, Vec3 b) {
@@ -39,18 +39,29 @@ public final class RopeSimulation extends RopeSimulationStepper {
     }
 
     public ContactSample findPlayerContact(AABB box, double radius) {
-        double totalLen = 0.0D;
-        for (int s = 0; s < segments; s++) {
-            double sx = x[s + 1] - x[s];
-            double sy = y[s + 1] - y[s];
-            double sz = z[s + 1] - z[s];
-            totalLen += Math.sqrt(sx * sx + sy * sy + sz * sz);
+        double[] sampleX = x;
+        double[] sampleY = y;
+        double[] sampleZ = z;
+        double totalLen;
+        if (useCollisionProxy) {
+            totalLen = prepareCollisionProxy();
+            sampleX = proxyX;
+            sampleY = proxyY;
+            sampleZ = proxyZ;
+        } else {
+            totalLen = 0.0D;
+            for (int s = 0; s < segments; s++) {
+                double sx = sampleX[s + 1] - sampleX[s];
+                double sy = sampleY[s + 1] - sampleY[s];
+                double sz = sampleZ[s + 1] - sampleZ[s];
+                totalLen += Math.sqrt(sx * sx + sy * sy + sz * sz);
+            }
         }
         if (totalLen < 1.0e-6D)
             return null;
 
-        Vec3 endpointA = new Vec3(x[0], y[0], z[0]);
-        Vec3 endpointB = new Vec3(x[nodes - 1], y[nodes - 1], z[nodes - 1]);
+        Vec3 endpointA = new Vec3(sampleX[0], sampleY[0], sampleZ[0]);
+        Vec3 endpointB = new Vec3(sampleX[nodes - 1], sampleY[nodes - 1], sampleZ[nodes - 1]);
         double chordLen = endpointA.distanceTo(endpointB);
         double targetLen = chordLen > 1.0e-6D ? chordLen * slackFactor(endpointA, endpointB) / segments : 0.0D;
         double freeSlack = Math.max(0.0D, targetLen * segments - chordLen);
@@ -68,8 +79,8 @@ public final class RopeSimulation extends RopeSimulationStepper {
         double sumDepth = 0.0D, sumSlack = 0.0D;
 
         for (int s = 0; s < segments; s++) {
-            double ax = x[s], ay = y[s], az = z[s];
-            double bx = x[s + 1], by = y[s + 1], bz = z[s + 1];
+            double ax = sampleX[s], ay = sampleY[s], az = sampleZ[s];
+            double bx = sampleX[s + 1], by = sampleY[s + 1], bz = sampleZ[s + 1];
             double sx = bx - ax, sy = by - ay, sz = bz - az;
             double segLenSqr = sx * sx + sy * sy + sz * sz;
             double segLen = Math.sqrt(segLenSqr);
@@ -258,7 +269,17 @@ public final class RopeSimulation extends RopeSimulationStepper {
         }
         double len = Math.sqrt(vx * vx + vy * vy + vz * vz);
         if (len < 1.0e-5D) {
-            return new double[] { 0.0D, 1.0D, 0.0D };
+            if (segLen > 1.0e-6D) {
+                double tx = sx / segLen;
+                double tz = sz / segLen;
+                double sideX = -tz;
+                double sideZ = tx;
+                double sideLen = Math.sqrt(sideX * sideX + sideZ * sideZ);
+                if (sideLen > 1.0e-5D) {
+                    return new double[] { sideX / sideLen, 0.0D, sideZ / sideLen };
+                }
+            }
+            return new double[] { 1.0D, 0.0D, 0.0D };
         }
         return new double[] { vx / len, vy / len, vz / len };
     }

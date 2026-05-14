@@ -49,6 +49,8 @@ public final class SuperLeadItemData {
             stack.set(DataComponents.ITEM_NAME, Component.translatable("item.super_lead.pressurized_lead"));
         } else if (kind == LeadKind.THERMAL) {
             stack.set(DataComponents.ITEM_NAME, Component.translatable("item.super_lead.thermal_lead"));
+        } else if (kind == LeadKind.AE_NETWORK) {
+            stack.set(DataComponents.ITEM_NAME, Component.translatable("item.super_lead.ae_network_lead"));
         }
     }
 }

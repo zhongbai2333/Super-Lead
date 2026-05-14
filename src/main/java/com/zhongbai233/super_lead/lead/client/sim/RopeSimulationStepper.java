@@ -6,8 +6,8 @@ import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 
 abstract class RopeSimulationStepper extends RopeSimulationContactConstraints {
-    protected RopeSimulationStepper(Vec3 a, Vec3 b, long seed, boolean tight, RopeTuning tuning) {
-        super(a, b, seed, tight, tuning);
+    protected RopeSimulationStepper(Vec3 a, Vec3 b, long seed, RopeTuning tuning) {
+        super(a, b, seed, tuning);
     }
 
     // ============================================================================================
@@ -146,7 +146,7 @@ abstract class RopeSimulationStepper extends RopeSimulationContactConstraints {
         }
 
         for (int t = 0; t < delta; t++) {
-            applyExternalContactPush();
+            applyExternalContactPush(currentTick);
             applyServerNodeBlend(a, b, currentTick);
             int substeps = chooseSubsteps(a, b);
             double h = 1.0D / substeps;
@@ -257,6 +257,12 @@ abstract class RopeSimulationStepper extends RopeSimulationContactConstraints {
                 solveRopeRopeConstraints(neighbors);
             if (!entityBoxes.isEmpty())
                 solveEntityConstraints(entityBoxes);
+            pinEndpoints(a, b);
+        }
+
+        if (!terrainEnabled && entityBoxes.isEmpty() && !hasExternalContact(tick)) {
+            solveDistanceConstraints(targetLen, 0.0D, true);
+            solveDistanceConstraints(targetLen, 0.0D, false);
             pinEndpoints(a, b);
         }
 

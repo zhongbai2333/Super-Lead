@@ -9,6 +9,7 @@ import com.zhongbai233.super_lead.lead.LeadConnection;
 import com.zhongbai233.super_lead.lead.LeadConnectionAction;
 import com.zhongbai233.super_lead.lead.LeadEndpointLayout;
 import com.zhongbai233.super_lead.lead.LeadKind;
+import com.zhongbai233.super_lead.lead.OpenRopeAeTerminal;
 import com.zhongbai233.super_lead.lead.RemoveRopeAttachment;
 import com.zhongbai233.super_lead.lead.StartZipline;
 import com.zhongbai233.super_lead.lead.SuperLeadNetwork;
@@ -284,6 +285,45 @@ public final class SuperLeadClientEvents {
         return false;
     }
 
+    /** Ask the server to open an AE2 ME Terminal mounted as a rope attachment. */
+    public static boolean tryOpenRopeAttachmentAeTerminal() {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.player == null || mc.level == null)
+            return false;
+        AttachmentPick pick = pickAttachment(mc, mc.getDeltaTracker().getGameTimeDeltaPartialTick(false));
+        if (pick == null)
+            return false;
+        for (LeadConnection connection : SuperLeadNetwork.connections(mc.level)) {
+            if (!connection.id().equals(pick.connectionId))
+                continue;
+            if (connection.kind() != LeadKind.AE_NETWORK)
+                return false;
+            for (com.zhongbai233.super_lead.lead.RopeAttachment attachment : connection.attachments()) {
+                if (!attachment.id().equals(pick.attachmentId))
+                    continue;
+                if (!isAeTerminalAttachment(attachment.stack()))
+                    return false;
+                net.neoforged.neoforge.client.network.ClientPacketDistributor.sendToServer(
+                        new OpenRopeAeTerminal(pick.connectionId, pick.attachmentId));
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean isAeTerminalAttachment(net.minecraft.world.item.ItemStack stack) {
+        if (stack.isEmpty())
+            return false;
+        net.minecraft.resources.Identifier id = net.minecraft.core.registries.BuiltInRegistries.ITEM
+                .getKey(stack.getItem());
+        if (!id.getNamespace().equals("ae2"))
+            return false;
+        return switch (id.getPath()) {
+            case "terminal", "crafting_terminal", "pattern_encoding_terminal", "pattern_access_terminal" -> true;
+            default -> false;
+        };
+    }
+
     public static boolean trySendSignAttachmentDye(net.minecraft.world.item.DyeColor color) {
         Minecraft mc = Minecraft.getInstance();
         if (mc.player == null || mc.level == null)
@@ -380,11 +420,6 @@ public final class SuperLeadClientEvents {
         Vec3 bestB = Vec3.ZERO;
 
         for (LeadConnection connection : SuperLeadNetwork.connections(level)) {
-            // Only plain rope and redstone-upgraded rope accept decorations.
-            com.zhongbai233.super_lead.lead.LeadKind k = connection.kind();
-            if (k != com.zhongbai233.super_lead.lead.LeadKind.NORMAL
-                    && k != com.zhongbai233.super_lead.lead.LeadKind.REDSTONE)
-                continue;
             RopeSimulation sim = SIMS.get(connection.id());
             if (sim == null)
                 continue;
@@ -712,7 +747,7 @@ public final class SuperLeadClientEvents {
             RopeSimulation sim = SIMS.get(connection.id());
             boolean rebuiltSim = false;
             if (sim == null || !sim.matchesLength(a, b, tuning)) {
-                sim = new RopeSimulation(a, b, connection.id().getLeastSignificantBits(), true, tuning);
+                sim = new RopeSimulation(a, b, connection.id().getLeastSignificantBits(), tuning);
                 sim.resetCatenary(a, b, initialSagFactor(tuning));
                 SIMS.put(connection.id(), sim);
                 rebuiltSim = true;
@@ -962,8 +997,12 @@ public final class SuperLeadClientEvents {
             return;
         }
         RopeTuning tuning = RopeTuning.forMidpoint(a, b);
-        if (previewSim == null || !anchor.equals(previewAnchor) || !previewSim.matchesLength(a, b, tuning)) {
-            previewSim = new RopeSimulation(a, b, 0L, false, tuning);
+        // While one endpoint is in the player's hand, keep the preview rope's
+        // topology stable and let the solver stretch/compress the existing segments.
+        // Rebuilding on every segment-count threshold crossing wipes the current
+        // physical state and causes visible popping/flicker during dragging.
+        if (previewSim == null || !anchor.equals(previewAnchor)) {
+            previewSim = new RopeSimulation(a, b, 0L, tuning);
             previewAnchor = anchor;
         } else {
             previewSim.setTuning(tuning);
@@ -1142,9 +1181,11 @@ public final class SuperLeadClientEvents {
 
     private static void applyServerState(RopeSimulation sim, UUID connectionId, long tick) {
         RopeContactsClient.Contact contact = RopeContactsClient.get(connectionId);
-        if (ZiplineClientState.applyRopeLoad(sim, connectionId, tick)) {
-            // Zipline rider load intentionally overrides incidental contact: one visual bend
-            // slot exists per sim, and the hanging player should be the dominant force.
+        if (ZiplineClientState.hasRiderOn(connectionId)) {
+            // Do not apply a client-only fake load while ziplining. The rider position is
+            // server-authoritative, so bending only the local rendered rope makes the rope
+            // appear below/away from the player (especially after repeated ticks).
+            sim.clearExternalContact();
         } else if (contact == null) {
             sim.clearExternalContact();
         } else {
@@ -1157,6 +1198,8 @@ public final class SuperLeadClientEvents {
     private static void maybeReportPlayerContact(Player player, LeadConnection connection,
             RopeSimulation sim, Vec3 a, Vec3 b) {
         if (player == null || player.isSpectator())
+            return;
+        if (ZiplineClientState.isZiplining(player.getId()))
             return;
         if (connection.kind() != LeadKind.NORMAL && connection.kind() != LeadKind.REDSTONE)
             return;
@@ -1541,6 +1584,9 @@ public final class SuperLeadClientEvents {
             return List.of();
         List<AABB> out = new ArrayList<>(raw.size());
         for (Entity entity : raw) {
+            if (ZiplineClientState.isZiplining(entity.getId())) {
+                continue;
+            }
             if (entity instanceof net.minecraft.world.entity.animal.parrot.Parrot) {
                 continue;
             }

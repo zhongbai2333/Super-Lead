@@ -36,6 +36,7 @@ public final class RopeAttachmentRenderer {
     // Half-block render scale so attachments look like a small placed block.
     private static final float BLOCK_RENDER_SCALE = 0.50F;
     private static final float SIGN_RENDER_SCALE = 1.0F;
+    private static final float PANEL_RENDER_SCALE = 1.25F;
     private static final float ITEM_SCALE = 0.85F;
     // Half-thickness of the hanger string and its dark color.
     private static final float HANGER_HALF_THICKNESS = 0.012F;
@@ -197,7 +198,8 @@ public final class RopeAttachmentRenderer {
         int packedLight = packedLight(level, lightPos);
         HangFrame frame = computeFrame(ax, ay, az, bx, by, bz);
         Minecraft mc = Minecraft.getInstance();
-        boolean asBlock = com.zhongbai233.super_lead.lead.RopeAttachmentItems.isBlockItem(stack);
+        boolean asBlock = com.zhongbai233.super_lead.lead.RopeAttachmentItems.isBlockItem(stack)
+            || com.zhongbai233.super_lead.lead.RopeAttachmentItems.isPanelLikeItem(stack);
         renderOne(collector, cameraPos, level, mc, mc.player, stack,
                 asBlock, false, viewerFrontSide(frame, px, py, pz, cameraPos),
                 px, py, pz, frame, lightPos, packedLight,
@@ -226,6 +228,7 @@ public final class RopeAttachmentRenderer {
             BlockPos lightPos, int packedLight,
             int tintColor, float scaleMul, boolean ghost) {
         BlockProperty attachmentProperty = propertyForStack(stack);
+        boolean asPanelItem = com.zhongbai233.super_lead.lead.RopeAttachmentItems.isPanelLikeItem(stack);
         boolean asBlockItem = shouldRenderAsBlock(stack, displayAsBlock, attachmentProperty);
         // BlockEntity-rendered blocks (signs, shulker boxes, chests, banners, ...) only
         // have
@@ -234,9 +237,9 @@ public final class RopeAttachmentRenderer {
         // etc. Detect them up front and route through the item-model FIXED path which
         // uses
         // the full item display model.
-        boolean useMovingBlock = asBlockItem && !needsItemFallback(stack);
+        boolean useMovingBlock = asBlockItem && !asPanelItem && !needsItemFallback(stack);
 
-        AttachmentLayout layout = attachmentLayout(level, lightPos, stack, asBlockItem, frontSide,
+        AttachmentLayout layout = attachmentLayout(level, lightPos, stack, asBlockItem || asPanelItem, frontSide,
                 attachmentProperty);
 
         // Suspension strings
@@ -279,13 +282,13 @@ public final class RopeAttachmentRenderer {
         // For BlockItems we display as block-form but couldn't go through
         // submitMovingBlock
         // (BlockEntity blocks like signs), use FIXED so the full item model is shown.
-        ItemDisplayContext context = (asBlockItem && needsItemFallback(stack))
+        ItemDisplayContext context = (asPanelItem || (asBlockItem && needsItemFallback(stack)))
                 ? ItemDisplayContext.FIXED
                 : ItemDisplayContext.GROUND;
         mc.getItemModelResolver().updateForTopItem(renderState, stack, context, level, player, 0);
         if (renderState.isEmpty())
             return;
-        float scale = ITEM_SCALE * scaleMul;
+        float scale = (asPanelItem ? layout.bodyScale() : ITEM_SCALE) * scaleMul;
         PoseStack pose = new PoseStack();
         pose.translate(cx - cameraPos.x, cy - cameraPos.y, cz - cameraPos.z);
         pose.mulPose(frame.tilt);
@@ -676,10 +679,12 @@ public final class RopeAttachmentRenderer {
     private static AttachmentLayout attachmentLayout(BlockGetter level, BlockPos pos,
             net.minecraft.world.item.ItemStack stack, boolean displayAsBlock, int frontSide,
             BlockProperty bp) {
+        boolean asPanelItem = com.zhongbai233.super_lead.lead.RopeAttachmentItems.isPanelLikeItem(stack);
         boolean asBlockItem = displayAsBlock
-                && com.zhongbai233.super_lead.lead.RopeAttachmentItems.isBlockItem(stack);
-        asBlockItem = shouldRenderAsBlock(stack, displayAsBlock, bp);
-        float bodyScale = isSignBlock(stack) ? SIGN_RENDER_SCALE : BLOCK_RENDER_SCALE;
+            && com.zhongbai233.super_lead.lead.RopeAttachmentItems.isBlockItem(stack);
+        asBlockItem = asPanelItem || shouldRenderAsBlock(stack, displayAsBlock, bp);
+        float bodyScale = isSignBlock(stack) ? SIGN_RENDER_SCALE
+            : asPanelItem ? PANEL_RENDER_SCALE : BLOCK_RENDER_SCALE;
 
         // Pierced decision: explicit JSON value > shape-based heuristic
         boolean pierced;

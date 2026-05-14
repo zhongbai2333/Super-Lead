@@ -34,7 +34,6 @@ public final class ZiplineClientState {
     private static final double CHAIN_LINK_LENGTH = 0.105D;
     private static final int MAX_LINKS_PER_SPAN = 28;
     private static final double VISUAL_HANG_HEIGHT = 1.97D;
-    private static final double ROPE_LOAD_Y = -0.62D;
     private static final PoseStack IDENTITY_POSE = new PoseStack();
 
     private ZiplineClientState() {
@@ -69,26 +68,16 @@ public final class ZiplineClientState {
         return isZiplining(entityId) && ZiplineController.isChain(stack);
     }
 
-    public static boolean applyRopeLoad(RopeSimulation sim, UUID connectionId, long tick) {
+    public static boolean hasRiderOn(UUID connectionId) {
         if (ACTIVE.isEmpty()) {
             return false;
         }
-        double weightedT = 0.0D;
-        double totalWeight = 0.0D;
         for (Entry entry : ACTIVE.values()) {
-            if (!entry.connectionId().equals(connectionId)) {
-                continue;
+            if (entry.connectionId().equals(connectionId)) {
+                return true;
             }
-            double t = clamp01(entry.currentT());
-            double weight = 0.65D + Math.sin(Math.PI * t) * 0.35D;
-            weightedT += t * weight;
-            totalWeight += weight;
         }
-        if (totalWeight <= 1.0e-6D) {
-            return false;
-        }
-        sim.setExternalContact(tick, (float) clamp01(weightedT / totalWeight), 0.0D, ROPE_LOAD_Y, 0.0D);
-        return true;
+        return false;
     }
 
     private static void enableClientNoPhysics(int entityId) {
@@ -394,10 +383,6 @@ public final class ZiplineClientState {
 
         private UUID connectionId() {
             return connectionId;
-        }
-
-        private float currentT() {
-            return currentT;
         }
 
         private void update(float t) {

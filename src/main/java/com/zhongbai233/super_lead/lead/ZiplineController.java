@@ -93,7 +93,8 @@ public final class ZiplineController {
         // Project the player's current motion onto the chosen direction so a running jump
         // keeps its momentum instead of being clamped to START_SPEED.
         double alongSpeed = player.getDeltaMovement().dot(curve.tangent().scale(direction));
-        double maxV = maxSpeed(connection);
+        ServerPhysicsTuning tuning = ServerPhysicsTuning.loadServerPhysicsTuning(level, connection.physicsPreset());
+        double maxV = maxSpeed(connection, tuning);
         double initialVelocity = clamp(direction * Math.max(START_SPEED, alongSpeed), -maxV, maxV);
 
         NetworkKey key = NetworkKey.of(level);
@@ -202,7 +203,8 @@ public final class ZiplineController {
 
         boolean powered = isPoweredRedstone(connection);
         Vec3 tangent = curve.tangent();
-        double maxV = maxSpeed(connection);
+        ServerPhysicsTuning tuning = ServerPhysicsTuning.loadServerPhysicsTuning(level, connection.physicsPreset());
+        double maxV = maxSpeed(connection, tuning);
 
         // Acceleration along the curve. Gravity acts in world -Y; its component along the
         // unit tangent (which points from->to) is -G * tangent.y. This naturally produces
@@ -213,7 +215,8 @@ public final class ZiplineController {
         double aPower = 0.0D;
         if (powered) {
             int accelerationDirection = poweredAccelerationDirection(player, curve, state.velocity);
-            aPower = accelerationDirection * (POWERED_ACCEL_BASE + connection.power() * POWERED_ACCEL_PER_SIGNAL);
+            aPower = accelerationDirection * (POWERED_ACCEL_BASE + connection.power() * POWERED_ACCEL_PER_SIGNAL)
+                    * tuning.ziplineRedstoneAccelerationMultiplier();
         }
 
         double v = state.velocity * DRAG + aGrav + aPower;
@@ -245,7 +248,7 @@ public final class ZiplineController {
                 }
                 return true;
             }
-            finish(player, state, tangent.scale(v));
+            finish(player, state, launchVelocity(player, tangent.scale(v)));
             return false;
         }
 
@@ -337,7 +340,8 @@ public final class ZiplineController {
         }
         state.connectionId = best.id();
         state.t = entryTAfterKnot(level, best, bestDirection, anchor, overshootDistance);
-        double carriedSpeed = Math.min(Math.abs(state.velocity) * KNOT_SPEED_RETAIN, maxSpeed(best));
+        ServerPhysicsTuning bestTuning = ServerPhysicsTuning.loadServerPhysicsTuning(level, best.physicsPreset());
+        double carriedSpeed = Math.min(Math.abs(state.velocity) * KNOT_SPEED_RETAIN, maxSpeed(best, bestTuning));
         state.velocity = bestDirection * carriedSpeed;
         state.forceSnap = shouldSnapPastKnot(level, anchor);
         return true;
@@ -432,6 +436,21 @@ public final class ZiplineController {
                 : curve.tangent().scale(state.velocity);
     }
 
+    private static Vec3 launchVelocity(ServerPlayer player, Vec3 ropeVelocity) {
+        Vec3 ropeInertia = player.getDeltaMovement();
+        if (ropeInertia == null || ropeInertia.lengthSqr() <= 1.0e-8D) {
+            return ropeVelocity;
+        }
+        if (ropeVelocity == null || ropeVelocity.lengthSqr() <= 1.0e-8D) {
+            return ropeInertia;
+        }
+        // The player already has one tick of motion from being carried by the rope. When
+        // they leave the endpoint, preserve that on-rope inertia and add the freshly
+        // computed exit tangent speed on top, so powered redstone rope chains can build up
+        // enough launch velocity instead of replacing the previous motion each time.
+        return ropeVelocity.add(ropeInertia);
+    }
+
     private static boolean hasChain(Player player) {
         return isChain(player.getMainHandItem()) || isChain(player.getOffhandItem());
     }
@@ -466,8 +485,15 @@ public final class ZiplineController {
         return connection.kind() == LeadKind.REDSTONE && connection.powered();
     }
 
-    private static double maxSpeed(LeadConnection connection) {
-        return isPoweredRedstone(connection) ? MAX_POWERED_SPEED : MAX_NORMAL_SPEED;
+    private static double maxSpeed(LeadConnection connection, ServerPhysicsTuning tuning) {
+        double configured = tuning.ziplineSpeedLimit();
+        if (Double.isNaN(configured)) {
+            return isPoweredRedstone(connection) ? MAX_POWERED_SPEED : MAX_NORMAL_SPEED;
+        }
+        if (configured < 0.0D) {
+            return Double.POSITIVE_INFINITY;
+        }
+        return configured;
     }
 
     private static int poweredAccelerationDirection(ServerPlayer player, Curve curve, double velocity) {
@@ -483,54 +509,9 @@ public final class ZiplineController {
         Vec3 a = endpoints.from();
         Vec3 b = endpoints.to();
         double t = clamp01(rawT);
-        double sag = sag(level, connection, a, b);
-        Vec3 point = new Vec3(
-                a.x + (b.x - a.x) * t,
-                a.y + (b.y - a.y) * t - Math.sin(Math.PI * t) * sag,
-                a.z + (b.z - a.z) * t);
-        Vec3 derivative = new Vec3(
-                b.x - a.x,
-                b.y - a.y - Math.PI * Math.cos(Math.PI * t) * sag,
-                b.z - a.z);
-        if (derivative.lengthSqr() < 1.0e-9D) {
-            derivative = new Vec3(1.0D, 0.0D, 0.0D);
-        }
-        return new Curve(t, point, derivative.normalize(), approximateLength(a, b, sag));
-    }
-
-    private static double sag(ServerLevel level, LeadConnection connection, Vec3 a, Vec3 b) {
-        if (connection.physicsPreset().isBlank()) {
-            return 0.0D;
-        }
-        ServerPhysicsTuning tuning = ServerPhysicsTuning.loadServerPhysicsTuning(level, connection.physicsPreset());
-        if (Math.abs(tuning.gravity()) < 1.0e-9D) {
-            return 0.0D;
-        }
-        double slackExtra = Math.max(0.0D, tuning.slackTight() - 1.0D);
-        return Math.min(1.35D, a.distanceTo(b) * (0.055D + slackExtra * 2.0D));
-    }
-
-    private static double approximateLength(Vec3 a, Vec3 b, double sag) {
-        double straight = a.distanceTo(b);
-        if (sag <= 1.0e-6D) {
-            return Math.max(straight, MIN_SEGMENT_LENGTH);
-        }
-        int samples = Math.max(8, Math.min(32, (int) Math.ceil(straight * 3.0D)));
-        double total = 0.0D;
-        Vec3 previous = sagPoint(a, b, 0.0D, sag);
-        for (int i = 1; i <= samples; i++) {
-            Vec3 next = sagPoint(a, b, i / (double) samples, sag);
-            total += previous.distanceTo(next);
-            previous = next;
-        }
-        return Math.max(total, MIN_SEGMENT_LENGTH);
-    }
-
-    private static Vec3 sagPoint(Vec3 a, Vec3 b, double t, double sag) {
-        return new Vec3(
-                a.x + (b.x - a.x) * t,
-                a.y + (b.y - a.y) * t - Math.sin(Math.PI * t) * sag,
-                a.z + (b.z - a.z) * t);
+        ServerRopeCurve.Shape shape = ServerRopeCurve.from(level, connection, a, b);
+        return new Curve(t, ServerRopeCurve.point(shape, t), ServerRopeCurve.tangent(shape, t),
+                Math.max(shape.length(), MIN_SEGMENT_LENGTH));
     }
 
     private static double clamp01(double value) {

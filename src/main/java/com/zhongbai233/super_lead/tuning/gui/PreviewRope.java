@@ -47,9 +47,7 @@ public final class PreviewRope {
     }
 
     public void setOverrides(Map<String, String> overrides, boolean defaultMissingOverrides) {
-        Map<String, String> next = overrides == null || overrides.isEmpty()
-                ? Map.of()
-                : Map.copyOf(overrides);
+        Map<String, String> next = ClientTuning.normalizeOverrides(overrides);
         if (this.overrides.equals(next) && this.defaultMissingOverrides == defaultMissingOverrides) {
             return;
         }
@@ -113,7 +111,7 @@ public final class PreviewRope {
             colliderY = 1.30D + 0.15D * Math.sin(t * 0.7D);
         }
 
-        double slack = value(ClientTuning.SLACK_TIGHT);
+        double slack = value(ClientTuning.SLACK);
         double gravity = -value(ClientTuning.GRAVITY);
         double damping = value(ClientTuning.DAMPING);
         int iterAir = value(ClientTuning.ITER_AIR);
@@ -248,7 +246,7 @@ public final class PreviewRope {
     }
 
     private <T> T value(TuningKey<T> key) {
-        String raw = overrides.get(key.id);
+        String raw = ClientTuning.overrideValue(overrides, key);
         if (raw != null) {
             try {
                 T parsed = key.type.parse(raw);
@@ -262,8 +260,7 @@ public final class PreviewRope {
     }
 
     private static <T> boolean isUncheckedFiniteDouble(TuningKey<T> key, T parsed) {
-        if (!key.id.equals(ClientTuning.SLACK_LOOSE.id)
-                && !key.id.equals(ClientTuning.SLACK_TIGHT.id)) {
+        if (!ClientTuning.isUncheckedFiniteDoubleKey(key)) {
             return false;
         }
         return parsed instanceof Double d && Double.isFinite(d);

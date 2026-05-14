@@ -6,8 +6,8 @@ import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 
 abstract class RopeSimulationContactConstraints extends RopeSimulationTerrainConstraints {
-    protected RopeSimulationContactConstraints(Vec3 a, Vec3 b, long seed, boolean tight, RopeTuning tuning) {
-        super(a, b, seed, tight, tuning);
+    protected RopeSimulationContactConstraints(Vec3 a, Vec3 b, long seed, RopeTuning tuning) {
+        super(a, b, seed, tuning);
     }
 
     // ============================================================================================
@@ -47,7 +47,7 @@ abstract class RopeSimulationContactConstraints extends RopeSimulationTerrainCon
     }
 
     // ============================================================================================
-    // Constraint: rope-rope (with soft layer bias)
+    // Constraint: rope-rope
     // ============================================================================================
     protected void solveRopeRopeConstraints(List<RopeSimulation> neighbors) {
         final double m = ROPE_REPEL_DISTANCE;
@@ -281,18 +281,6 @@ abstract class RopeSimulationContactConstraints extends RopeSimulationTerrainCon
                 ny = 0.0D;
                 nz = 0.0D;
             }
-            if (pyNeg < bestPen) {
-                bestPen = pyNeg;
-                nx = 0.0D;
-                ny = -1.0D;
-                nz = 0.0D;
-            }
-            if (pyPos < bestPen) {
-                bestPen = pyPos;
-                nx = 0.0D;
-                ny = 1.0D;
-                nz = 0.0D;
-            }
             if (pzNeg < bestPen) {
                 bestPen = pzNeg;
                 nx = 0.0D;
@@ -305,8 +293,23 @@ abstract class RopeSimulationContactConstraints extends RopeSimulationTerrainCon
                 ny = 0.0D;
                 nz = 1.0D;
             }
+            if (pyNeg < bestPen) {
+                bestPen = pyNeg;
+                nx = 0.0D;
+                ny = -1.0D;
+                nz = 0.0D;
+            }
+            if (pyPos < bestPen) {
+                bestPen = pyPos;
+                nx = 0.0D;
+                ny = 1.0D;
+                nz = 0.0D;
+            }
             pushLen = bestPen + radius;
         }
+
+        if (pushLen <= 1.0e-6D)
+            return;
 
         double wa = pinned[a] ? 0.0D : 1.0D;
         double wb = pinned[b] ? 0.0D : 1.0D;
@@ -350,64 +353,19 @@ abstract class RopeSimulationContactConstraints extends RopeSimulationTerrainCon
         if (pairScratch.distSqr >= ROPE_REPEL_DISTANCE * ROPE_REPEL_DISTANCE)
             return;
 
-        double s = pairScratch.s, t = pairScratch.t;
+        double s = pairScratch.s;
         double dist = Math.sqrt(pairScratch.distSqr);
-        // Layer sign = which rope sits above. We freeze the ordering at the START of
-        // the
-        // substep (yPrev), so it cannot flip between iterations as the corrections move
-        // ropes
-        // past each other. Using current y here caused 3-rope stacks to "fight" for the
-        // upper slot every iteration. Per-rope priority is only used as the deepest
-        // fallback
-        // when the substep started with the two ropes essentially co-planar.
-        // In parallel mode read the neighbour's layered ordering off the same
-        // tick-start snapshot
-        // (snapY) used for geometry: yPrev is mutated by the neighbour's own substep
-        // concurrently.
-        final double[] oYPrev = parallelPhase() ? other.snapY : other.yPrev;
-        double yA = yPrev[i] * (1.0D - s) + yPrev[i + 1] * s;
-        double yB = oYPrev[j] * (1.0D - t) + oYPrev[j + 1] * t;
-        double dyPrev = yA - yB;
-        double layerSign;
-        if (dyPrev > 1.0e-3D) {
-            layerSign = 1.0D;
-        } else if (dyPrev < -1.0e-3D) {
-            layerSign = -1.0D;
-        } else {
-            layerSign = layerPriority > other.layerPriority ? 1.0D
-                    : (layerPriority < other.layerPriority ? -1.0D
-                            : (System.identityHashCode(this) > System.identityHashCode(other) ? 1.0D : -1.0D));
-        }
-
         double nx, ny, nz;
         if (dist < 1.0e-6D) {
-            nx = 0.0D;
-            ny = layerSign;
-            nz = 0.0D;
+            nx = stableSeparation.x;
+            ny = stableSeparation.y;
+            nz = stableSeparation.z;
         } else {
             nx = pairScratch.dx / dist;
             ny = pairScratch.dy / dist;
             nz = pairScratch.dz / dist;
-            // Soft layer bias: only when the contact is vertically tight enough that the
-            // raw
-            double yProx = 1.0D - Math.min(1.0D, Math.abs(pairScratch.dy) / LAYER_CAPTURE_HEIGHT);
-            if (yProx > 0.0D) {
-                double k = LAYER_BLEND_STRENGTH * yProx;
-                ny = ny + (layerSign - ny) * k;
-                nx *= 1.0D - k * 0.5D;
-                nz *= 1.0D - k * 0.5D;
-                double m = Math.sqrt(nx * nx + ny * ny + nz * nz);
-                if (m > 1.0e-9D) {
-                    nx /= m;
-                    ny /= m;
-                    nz /= m;
-                }
-            }
         }
 
-        double endpointFade = endpointFade(i, s) * other.endpointFade(j, t);
-        if (endpointFade <= 1.0e-4D)
-            return;
         double penetration = ROPE_REPEL_DISTANCE - dist;
 
         // Inverse mass per contact point: w = (1-t)^2 * w_i + t^2 * w_{i+1}.
@@ -427,7 +385,7 @@ abstract class RopeSimulationContactConstraints extends RopeSimulationTerrainCon
                 + s * s * (pinned[i + 1] ? 0.0D : 1.0D);
         if (wA < 1.0e-9D)
             return;
-        double dlambda = penetration / wA * endpointFade;
+        double dlambda = penetration / wA;
         // Parallel mode: cross-rope coupling is Jacobi rather than Gauss-Seidel because
         // every
         // worker reads the tick-start snapshot. Pure Jacobi is famously prone to
@@ -463,10 +421,5 @@ abstract class RopeSimulationContactConstraints extends RopeSimulationTerrainCon
         z[i] += dz;
         contactNode[i] = true;
         markBoundsDirty();
-    }
-
-    protected double endpointFade(int segment, double t) {
-        double ropeT = (segment + t) / segments;
-        return Math.min(1.0D, Math.min(ropeT, 1.0D - ropeT) / ENDPOINT_FADE);
     }
 }

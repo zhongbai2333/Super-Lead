@@ -3,8 +3,8 @@ package com.zhongbai233.super_lead.lead.client.sim;
 import net.minecraft.world.phys.Vec3;
 
 abstract class RopeSimulationVisualState extends RopeSimulationRenderCache {
-    protected RopeSimulationVisualState(Vec3 a, Vec3 b, long seed, boolean tight, RopeTuning tuning) {
-        super(a, b, seed, tight, tuning);
+    protected RopeSimulationVisualState(Vec3 a, Vec3 b, long seed, RopeTuning tuning) {
+        super(a, b, seed, tuning);
     }
 
     // ============================================================================================
@@ -13,7 +13,10 @@ abstract class RopeSimulationVisualState extends RopeSimulationRenderCache {
     public void updateVisualLeash(Vec3 a, Vec3 b, long currentTick, float smoothing) {
         lastTouchTick = currentTick;
         double sag = Math.min(0.55D, a.distanceTo(b) * 0.055D);
-        boolean bend = contactT >= 0.0F;
+        boolean bend = hasExternalContact(currentTick);
+        if (!bend && contactT >= 0.0F) {
+            contactT = -1.0F;
+        }
         double bendWindow = 0.28D;
         for (int i = 0; i < nodes; i++) {
             double t = i / (double) segments;
@@ -228,9 +231,11 @@ abstract class RopeSimulationVisualState extends RopeSimulationRenderCache {
      * subsequently
      * propagate the deformation along the rope.
      */
-    protected void applyExternalContactPush() {
-        if (contactT < 0.0F)
+    protected void applyExternalContactPush(long currentTick) {
+        if (!hasExternalContact(currentTick)) {
+            contactT = -1.0F;
             return;
+        }
         float ct = contactT < 0.0F ? 0.0F : (contactT > 1.0F ? 1.0F : contactT);
         int seg = (int) Math.floor(ct * segments);
         if (seg >= segments)

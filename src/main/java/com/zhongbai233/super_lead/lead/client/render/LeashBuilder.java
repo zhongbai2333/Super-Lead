@@ -488,6 +488,104 @@ public final class LeashBuilder {
         double eUpY = upY[i] + (upY[j] - upY[i]) * b;
         double eUpZ = upZ[i] + (upZ[j] - upZ[i]) * b;
 
+        // Node frames are shared by the two strips meeting at that node. At a tight
+        // U-turn (common on a vertical hanging chain's folded tail), the node tangent can
+        // point along the next strip while the previous strip is emitted in the opposite
+        // direction. The prism winding assumes up == side x actual-strip-tangent; if the
+        // stored up vector was built from the opposite tangent, the face winding inverts
+        // and back-face culling exposes the inside of the fold. Rebuild side/up against
+        // this strip's real direction just before emitting/baking.
+        double dirX = exw - sxw;
+        double dirY = eyw - syw;
+        double dirZ = ezw - szw;
+        double dirLen = Math.sqrt(dirX * dirX + dirY * dirY + dirZ * dirZ);
+        if (dirLen > 1.0e-8D) {
+            double invDir = 1.0D / dirLen;
+            dirX *= invDir;
+            dirY *= invDir;
+            dirZ *= invDir;
+
+            double sThickness = Math.sqrt(sSideX * sSideX + sSideY * sSideY + sSideZ * sSideZ);
+            double sAlong = sSideX * dirX + sSideY * dirY + sSideZ * dirZ;
+            sSideX -= dirX * sAlong;
+            sSideY -= dirY * sAlong;
+            sSideZ -= dirZ * sAlong;
+            double sLenSqr = sSideX * sSideX + sSideY * sSideY + sSideZ * sSideZ;
+            if (sLenSqr < 1.0e-12D) {
+                sSideX = -dirZ;
+                sSideY = 0.0D;
+                sSideZ = dirX;
+                sLenSqr = sSideX * sSideX + sSideZ * sSideZ;
+                if (sLenSqr < 1.0e-12D) {
+                    sSideX = 1.0D;
+                    sSideY = 0.0D;
+                    sSideZ = 0.0D;
+                    sAlong = sSideX * dirX + sSideY * dirY + sSideZ * dirZ;
+                    sSideX -= dirX * sAlong;
+                    sSideY -= dirY * sAlong;
+                    sSideZ -= dirZ * sAlong;
+                    sLenSqr = sSideX * sSideX + sSideY * sSideY + sSideZ * sSideZ;
+                    if (sLenSqr < 1.0e-12D) {
+                        sSideX = 0.0D;
+                        sSideY = 0.0D;
+                        sSideZ = 1.0D;
+                        sAlong = sSideX * dirX + sSideY * dirY + sSideZ * dirZ;
+                        sSideX -= dirX * sAlong;
+                        sSideY -= dirY * sAlong;
+                        sSideZ -= dirZ * sAlong;
+                        sLenSqr = sSideX * sSideX + sSideY * sSideY + sSideZ * sSideZ;
+                    }
+                }
+            }
+            double sScale = sThickness / Math.sqrt(sLenSqr);
+            sSideX *= sScale;
+            sSideY *= sScale;
+            sSideZ *= sScale;
+            sUpX = sSideY * dirZ - sSideZ * dirY;
+            sUpY = sSideZ * dirX - sSideX * dirZ;
+            sUpZ = sSideX * dirY - sSideY * dirX;
+
+            double eThickness = Math.sqrt(eSideX * eSideX + eSideY * eSideY + eSideZ * eSideZ);
+            double eAlong = eSideX * dirX + eSideY * dirY + eSideZ * dirZ;
+            eSideX -= dirX * eAlong;
+            eSideY -= dirY * eAlong;
+            eSideZ -= dirZ * eAlong;
+            double eLenSqr = eSideX * eSideX + eSideY * eSideY + eSideZ * eSideZ;
+            if (eLenSqr < 1.0e-12D) {
+                eSideX = -dirZ;
+                eSideY = 0.0D;
+                eSideZ = dirX;
+                eLenSqr = eSideX * eSideX + eSideZ * eSideZ;
+                if (eLenSqr < 1.0e-12D) {
+                    eSideX = 1.0D;
+                    eSideY = 0.0D;
+                    eSideZ = 0.0D;
+                    eAlong = eSideX * dirX + eSideY * dirY + eSideZ * dirZ;
+                    eSideX -= dirX * eAlong;
+                    eSideY -= dirY * eAlong;
+                    eSideZ -= dirZ * eAlong;
+                    eLenSqr = eSideX * eSideX + eSideY * eSideY + eSideZ * eSideZ;
+                    if (eLenSqr < 1.0e-12D) {
+                        eSideX = 0.0D;
+                        eSideY = 0.0D;
+                        eSideZ = 1.0D;
+                        eAlong = eSideX * dirX + eSideY * dirY + eSideZ * dirZ;
+                        eSideX -= dirX * eAlong;
+                        eSideY -= dirY * eAlong;
+                        eSideZ -= dirZ * eAlong;
+                        eLenSqr = eSideX * eSideX + eSideY * eSideY + eSideZ * eSideZ;
+                    }
+                }
+            }
+            double eScale = eThickness / Math.sqrt(eLenSqr);
+            eSideX *= eScale;
+            eSideY *= eScale;
+            eSideZ *= eScale;
+            eUpX = eSideY * dirZ - eSideZ * dirY;
+            eUpY = eSideZ * dirX - eSideX * dirZ;
+            eUpZ = eSideX * dirY - eSideY * dirX;
+        }
+
         if (bakeSim != null) {
             bakeSim.appendBakedSegment(
                     (sxw + exw) * 0.5D,
@@ -525,6 +623,10 @@ public final class LeashBuilder {
             double[] upX,
             double[] upY,
             double[] upZ) {
+        double prevSideX = 0.0D;
+        double prevSideY = 0.0D;
+        double prevSideZ = 0.0D;
+        boolean hasPrevSide = false;
         for (int i = 0; i < nodeCount; i++) {
             double tx;
             double ty;
@@ -577,20 +679,75 @@ public final class LeashBuilder {
                 tz /= tLen;
             }
 
-            double sx = -tz;
-            double sy = 0.0D;
-            double sz = tx;
-            double sLenSqr = sx * sx + sz * sz;
-            if (sLenSqr < 1.0e-8D) {
-                sx = 0.0D;
-                sy = tz;
-                sz = -ty;
-                sLenSqr = sy * sy + sz * sz;
+            double sx;
+            double sy;
+            double sz;
+            if (hasPrevSide) {
+                double along = prevSideX * tx + prevSideY * ty + prevSideZ * tz;
+                sx = prevSideX - tx * along;
+                sy = prevSideY - ty * along;
+                sz = prevSideZ - tz * along;
+                double sLenSqr = sx * sx + sy * sy + sz * sz;
+                if (sLenSqr < 1.0e-8D) {
+                    sx = -tz;
+                    sy = 0.0D;
+                    sz = tx;
+                    sLenSqr = sx * sx + sz * sz;
+                }
+                if (sLenSqr < 1.0e-8D) {
+                    sx = 1.0D;
+                    sy = 0.0D;
+                    sz = 0.0D;
+                    double fallbackAlong = sx * tx + sy * ty + sz * tz;
+                    sx -= tx * fallbackAlong;
+                    sy -= ty * fallbackAlong;
+                    sz -= tz * fallbackAlong;
+                    sLenSqr = sx * sx + sy * sy + sz * sz;
+                    if (sLenSqr < 1.0e-8D) {
+                        sx = 0.0D;
+                        sy = 0.0D;
+                        sz = 1.0D;
+                        fallbackAlong = sx * tx + sy * ty + sz * tz;
+                        sx -= tx * fallbackAlong;
+                        sy -= ty * fallbackAlong;
+                        sz -= tz * fallbackAlong;
+                        sLenSqr = sx * sx + sy * sy + sz * sz;
+                    }
+                }
+                double invSide = 1.0D / Math.sqrt(sLenSqr);
+                sx *= invSide;
+                sy *= invSide;
+                sz *= invSide;
+            } else {
+                sx = -tz;
+                sy = 0.0D;
+                sz = tx;
+                double sLenSqr = sx * sx + sz * sz;
+                if (sLenSqr < 1.0e-8D) {
+                    sx = 1.0D;
+                    sy = 0.0D;
+                    sz = 0.0D;
+                    double fallbackAlong = sx * tx + sy * ty + sz * tz;
+                    sx -= tx * fallbackAlong;
+                    sy -= ty * fallbackAlong;
+                    sz -= tz * fallbackAlong;
+                    sLenSqr = sx * sx + sy * sy + sz * sz;
+                    if (sLenSqr < 1.0e-8D) {
+                        sx = 0.0D;
+                        sy = 0.0D;
+                        sz = 1.0D;
+                        fallbackAlong = sx * tx + sy * ty + sz * tz;
+                        sx -= tx * fallbackAlong;
+                        sy -= ty * fallbackAlong;
+                        sz -= tz * fallbackAlong;
+                        sLenSqr = sx * sx + sy * sy + sz * sz;
+                    }
+                }
+                double invSide = 1.0D / Math.sqrt(sLenSqr);
+                sx *= invSide;
+                sy *= invSide;
+                sz *= invSide;
             }
-            double invSide = 1.0D / Math.sqrt(sLenSqr);
-            sx *= invSide;
-            sy *= invSide;
-            sz *= invSide;
 
             double ux = sy * tz - sz * ty;
             double uy = sz * tx - sx * tz;
@@ -599,6 +756,20 @@ public final class LeashBuilder {
             ux *= invUp;
             uy *= invUp;
             uz *= invUp;
+
+            if (hasPrevSide && sx * prevSideX + sy * prevSideY + sz * prevSideZ < 0.0D) {
+                sx = -sx;
+                sy = -sy;
+                sz = -sz;
+                ux = -ux;
+                uy = -uy;
+                uz = -uz;
+            }
+
+            prevSideX = sx;
+            prevSideY = sy;
+            prevSideZ = sz;
+            hasPrevSide = true;
 
             double normalized = sim.renderLength(i) / totalLength;
             double thickness = baseThickness * thicknessMultiplier(normalized, pulsePositions, extractEnd);
@@ -892,6 +1063,11 @@ public final class LeashBuilder {
             }
             if (goldBand) {
                 rgb = brighten(blend(rgb, accent, 0.78D), powered ? 1.18D : 1.06D);
+            }
+        } else if (effectiveKind == LeadKind.AE_NETWORK) {
+            boolean channelBand = tier > 0 && (stripe % Math.max(2, 6 - Math.min(4, tier))) == 0 && bright;
+            if (channelBand) {
+                rgb = brighten(blend(rgb, accent, 0.72D), 1.12D);
             }
         }
 
