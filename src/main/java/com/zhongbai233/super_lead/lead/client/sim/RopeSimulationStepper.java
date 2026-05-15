@@ -3,7 +3,6 @@ package com.zhongbai233.super_lead.lead.client.sim;
 import com.zhongbai233.super_lead.lead.physics.RopeSagModel;
 import java.util.List;
 import net.minecraft.world.level.Level;
-import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 
 abstract class RopeSimulationStepper extends RopeSimulationContactConstraints {
@@ -78,14 +77,14 @@ abstract class RopeSimulationStepper extends RopeSimulationContactConstraints {
     /**
      * Advance one logical tick. Driver supplies neighbours (already pre-filtered by
      * bounds),
-     * external force fields, and a list of nearby entity bounding boxes that push
+         * external force fields, and a list of nearby entity body snapshots that push
      * the rope.
      */
     public boolean step(
             Level level, Vec3 a, Vec3 b, long currentTick,
             List<RopeSimulation> neighbors,
             List<RopeForceField> forceFields,
-            List<AABB> entityBoxes) {
+             List<RopeEntityContact> entityContacts) {
         lastTouchTick = currentTick;
 
         if (lastSteppedTick == UNINIT) {
@@ -119,7 +118,7 @@ abstract class RopeSimulationStepper extends RopeSimulationContactConstraints {
         // Entity overlap forces a wake-up: a frozen airborne rope would otherwise let
         // the player
         // walk through it because no constraint loop runs at all.
-        boolean entityNearby = !entityBoxes.isEmpty();
+        boolean entityNearby = !entityContacts.isEmpty();
         boolean serverPullActive = hasFreshServerNodes(currentTick);
         boolean forceActive = !forceFields.isEmpty();
         boolean awake = endpointMoved || blockChanged || neighborAwake || entityNearby || forceActive || !isSettled()
@@ -162,7 +161,7 @@ abstract class RopeSimulationStepper extends RopeSimulationContactConstraints {
                         lastBy + (b.y - lastBy) * frac,
                         lastBz + (b.z - lastBz) * frac);
                 substep(level, aInterp, bInterp, h, currentTick, terrainNearby,
-                        neighbors, forceFields, entityBoxes);
+                        neighbors, forceFields, entityContacts);
             }
         }
 
@@ -188,7 +187,7 @@ abstract class RopeSimulationStepper extends RopeSimulationContactConstraints {
             Level level, Vec3 a, Vec3 b, double h, long tick, boolean terrainEnabled,
             List<RopeSimulation> neighbors,
             List<RopeForceField> forceFields,
-            List<AABB> entityBoxes) {
+            List<RopeEntityContact> entityContacts) {
         if (terrainEnabled) {
             // In parallel mode the main-thread prefetch covers the whole step's bbox;
             // clearing
@@ -237,7 +236,7 @@ abstract class RopeSimulationStepper extends RopeSimulationContactConstraints {
         double targetLen = RopeSagModel.physicsTargetLength(a, b, tuning.slack(), tuning.gravity()) / segments;
         double alphaTilde = tuning.compliance() / (h * h);
         int iterations;
-        if (terrainEnabled || !entityBoxes.isEmpty() || !forceFields.isEmpty()) {
+        if (terrainEnabled || !entityContacts.isEmpty() || !forceFields.isEmpty()) {
             iterations = tuning.iterContact();
         } else if (!neighbors.isEmpty()) {
             iterations = tuning.iterRope();
@@ -259,12 +258,12 @@ abstract class RopeSimulationStepper extends RopeSimulationContactConstraints {
                 solveTerrainConstraints(level);
             if (!neighbors.isEmpty())
                 solveRopeRopeConstraints(neighbors);
-            if (!entityBoxes.isEmpty())
-                solveEntityConstraints(entityBoxes);
+            if (!entityContacts.isEmpty())
+                solveEntityConstraints(entityContacts);
             pinEndpoints(a, b);
         }
 
-        if (!terrainEnabled && entityBoxes.isEmpty() && !hasExternalContact(tick)) {
+        if (!terrainEnabled && entityContacts.isEmpty() && !hasExternalContact(tick)) {
             solveDistanceConstraints(targetLen, 0.0D, true);
             solveDistanceConstraints(targetLen, 0.0D, false);
             pinEndpoints(a, b);

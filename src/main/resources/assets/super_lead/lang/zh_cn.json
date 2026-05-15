@@ -291,5 +291,20 @@
   "super_lead.tuning.zipline.speedLimit.label": "滑索速度上限",
   "super_lead.tuning.zipline.speedLimit.desc": "滑索最大速度（方块/tick），-1 表示不限制。",
   "super_lead.tuning.zipline.redstoneAccelerationMultiplier.label": "红石加速倍率",
-  "super_lead.tuning.zipline.redstoneAccelerationMultiplier.desc": "通电红石滑索加速的倍率。"
+  "super_lead.tuning.zipline.redstoneAccelerationMultiplier.desc": "通电红石滑索加速的倍率。",
+  "super_lead.config.value": "数值",
+  "super_lead.tuning.contact.topPadding.label": "顶部接触补齐",
+  "super_lead.tuning.contact.topPadding.desc": "玩家与绳子接触采样时的额外顶部范围，使细绳更容易踩上去。",
+  "super_lead.tuning.contact.topNormalThreshold.label": "顶部法线阈值",
+  "super_lead.tuning.contact.topNormalThreshold.desc": "用于判定绳子接触为顶部/支撑接触的法线 Y 分量阈值。",
+  "super_lead.tuning.contact.sideAbsorb.label": "侧面速度吸收",
+  "super_lead.tuning.contact.sideAbsorb.desc": "侧向碰绳时抵消的向内水平法线速度比例；1.0 表示每 tick 完全抵消，使玩家无法穿透绳子。",
+  "super_lead.tuning.contact.sideIntentRelease.label": "侧面意图释放",
+  "super_lead.tuning.contact.sideIntentRelease.desc": "当玩家向外移动输入时，抑制侧向吸收的强度，便于玩家脱离绳子区域。",
+  "super_lead.tuning.contact.sideDeadbandRatio.label": "侧面死区比例",
+  "super_lead.tuning.contact.sideDeadbandRatio.desc": "接触半径中被忽略的比例，用于防止边缘接触产生的黏滞阻尼。",
+  "super_lead.tuning.contact.entityPushGain.label": "实体推绳增益",
+  "super_lead.tuning.contact.entityPushGain.desc": "实体接近速度对绳子的额外水平位移增益，使高速撞击能让绳子弯曲。",
+  "super_lead.tuning.contact.pushbackEnableDepth.label": "反推启用深度",
+  "super_lead.tuning.contact.pushbackEnableDepth.desc": "玩家穿透绳子的深度超过此值（方块）后方才开始反推。设为 0 表示始终反推。"
 }

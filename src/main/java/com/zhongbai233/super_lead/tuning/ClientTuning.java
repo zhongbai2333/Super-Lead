@@ -68,6 +68,24 @@ public final class ClientTuning {
     public static final TuningKey<Double> CONTACT_MAX_RECOIL_PER_TICK = registerD(
             "contact.maxRecoilPerTick", "physics.contact", 0.20D, 0.0D, 0.50D,
             "Maximum 3D contact velocity added to the player per server tick before support scaling.");
+    public static final TuningKey<Double> CONTACT_TOP_PADDING = registerD(
+            "contact.topPadding", "physics.contact", 0.20D, 0.0D, 0.50D,
+            "Extra top-surface reach for player-vs-rope contact sampling, making the thin rope easier to stand on.");
+    public static final TuningKey<Double> CONTACT_TOP_NORMAL_THRESHOLD = registerD(
+            "contact.topNormalThreshold", "physics.contact", 0.55D, 0.45D, 0.95D,
+            "Normal-Y threshold used to treat a rope contact as a top/support contact.");
+    public static final TuningKey<Double> CONTACT_SIDE_ABSORB = registerD(
+            "contact.sideAbsorb", "physics.contact", 1.0D, 0.0D, 1.0D,
+            "Fraction of inward horizontal normal speed cancelled by side rope contacts; 1.0 fully cancels each tick so the player cannot creep through.");
+    public static final TuningKey<Double> CONTACT_SIDE_INTENT_RELEASE = registerD(
+            "contact.sideIntentRelease", "physics.contact", 1.0D, 0.0D, 1.0D,
+            "How strongly outward movement input disables side absorption so players can leave the rope volume.");
+    public static final TuningKey<Double> CONTACT_SIDE_DEADBAND_RATIO = registerD(
+            "contact.sideDeadbandRatio", "physics.contact", 0.20D, 0.0D, 0.75D,
+            "Fraction of contact radius ignored for side absorption to prevent edge-contact mud-trap damping.");
+    public static final TuningKey<Double> CONTACT_PUSHBACK_ENABLE_DEPTH = registerD(
+            "contact.pushbackEnableDepth", "physics.contact", 0.001D, 0.0D, 0.50D,
+            "Minimum penetration depth in blocks before rope push-back activates. Set to 0 to always push back.");
     public static final TuningKey<Boolean> CONTACT_PARROT_PATHFINDING = registerB(
             "contact.parrotPathfinding", "physics.contact", Boolean.TRUE,
             "Whether parrots can pathfind to ropes in this zone.");
@@ -227,6 +245,9 @@ public final class ClientTuning {
     public static final TuningKey<Double> CONTACT_PUSH_GAIN = registerD(
             "contactPushGain", "physics.solverExt", 0.45D, 0.0D, 2.0D,
             "Gain applied to external (server-broadcast) contact pushes.");
+    public static final TuningKey<Double> ENTITY_PUSH_GAIN = registerD(
+            "contact.entityPushGain", "physics.solverExt", 0.80D, 0.0D, 4.0D,
+            "Extra horizontal rope displacement gained from entity approach speed, making high-impulse impacts bend the rope.");
     public static final TuningKey<Double> SERVER_BLEND_ALPHA = registerD(
             "serverBlendAlpha", "physics.solverExt", 0.20D, 0.0D, 1.0D,
             "Blend factor for server-authoritative node positions. 0 = ignore server.");

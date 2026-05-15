@@ -21,6 +21,11 @@ record ServerPhysicsTuning(
         double springK,
         double velocityDamping,
         double maxRecoilPerTick,
+        double contactTopNormalThreshold,
+        double contactSideAbsorb,
+        double contactSideIntentRelease,
+        double contactSideDeadbandRatio,
+        double pushbackEnableDepth,
         double ziplineSpeedLimit,
         double ziplineRedstoneAccelerationMultiplier,
         double maxSolvedSag,
@@ -31,6 +36,11 @@ record ServerPhysicsTuning(
     private static final double SPRING_K_MINIMUM = 0.30D;
     private static final double VELOCITY_DAMPING_FALLBACK = ClientTuning.CONTACT_VELOCITY_DAMPING.defaultValue;
     private static final double MAX_RECOIL_PER_TICK_FALLBACK = ClientTuning.CONTACT_MAX_RECOIL_PER_TICK.defaultValue;
+    private static final double TOP_NORMAL_THRESHOLD_FALLBACK = ClientTuning.CONTACT_TOP_NORMAL_THRESHOLD.defaultValue;
+    private static final double SIDE_ABSORB_FALLBACK = ClientTuning.CONTACT_SIDE_ABSORB.defaultValue;
+    private static final double SIDE_INTENT_RELEASE_FALLBACK = ClientTuning.CONTACT_SIDE_INTENT_RELEASE.defaultValue;
+    private static final double SIDE_DEADBAND_RATIO_FALLBACK = ClientTuning.CONTACT_SIDE_DEADBAND_RATIO.defaultValue;
+    private static final double PUSHBACK_ENABLE_DEPTH_FALLBACK = ClientTuning.CONTACT_PUSHBACK_ENABLE_DEPTH.defaultValue;
     private static final double MAX_RECOIL_PER_TICK_MINIMUM = 0.20D;
     private static final double MAX_SOLVED_SAG_FALLBACK = 64.0D;
     private static final double SAG_ARC_APPROX_FACTOR_FALLBACK = 0.375D;
@@ -68,6 +78,20 @@ record ServerPhysicsTuning(
         double maxRecoilPerTick = Math.max(MAX_RECOIL_PER_TICK_MINIMUM,
                 parseDouble(overrides.get(ClientTuning.CONTACT_MAX_RECOIL_PER_TICK.id),
                         ClientTuning.CONTACT_MAX_RECOIL_PER_TICK, MAX_RECOIL_PER_TICK_FALLBACK));
+        double contactTopNormalThreshold = parseDouble(
+            overrides.get(ClientTuning.CONTACT_TOP_NORMAL_THRESHOLD.id),
+            ClientTuning.CONTACT_TOP_NORMAL_THRESHOLD, TOP_NORMAL_THRESHOLD_FALLBACK);
+        double contactSideAbsorb = parseDouble(overrides.get(ClientTuning.CONTACT_SIDE_ABSORB.id),
+            ClientTuning.CONTACT_SIDE_ABSORB, SIDE_ABSORB_FALLBACK);
+        double contactSideIntentRelease = parseDouble(
+            overrides.get(ClientTuning.CONTACT_SIDE_INTENT_RELEASE.id),
+            ClientTuning.CONTACT_SIDE_INTENT_RELEASE, SIDE_INTENT_RELEASE_FALLBACK);
+        double contactSideDeadbandRatio = parseDouble(
+            overrides.get(ClientTuning.CONTACT_SIDE_DEADBAND_RATIO.id),
+            ClientTuning.CONTACT_SIDE_DEADBAND_RATIO, SIDE_DEADBAND_RATIO_FALLBACK);
+        double pushbackEnableDepth = parseDouble(
+            overrides.get(ClientTuning.CONTACT_PUSHBACK_ENABLE_DEPTH.id),
+            ClientTuning.CONTACT_PUSHBACK_ENABLE_DEPTH, PUSHBACK_ENABLE_DEPTH_FALLBACK);
         double ziplineSpeedLimit = parseDouble(overrides.get(ClientTuning.ZIPLINE_SPEED_LIMIT.id),
                 ClientTuning.ZIPLINE_SPEED_LIMIT, Double.NaN);
         double ziplineRedstoneAccelerationMultiplier = parseDouble(
@@ -77,6 +101,8 @@ record ServerPhysicsTuning(
         return new ServerPhysicsTuning(physicsEnabled, gravity, slack,
                 segmentLength, segmentMax, damping, iterAir, compliance,
                 pushbackEnabled, contactRadius, springK, velocityDamping, maxRecoilPerTick,
+                contactTopNormalThreshold, contactSideAbsorb, contactSideIntentRelease, contactSideDeadbandRatio,
+                pushbackEnableDepth,
                 ziplineSpeedLimit, ziplineRedstoneAccelerationMultiplier,
                 MAX_SOLVED_SAG_FALLBACK, SAG_ARC_APPROX_FACTOR_FALLBACK, FULL_SLACK_HORIZONTAL_RATIO_FALLBACK);
     }

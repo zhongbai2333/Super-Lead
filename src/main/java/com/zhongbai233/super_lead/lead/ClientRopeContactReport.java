@@ -28,6 +28,7 @@ public record ClientRopeContactReport(
         float tangentZ,
         float inputX,
         float inputZ,
+        boolean jumpDown,
         float depth,
         float slack) implements CustomPacketPayload {
     public static final CustomPacketPayload.Type<ClientRopeContactReport> TYPE = new CustomPacketPayload.Type<>(
@@ -54,6 +55,7 @@ public record ClientRopeContactReport(
         buffer.writeFloat(tangentZ);
         buffer.writeFloat(inputX);
         buffer.writeFloat(inputZ);
+        buffer.writeBoolean(jumpDown);
         buffer.writeFloat(depth);
         buffer.writeFloat(slack);
     }
@@ -73,6 +75,7 @@ public record ClientRopeContactReport(
                 buffer.readFloat(),
                 buffer.readFloat(),
                 buffer.readFloat(),
+                buffer.readBoolean(),
                 buffer.readFloat(),
                 buffer.readFloat());
     }

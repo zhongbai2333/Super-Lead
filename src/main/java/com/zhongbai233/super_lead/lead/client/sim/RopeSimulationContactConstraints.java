@@ -6,6 +6,10 @@ import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 
 abstract class RopeSimulationContactConstraints extends RopeSimulationTerrainConstraints {
+    private static final double ENTITY_FOOT_SUPPORT_HEIGHT = 0.18D;
+    private static final double ENTITY_FOOT_SUPPORT_MARGIN = 0.08D;
+    private static final double ENTITY_FOOT_SUPPORT_MAX_HORIZONTAL_SPEED = 0.08D;
+
     protected RopeSimulationContactConstraints(Vec3 a, Vec3 b, long seed, RopeTuning tuning) {
         super(a, b, seed, tuning);
     }
@@ -131,26 +135,28 @@ abstract class RopeSimulationContactConstraints extends RopeSimulationTerrainCon
     // ============================================================================================
     // Constraint: entity bodies (one-way: entity pushes rope, never the reverse)
     // ============================================================================================
-    protected void solveEntityConstraints(List<AABB> entityBoxes) {
-        if (entityBoxes.isEmpty())
+    protected void solveEntityConstraints(List<RopeEntityContact> entityContacts) {
+        if (entityContacts.isEmpty())
             return;
-        double r = ropeRadius + collisionEps;
+        double baseRadius = ropeRadius + collisionEps;
         updateBounds();
-        for (int e = 0; e < entityBoxes.size(); e++) {
-            AABB box = entityBoxes.get(e);
-            if (box.maxX + r < minX || box.minX - r > maxX)
+        for (int e = 0; e < entityContacts.size(); e++) {
+            RopeEntityContact contact = entityContacts.get(e);
+            AABB box = contact.box();
+            double radius = contact.player() ? Math.max(baseRadius, ENTITY_FOOT_SUPPORT_HEIGHT) : baseRadius;
+            if (box.maxX + radius < minX || box.minX - radius > maxX)
                 continue;
-            if (box.maxY + r < minY || box.minY - r > maxY)
+            if (box.maxY + radius < minY || box.minY - radius > maxY)
                 continue;
-            if (box.maxZ + r < minZ || box.minZ - r > maxZ)
+            if (box.maxZ + radius < minZ || box.minZ - radius > maxZ)
                 continue;
             for (int i = 0; i < segments; i++) {
-                pushSegmentOutOfEntityBox(i, i + 1, box, r);
+                pushSegmentOutOfEntityBox(i, i + 1, box, contact.velocity(), radius);
             }
         }
     }
 
-    private void pushSegmentOutOfEntityBox(int a, int b, AABB box, double radius) {
+    private void pushSegmentOutOfEntityBox(int a, int b, AABB box, Vec3 entityVelocity, double radius) {
         double ax = x[a], ay = y[a], az = z[a];
         double bx = x[b], by = y[b], bz = z[b];
         double ux = bx - ax, uy = by - ay, uz = bz - az;
@@ -209,13 +215,21 @@ abstract class RopeSimulationContactConstraints extends RopeSimulationTerrainCon
         cpx = spx < box.minX ? box.minX : (spx > box.maxX ? box.maxX : spx);
         cpy = spy < box.minY ? box.minY : (spy > box.maxY ? box.maxY : spy);
         cpz = spz < box.minZ ? box.minZ : (spz > box.maxZ ? box.maxZ : spz);
+        boolean footSupportContact = isFootSupportEntityContact(box, entityVelocity, spx, spy, spz, radius);
         double dx = spx - cpx, dy = spy - cpy, dz = spz - cpz;
         double d2 = dx * dx + dy * dy + dz * dz;
-        if (d2 >= radius * radius)
-            return;
 
         double pushLen, nx, ny, nz;
-        if (d2 > 1.0e-12D) {
+        if (d2 >= radius * radius) {
+            if (!footSupportContact)
+                return;
+            pushLen = footSupportPushLength(box, spy);
+            if (pushLen <= 1.0e-6D)
+                return;
+            nx = 0.0D;
+            ny = -1.0D;
+            nz = 0.0D;
+        } else if (d2 > 1.0e-12D) {
             double d = Math.sqrt(d2);
             pushLen = radius - d;
             double inv = 1.0D / d;
@@ -231,6 +245,19 @@ abstract class RopeSimulationContactConstraints extends RopeSimulationTerrainCon
                     ny = 0.0D;
                     nz *= invH;
                 }
+            }
+
+            // A vertical landing/standing contact near the feet should bend the rope
+            // downward. Do not let a tiny lateral offset on the foot edge shove the rope
+            // sideways out from under the player.
+            if (footSupportContact && ny > -0.35D) {
+                double footPush = footSupportPushLength(box, spy);
+                if (footPush <= 1.0e-6D)
+                    return;
+                pushLen = Math.max(pushLen, footPush);
+                nx = 0.0D;
+                ny = -1.0D;
+                nz = 0.0D;
             }
 
             // Budgeted slip-under / slip-over. Default behaviour stays lateral push so the
@@ -283,40 +310,48 @@ abstract class RopeSimulationContactConstraints extends RopeSimulationTerrainCon
             double pyPos = box.maxY - spy;
             double pzNeg = spz - box.minZ;
             double pzPos = box.maxZ - spz;
-            double bestPen = pxNeg;
-            nx = -1.0D;
-            ny = 0.0D;
-            nz = 0.0D;
-            if (pxPos < bestPen) {
-                bestPen = pxPos;
-                nx = 1.0D;
+            double bestPen;
+            if (footSupportContact) {
+                bestPen = Math.max(0.0D, pyNeg);
+                nx = 0.0D;
+                ny = -1.0D;
+                nz = 0.0D;
+            } else {
+                bestPen = pxNeg;
+                nx = -1.0D;
                 ny = 0.0D;
                 nz = 0.0D;
-            }
-            if (pzNeg < bestPen) {
-                bestPen = pzNeg;
-                nx = 0.0D;
-                ny = 0.0D;
-                nz = -1.0D;
-            }
-            if (pzPos < bestPen) {
-                bestPen = pzPos;
-                nx = 0.0D;
-                ny = 0.0D;
-                nz = 1.0D;
-            }
-            if (verticality <= 0.82D) {
-                if (pyNeg < bestPen) {
-                    bestPen = pyNeg;
-                    nx = 0.0D;
-                    ny = -1.0D;
+                if (pxPos < bestPen) {
+                    bestPen = pxPos;
+                    nx = 1.0D;
+                    ny = 0.0D;
                     nz = 0.0D;
                 }
-                if (pyPos < bestPen) {
-                    bestPen = pyPos;
+                if (pzNeg < bestPen) {
+                    bestPen = pzNeg;
                     nx = 0.0D;
-                    ny = 1.0D;
-                    nz = 0.0D;
+                    ny = 0.0D;
+                    nz = -1.0D;
+                }
+                if (pzPos < bestPen) {
+                    bestPen = pzPos;
+                    nx = 0.0D;
+                    ny = 0.0D;
+                    nz = 1.0D;
+                }
+                if (verticality <= 0.82D) {
+                    if (pyNeg < bestPen) {
+                        bestPen = pyNeg;
+                        nx = 0.0D;
+                        ny = -1.0D;
+                        nz = 0.0D;
+                    }
+                    if (pyPos < bestPen) {
+                        bestPen = pyPos;
+                        nx = 0.0D;
+                        ny = 1.0D;
+                        nz = 0.0D;
+                    }
                 }
             }
             pushLen = bestPen + radius;
@@ -331,20 +366,65 @@ abstract class RopeSimulationContactConstraints extends RopeSimulationTerrainCon
         double denom = wa * oneMinusS * oneMinusS + wb * s * s;
         if (denom < 1.0e-9D)
             return;
+        double horizontalPushScale = entityHorizontalPushScale(entityVelocity, nx, nz);
         double k = pushLen / denom;
         double maxStep = 2.0D * pushLen;
         if (wa > 0.0D) {
             double ka = k * wa * oneMinusS;
             if (ka > maxStep)
                 ka = maxStep;
-            applyTerrainCorrection(a, nx * ka, ny * ka, nz * ka);
+            applyTerrainCorrection(a, nx * ka * horizontalPushScale, ny * ka, nz * ka * horizontalPushScale);
         }
         if (wb > 0.0D) {
             double kb = k * wb * s;
             if (kb > maxStep)
                 kb = maxStep;
-            applyTerrainCorrection(b, nx * kb, ny * kb, nz * kb);
+            applyTerrainCorrection(b, nx * kb * horizontalPushScale, ny * kb, nz * kb * horizontalPushScale);
         }
+    }
+
+    private boolean isFootSupportEntityContact(AABB box, Vec3 entityVelocity,
+            double spx, double spy, double spz, double radius) {
+        double footTop = box.minY + ENTITY_FOOT_SUPPORT_HEIGHT;
+        double footBottom = box.minY - Math.max(ropeRadius + collisionEps, 0.10D);
+        if (spy < footBottom || spy > footTop) {
+            return false;
+        }
+        double margin = Math.max(ENTITY_FOOT_SUPPORT_MARGIN, Math.min(radius, ENTITY_FOOT_SUPPORT_HEIGHT) + 0.02D);
+        if (spx < box.minX - margin || spx > box.maxX + margin
+                || spz < box.minZ - margin || spz > box.maxZ + margin) {
+            return false;
+        }
+        if (entityVelocity == null) {
+            return true;
+        }
+        double horizontalSpeed = Math.hypot(entityVelocity.x, entityVelocity.z);
+        if (horizontalSpeed <= ENTITY_FOOT_SUPPORT_MAX_HORIZONTAL_SPEED) {
+            return true;
+        }
+        return entityVelocity.y < -0.03D && horizontalSpeed <= -entityVelocity.y * 0.35D;
+    }
+
+    private double footSupportPushLength(AABB box, double spy) {
+        double footGap = box.minY - spy;
+        double reach = ENTITY_FOOT_SUPPORT_HEIGHT;
+        return footGap <= 0.0D ? reach : reach - footGap;
+    }
+
+    private double entityHorizontalPushScale(Vec3 entityVelocity, double nx, double nz) {
+        double hLen = Math.sqrt(nx * nx + nz * nz);
+        if (entityVelocity == null || hLen < 1.0e-6D)
+            return 1.0D;
+        double approachSpeed = (entityVelocity.x * nx + entityVelocity.z * nz) / hLen;
+        if (approachSpeed <= 0.02D)
+            return 1.0D;
+        double gain = tuning.entityPushGain();
+        if (gain <= 0.0D)
+            return 1.0D;
+        double extra = approachSpeed * Math.min(gain, 4.0D);
+        if (extra > 1.50D)
+            extra = 1.50D;
+        return 1.0D + extra;
     }
 
     private void solveSegmentPairNoCheck(RopeSimulation other, int i, int j) {

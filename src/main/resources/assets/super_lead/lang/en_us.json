@@ -291,5 +291,20 @@
   "super_lead.tuning.zipline.speedLimit.label": "Zipline Speed Limit",
   "super_lead.tuning.zipline.speedLimit.desc": "Maximum zipline speed in blocks per tick. Use -1 to disable the speed cap.",
   "super_lead.tuning.zipline.redstoneAccelerationMultiplier.label": "Redstone Acceleration Multiplier",
-  "super_lead.tuning.zipline.redstoneAccelerationMultiplier.desc": "Multiplier applied to powered redstone zipline acceleration."
+  "super_lead.tuning.zipline.redstoneAccelerationMultiplier.desc": "Multiplier applied to powered redstone zipline acceleration.",
+  "super_lead.config.value": "Value",
+  "super_lead.tuning.contact.topPadding.label": "Top Padding",
+  "super_lead.tuning.contact.topPadding.desc": "Extra top-surface reach for player-vs-rope contact sampling, making the thin rope easier to stand on.",
+  "super_lead.tuning.contact.topNormalThreshold.label": "Top Normal Threshold",
+  "super_lead.tuning.contact.topNormalThreshold.desc": "Normal-Y threshold used to treat a rope contact as a top/support contact.",
+  "super_lead.tuning.contact.sideAbsorb.label": "Side Absorb",
+  "super_lead.tuning.contact.sideAbsorb.desc": "Fraction of inward horizontal normal speed cancelled by side rope contacts; 1.0 fully cancels each tick so the player cannot creep through.",
+  "super_lead.tuning.contact.sideIntentRelease.label": "Side Intent Release",
+  "super_lead.tuning.contact.sideIntentRelease.desc": "How strongly outward movement input disables side absorption so players can leave the rope volume.",
+  "super_lead.tuning.contact.sideDeadbandRatio.label": "Side Deadband Ratio",
+  "super_lead.tuning.contact.sideDeadbandRatio.desc": "Fraction of contact radius ignored for side absorption to prevent edge-contact mud-trap damping.",
+  "super_lead.tuning.contact.entityPushGain.label": "Entity Push Gain",
+  "super_lead.tuning.contact.entityPushGain.desc": "Extra horizontal rope displacement gained from entity approach speed, making high-impulse impacts bend the rope.",
+  "super_lead.tuning.contact.pushbackEnableDepth.label": "Push-back Enable Depth",
+  "super_lead.tuning.contact.pushbackEnableDepth.desc": "Minimum penetration depth in blocks before rope push-back activates. Set to 0 to always push back."
 }

@@ -4,6 +4,7 @@ import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 
 public final class RopeSimulation extends RopeSimulationStepper {
+    private static final double TOP_SUPPORT_SNAP = 0.025D;
 
     public RopeSimulation(Vec3 a, Vec3 b) {
         this(a, b, 0L, RopeTuning.forMidpoint(a, b));
@@ -39,6 +40,11 @@ public final class RopeSimulation extends RopeSimulationStepper {
     }
 
     public ContactSample findPlayerContact(AABB box, double radius) {
+        return findPlayerContact(box, radius, 0.0D);
+    }
+
+    public ContactSample findPlayerContact(AABB box, double radius, double topPadding) {
+        topPadding = Math.max(0.0D, topPadding);
         double[] sampleX = x;
         double[] sampleY = y;
         double[] sampleZ = z;
@@ -167,7 +173,18 @@ public final class RopeSimulation extends RopeSimulationStepper {
                 rawNy = smoothed[1];
                 rawNz = smoothed[2];
             }
-            if (separation >= radius) {
+            double horizontalDx = cx - qx;
+            double horizontalDz = cz - qz;
+            double horizontalSeparation = Math.sqrt(horizontalDx * horizontalDx + horizontalDz * horizontalDz);
+            double footDeltaY = box.minY - qy;
+                double topVerticalReach = radius + TOP_SUPPORT_SNAP;
+                double topHorizontalReach = radius + Math.min(topPadding * 0.25D, 0.045D);
+            boolean topSupportCandidate = topPadding > 0.0D
+                    && footDeltaY >= -radius
+                    && footDeltaY <= topVerticalReach
+                    && horizontalSeparation <= topHorizontalReach;
+                double effectiveRadius = topSupportCandidate ? Math.max(radius, separation + 1.0e-6D) : radius;
+            if (separation >= effectiveRadius) {
                 walked += segLen;
                 continue;
             }
@@ -184,7 +201,16 @@ public final class RopeSimulation extends RopeSimulationStepper {
             double midspanSlack = freeSlack * Math.sin(Math.PI * clamp(t, 0.0D, 1.0D));
             double slackAllowance = localSlack + midspanSlack;
             double depth = radius - separation;
-            double weight = contactBlendWeight(depth, radius);
+            double weightRadius = radius;
+            if (topSupportCandidate && depth <= 0.0D) {
+                double topDepth = radius + TOP_SUPPORT_SNAP - footDeltaY;
+                if (topDepth <= 0.0D) {
+                    walked += segLen;
+                    continue;
+                }
+                depth = Math.min(topDepth, radius);
+            }
+            double weight = contactBlendWeight(depth, weightRadius);
             if (weightSum > 1.0e-9D && rawNx * sumNx + rawNy * sumNy + rawNz * sumNz < 0.0D) {
                 rawNx = -rawNx;
                 rawNy = -rawNy;

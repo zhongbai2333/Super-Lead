@@ -27,6 +27,7 @@ import com.zhongbai233.super_lead.lead.client.render.RopeContactsClient;
 import com.zhongbai233.super_lead.lead.client.render.RopeDynamicLights;
 import com.zhongbai233.super_lead.lead.client.render.RopeVisibility;
 import com.zhongbai233.super_lead.lead.client.render.ZiplineClientState;
+import com.zhongbai233.super_lead.lead.client.sim.RopeEntityContact;
 import com.zhongbai233.super_lead.lead.client.sim.RopeForceField;
 import com.zhongbai233.super_lead.lead.client.sim.RopeSimulation;
 import com.zhongbai233.super_lead.lead.client.sim.RopeTuning;
@@ -48,6 +49,7 @@ import net.minecraft.client.renderer.culling.Frustum;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.particles.DustParticleOptions;
 import net.minecraft.util.RandomSource;
+import net.minecraft.world.entity.MoverType;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.level.LightLayer;
@@ -92,6 +94,9 @@ public final class SuperLeadClientEvents {
     private static final double NEIGHBOR_GRID_SIZE = 4.0D;
     private static final double NEIGHBOR_BOUNDS_MARGIN = 0.08D;
     private static final double NEIGHBOR_CONTACT_DISTANCE = 0.14D;
+    private static final double LOCAL_ROPE_JUMP_SPEED = 0.42D;
+    private static final double LOCAL_CONTACT_SIDE_HARD_DEPTH_FRACTION = 0.65D;
+    private static final double LOCAL_CONTACT_EXIT_INPUT_DOT = 0.05D;
     private static final int GRID_KEY_BIAS = 1 << 20;
     /**
      * Inflated rope-bound margin used to query nearby entities for the
@@ -899,10 +904,10 @@ public final class SuperLeadClientEvents {
                 if (!forceFields.isEmpty()) {
                     parrotWeightedRopes.add(entry.connection().id());
                 }
-                List<AABB> entityBoxes = collectEntityBoxes(level, entry.sim(), entry.a(), entry.b());
+                List<RopeEntityContact> entityContacts = collectEntityContacts(level, entry.sim(), entry.a(), entry.b());
                 entry.sim().step(level, entry.a(), entry.b(), tick,
-                        neighborsBySim.getOrDefault(entry.sim(), List.of()), forceFields, entityBoxes);
-                maybeReportPlayerContact(minecraft.player, entry.connection(), entry.sim(), entry.a(), entry.b());
+                    neighborsBySim.getOrDefault(entry.sim(), List.of()), forceFields, entityContacts);
+                maybeReportPlayerContact(minecraft.player, entry.connection(), entry.sim(), entry.a(), entry.b(), tick);
             }
         }
         // Update physics-active IDs for the next frame's tickMaintain /
@@ -1329,8 +1334,8 @@ public final class SuperLeadClientEvents {
         sim.clearServerNodes();
     }
 
-    private static void maybeReportPlayerContact(Player player, LeadConnection connection,
-            RopeSimulation sim, Vec3 a, Vec3 b) {
+        private static void maybeReportPlayerContact(Player player, LeadConnection connection,
+            RopeSimulation sim, Vec3 a, Vec3 b, long tick) {
         if (player == null || player.isSpectator())
             return;
         if (ZiplineClientState.isZiplining(player.getId()))
@@ -1347,7 +1352,8 @@ public final class SuperLeadClientEvents {
         double radius = resolveDouble(overrides, ClientTuning.CONTACT_RADIUS);
         if (radius <= 0.0D)
             return;
-        RopeSimulation.ContactSample contact = sim.findPlayerContact(player.getBoundingBox(), radius);
+        double topPadding = resolveDouble(overrides, ClientTuning.CONTACT_TOP_PADDING);
+        RopeSimulation.ContactSample contact = sim.findPlayerContact(player.getBoundingBox(), radius, topPadding);
         if (contact == null || contact.depth() <= 1.0e-4D)
             return;
 
@@ -1369,7 +1375,20 @@ public final class SuperLeadClientEvents {
         tx /= tLen;
         ty /= tLen;
         tz /= tLen;
+        double topThreshold = resolveDouble(overrides, ClientTuning.CONTACT_TOP_NORMAL_THRESHOLD);
+        boolean jumpDown = isJumpKeyDown(player);
+        boolean pushbackEnabled = resolveBool(overrides, ClientTuning.CONTACT_PUSHBACK);
         Vec3 input = playerMoveIntent(player);
+        if (pushbackEnabled && player instanceof LocalPlayer localPlayer) {
+            // Foot proximity selects the vertical support path. Side contacts keep using
+            // the horizontal projected normal.
+            double playerFeetY = localPlayer.getY();
+            double ropeSurfaceY = contact.y() + radius;
+            boolean footSupport = (ny >= topThreshold)
+                    || (ropeSurfaceY >= playerFeetY - 0.025D && contact.y() <= playerFeetY + 0.6D);
+            applyLocalRigidContact(localPlayer, nx, ny, nz, contact.depth(), radius, jumpDown, footSupport,
+                    input.x, input.z);
+        }
 
         net.neoforged.neoforge.client.network.ClientPacketDistributor.sendToServer(
                 new ClientRopeContactReport(
@@ -1386,8 +1405,17 @@ public final class SuperLeadClientEvents {
                         (float) tz,
                         (float) input.x,
                         (float) input.z,
+                        jumpDown,
                         (float) contact.depth(),
                         (float) contact.slack()));
+    }
+
+    private static boolean isJumpKeyDown(Player player) {
+        if (!(player instanceof LocalPlayer)) {
+            return false;
+        }
+        Minecraft minecraft = Minecraft.getInstance();
+        return minecraft.options != null && minecraft.options.keyJump.isDown();
     }
 
     private static Vec3 playerMoveIntent(Player player) {
@@ -1409,6 +1437,45 @@ public final class SuperLeadClientEvents {
         double worldX = inputX * cos - inputZ * sin;
         double worldZ = inputZ * cos + inputX * sin;
         return new Vec3(worldX, 0.0D, worldZ);
+    }
+
+    /**
+     * Client-side mirror of {@code RopeContactTracker.applyRigidContact}. Foot
+     * support is vertical-only; side contacts cancel only inward horizontal normal
+     * velocity so tangential and vertical motion stay intact.
+     */
+        private static void applyLocalRigidContact(LocalPlayer player, double nx, double ny, double nz,
+                double depth, double radius, boolean jumpDown, boolean footSupport, double inputX, double inputZ) {
+        Vec3 v = player.getDeltaMovement();
+        if (footSupport) {
+            player.setOnGround(true);
+            player.resetFallDistance();
+            if (jumpDown && v.y < LOCAL_ROPE_JUMP_SPEED) {
+                player.setDeltaMovement(v.x, LOCAL_ROPE_JUMP_SPEED, v.z);
+                return;
+            }
+            if (v.y < 0.0D) {
+                player.setDeltaMovement(v.x, 0.0D, v.z);
+                return;
+            }
+            return;
+        }
+
+        double horizontalLen = Math.sqrt(nx * nx + nz * nz);
+        if (horizontalLen < 1.0e-5D || !Double.isFinite(horizontalLen))
+            return;
+        double hardDepth = radius * LOCAL_CONTACT_SIDE_HARD_DEPTH_FRACTION;
+        if (depth < hardDepth)
+            return;
+        double hx = nx / horizontalLen;
+        double hz = nz / horizontalLen;
+        double correctionMag = Math.max(0.0D, depth - hardDepth) + 1.0e-3D;
+        player.move(MoverType.SELF, new Vec3(hx * correctionMag, 0.0D, hz * correctionMag));
+        double vn = v.x * hx + v.z * hz;
+        double inputDot = inputX * hx + inputZ * hz;
+        if (vn >= 0.0D || inputDot > LOCAL_CONTACT_EXIT_INPUT_DOT)
+            return;
+        player.setDeltaMovement(v.x - hx * vn, v.y, v.z - hz * vn);
     }
 
     private static boolean resolveBool(Map<String, String> overrides,
@@ -1748,12 +1815,12 @@ public final class SuperLeadClientEvents {
      * those are
      * filtered out so the rope doesn't shove its own anchors.
      */
-    private static List<AABB> collectEntityBoxes(ClientLevel level, RopeSimulation sim, Vec3 a, Vec3 b) {
+    private static List<RopeEntityContact> collectEntityContacts(ClientLevel level, RopeSimulation sim, Vec3 a, Vec3 b) {
         AABB ropeBounds = sim.currentBounds().inflate(ENTITY_QUERY_MARGIN);
         List<Entity> raw = level.getEntities((Entity) null, ropeBounds, e -> !e.isSpectator() && e.isPickable());
         if (raw.isEmpty())
             return List.of();
-        List<AABB> out = new ArrayList<>(raw.size());
+        List<RopeEntityContact> out = new ArrayList<>(raw.size());
         for (Entity entity : raw) {
             if (ZiplineClientState.isZiplining(entity.getId())) {
                 continue;
@@ -1767,7 +1834,7 @@ public final class SuperLeadClientEvents {
             // the pin and thrash the segments next to that endpoint.
             if (containsPoint(box, a) || containsPoint(box, b))
                 continue;
-            out.add(box);
+            out.add(new RopeEntityContact(box, entity.getDeltaMovement(), entity instanceof Player));
         }
         return out;
     }
