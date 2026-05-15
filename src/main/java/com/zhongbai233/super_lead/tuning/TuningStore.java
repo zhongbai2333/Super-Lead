@@ -13,7 +13,6 @@ import org.slf4j.LoggerFactory;
 final class TuningStore {
     private static final Logger LOG = LoggerFactory.getLogger("SuperLeadTuning");
     private static final String FILE_NAME = "super_lead-tuning.properties";
-    private static final String LEGACY_FILE = "super_lead_perf.properties";
 
     private TuningStore() {
     }
@@ -22,12 +21,6 @@ final class TuningStore {
         Path file = path();
         if (file == null)
             return;
-        // Legacy migration: lift old perf properties keys (physics, render3d) into the
-        // new store.
-        Path legacy = file.resolveSibling(LEGACY_FILE);
-        if (Files.exists(legacy) && !Files.exists(file)) {
-            migrateLegacy(legacy);
-        }
         if (!Files.exists(file))
             return;
         Properties p = new Properties();
@@ -68,33 +61,6 @@ final class TuningStore {
         } catch (IOException e) {
             LOG.warn("[{}] failed to write {}: {}", Super_lead.MODID, file, e.toString());
         }
-    }
-
-    private static void migrateLegacy(Path legacy) {
-        Properties p = new Properties();
-        try (var in = Files.newInputStream(legacy)) {
-            p.load(in);
-        } catch (IOException e) {
-            LOG.warn("[{}] failed to read legacy {}: {}", Super_lead.MODID, legacy, e.toString());
-            return;
-        }
-        String physics = p.getProperty("physics");
-        String render3d = p.getProperty("render3d");
-        if (physics != null) {
-            TuningKey<?> tk = ClientTuning.byId("mode.physics");
-            if (tk != null)
-                tk.setLocalFromString(physics);
-        }
-        if (render3d != null) {
-            TuningKey<?> tk = ClientTuning.byId("mode.render3d");
-            if (tk != null)
-                tk.setLocalFromString(render3d);
-        }
-        try {
-            Files.deleteIfExists(legacy);
-        } catch (IOException ignored) {
-        }
-        LOG.info("[{}] migrated legacy {} into {}", Super_lead.MODID, LEGACY_FILE, FILE_NAME);
     }
 
     private static Path path() {

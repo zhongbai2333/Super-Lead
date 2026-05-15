@@ -146,7 +146,6 @@
 `TuningStore` 保存玩家本地视觉/物理调参：
 
 - 文件：`<game directory>/config/super_lead-tuning.properties`
-- 旧文件迁移：`super_lead_perf.properties`
 - 只保存非默认的本地覆盖值。
 
 这个文件是客户端本地配置，不会自动写到服务器预设包。
@@ -162,7 +161,7 @@
 1. `SuperLeadEvents.onPlayerLoggedIn`
    - 只处理 `ServerPlayer`。
    - 调用 `SuperLeadPayloads.sendToPlayer(player)`。
-   - 这里的 `sendToPlayer` 只发送空 `SyncConnections` 来清空客户端旧维度缓存，不发送任何绳索详情。
+   - 这里的 `sendToPlayer` 只发送 `ClearRopeCache` 来清空客户端旧维度缓存，不发送任何绳索详情。
 
 2. `PresetServerEvents.onLogin`
    - 调用 `PresetServerManager.onLogin(player)`。
@@ -206,7 +205,7 @@
 2. `SuperLeadNetwork.unloadChunkConnections(level, payload.chunk())`
 3. 引用计数归零的绳子会从客户端连接缓存移除。
 
-`SyncConnections` / `SyncConnectionChanges` 仍保留为兼容/清空缓存路径；当前正常 chunk 同步使用 `SyncRopeChunk` 和 `UnloadRopeChunk`。
+旧的全维度 `SyncConnections` / `SyncConnectionChanges` 已删除；当前正常 chunk 同步使用 `ClearRopeCache`、`SyncRopeChunk` 和 `UnloadRopeChunk`。
 
 ### 5.3 换维度流程
 
@@ -286,8 +285,7 @@
 
 - `SyncRopeChunk`：同步一个 chunk 当前应让客户端知道的绳索详情。
 - `UnloadRopeChunk`：通知客户端停止引用一个 chunk 的绳索。
-- `SyncConnections`：保留为清空/兼容路径，登录和换维度时发送空表清掉客户端旧缓存。
-- `SyncConnectionChanges`：保留为兼容路径，当前主流程不再依赖它。
+- `ClearRopeCache`：登录和换维度时清掉客户端旧缓存。
 - `SyncDimensionPresets`：同步当前维度启用的预设包内容，不包含物理区域坐标。
 
 `SuperLeadPayloads.sendToDimension(ServerLevel)` 的语义也变了：
@@ -626,7 +624,7 @@ OP 编辑预设后走 `PresetServerManager.editKey`：
 
 网络：
 
-- 请求快照：`ServerConfigRequest`
+- 请求快照：`ServerQuery(SERVER_CONFIG)`
 - 设置值：`ServerConfigSet`
 - 返回快照：`ServerConfigSnapshot`
 
@@ -649,7 +647,7 @@ GUI：
 
 网络：
 
-- `PresetListRequest` / `PresetListResponse`
+- `ServerQuery(PRESET_LIST)` / `PresetListResponse`
 - `PresetDetailsRequest` / `PresetDetailsResponse`
 - `PresetEditKey`
 
@@ -675,7 +673,7 @@ GUI/交互：
 - `ZoneSelectionState`
 - `OpenZoneCreateScreen`
 - `ZoneCreateRequest`
-- `ZoneListRequest`
+- `ServerQuery(ZONE_LIST)`
 - `SyncPhysicsZones`：OP-only 区域预览响应
 
 ### 13.5 调试和压测
@@ -714,7 +712,7 @@ GUI/交互：
 
 OP GUI 不直接读服务器文件，而是：
 
-1. 客户端发 `ServerConfigRequest`。
+1. 客户端发 `ServerQuery(SERVER_CONFIG)`。
 2. 服务端 `ServerConfigManager.sendSnapshot` 返回 `Config.snapshot()`。
 3. 客户端 `ServerConfigClient` 缓存最后一份快照并通知 GUI listener。
 4. 用户修改后发 `ServerConfigSet(key, value)`。
@@ -741,7 +739,7 @@ OP GUI 不直接读服务器文件，而是：
 
 优先看：
 
-- `SuperLeadEvents.onPlayerLoggedIn` 是否发送空 `SyncConnections` 清掉旧缓存。
+- `SuperLeadEvents.onPlayerLoggedIn` 是否发送 `ClearRopeCache` 清掉旧缓存。
 - `ChunkWatchEvent.Sent` 是否触发 `SuperLeadEvents.onChunkSent`。
 - `SuperLeadPayloads.sendChunkToPlayer` 是否发出 `SyncRopeChunk`。
 - 客户端是否进入 `SuperLeadNetwork.replaceChunkConnections`。
@@ -795,10 +793,9 @@ OP GUI 不直接读服务器文件，而是：
 
 1. 改 `LeadConnection` record。
 2. 改 `LeadConnection.CODEC`。
-3. 改 `SyncConnections.writeConnection/readConnection`。
+3. 改 `LeadConnectionPayloadCodec.writeConnection/readConnection`。
 4. 改所有 `with...` 方法，避免修改时丢字段。
-5. `SyncRopeChunk` 复用 `SyncConnections.writeConnection/readConnection`，通常不需要单独改。
-6. 检查 `SyncConnectionChanges` 兼容路径是否还需要保留同字段。
+5. `SyncRopeChunk` 复用 `LeadConnectionPayloadCodec.writeConnection/readConnection`，通常不需要单独改。
 
 新增客户端调参：
 

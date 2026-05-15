@@ -16,7 +16,7 @@ import net.minecraft.world.phys.Vec3;
  * that preset fall back to the player's local/default tuning.
  */
 public record RopeTuning(
-    double slack,
+        double slack,
         double segmentLength,
         int segmentMax,
         double gravity,
@@ -59,7 +59,6 @@ public record RopeTuning(
         double supportDownInvMass,
         double contactPushGain,
         double entityPushGain,
-        double serverBlendAlpha,
         double ropeRopeParallelRelax,
         double contactNodeDamping,
         double initialVelocityKick,
@@ -70,8 +69,7 @@ public record RopeTuning(
         double fullSlackHorizontalRatio,
         double steepAngleDeg,
         int maxTickDelta,
-        double tunnelThresholdSqr,
-        int serverBlendStaleTicks) {
+        double tunnelThresholdSqr) {
 
     public static RopeTuning forMidpoint(Vec3 a, Vec3 b) {
         ClientTuning.loadOnce();
@@ -138,7 +136,6 @@ public record RopeTuning(
                 resolve(overrides, ClientTuning.SUPPORT_DOWN_INV_MASS),
                 resolve(overrides, ClientTuning.CONTACT_PUSH_GAIN),
                 resolve(overrides, ClientTuning.ENTITY_PUSH_GAIN),
-                resolve(overrides, ClientTuning.SERVER_BLEND_ALPHA),
                 resolve(overrides, ClientTuning.ROPE_ROPE_PARALLEL_RELAX),
                 resolve(overrides, ClientTuning.CONTACT_NODE_DAMPING),
                 resolve(overrides, ClientTuning.INITIAL_VELOCITY_KICK),
@@ -149,8 +146,7 @@ public record RopeTuning(
                 resolve(overrides, ClientTuning.FULL_SLACK_HORIZONTAL_RATIO),
                 resolve(overrides, ClientTuning.STEEP_ANGLE_DEG),
                 resolve(overrides, ClientTuning.MAX_TICK_DELTA),
-                resolve(overrides, ClientTuning.TUNNEL_THRESHOLD_SQR),
-                resolve(overrides, ClientTuning.SERVER_BLEND_STALE_TICKS));
+                resolve(overrides, ClientTuning.TUNNEL_THRESHOLD_SQR));
     }
 
     public int baseColor(LeadKind kind) {

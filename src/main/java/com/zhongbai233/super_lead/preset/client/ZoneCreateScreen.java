@@ -1,6 +1,6 @@
 package com.zhongbai233.super_lead.preset.client;
 
-import com.zhongbai233.super_lead.preset.PresetListRequest;
+import com.zhongbai233.super_lead.preset.ServerQuery;
 import com.zhongbai233.super_lead.preset.RopePresetLibrary;
 import com.zhongbai233.super_lead.preset.ZoneCreateRequest;
 import java.util.ArrayList;
@@ -111,7 +111,7 @@ public final class ZoneCreateScreen extends Screen {
         if (now - lastPresetRequestMs < 500L)
             return;
         lastPresetRequestMs = now;
-        ClientPacketDistributor.sendToServer(PresetListRequest.INSTANCE);
+        ClientPacketDistributor.sendToServer(ServerQuery.presetList());
     }
 
     private void rebuildDropdownOptions(int x, int y, int w) {

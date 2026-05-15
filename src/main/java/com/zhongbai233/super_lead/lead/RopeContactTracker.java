@@ -30,9 +30,12 @@ public final class RopeContactTracker {
     private static final double CLIENT_REPORT_BASE_TOLERANCE = 0.85D;
     private static final double CLIENT_REPORT_MIN_DEFLECTION_ALLOWANCE = 1.75D;
     private static final double CLIENT_REPORT_MAX_DEFLECTION_ALLOWANCE = 4.0D;
+    private static final long CLIENT_CONTACT_MIN_INTERVAL_TICKS = 1L;
     private static final double CLIENT_REPORT_DEFLECTION_FRACTION = 0.35D;
     private static final double CLIENT_REPORT_MAX_DEPTH = 0.75D;
-    // Rigid-rope inelastic contact: vanilla jump speed for kicking off a rope perch.
+    private static final Map<NetworkKey, Map<ContactKey, Long>> CLIENT_CONTACT_LAST_ACCEPTED = new HashMap<>();
+    // Rigid-rope inelastic contact: vanilla jump speed for kicking off a rope
+    // perch.
     private static final double CONTACT_TOP_JUMP_SPEED = 0.42D;
     private static final double CONTACT_SIDE_HARD_DEPTH_FRACTION = 0.65D;
     private static final double CONTACT_EXIT_INPUT_DOT = 0.05D;
@@ -85,6 +88,17 @@ public final class RopeContactTracker {
             return;
         if (report.t() < -0.05F || report.t() > 1.05F)
             return;
+
+        long now = level.getGameTime();
+        NetworkKey dim = NetworkKey.of(level);
+        ContactKey key = new ContactKey(report.ropeId(), player.getUUID());
+        Map<ContactKey, Long> lastAccepted = CLIENT_CONTACT_LAST_ACCEPTED.computeIfAbsent(dim,
+                ignored -> new HashMap<>());
+        Long lastTick = lastAccepted.get(key);
+        if (lastTick != null && now - lastTick < CLIENT_CONTACT_MIN_INTERVAL_TICKS) {
+            return;
+        }
+        lastAccepted.put(key, now);
 
         java.util.Optional<LeadConnection> opt = SuperLeadNetwork.findConnectionById(level, report.ropeId());
         if (opt.isEmpty())
@@ -158,9 +172,6 @@ public final class RopeContactTracker {
         if (!tuning.pushbackEnabled())
             return;
 
-        long now = level.getGameTime();
-        NetworkKey dim = NetworkKey.of(level);
-        ContactKey key = new ContactKey(connection.id(), player.getUUID());
         Map<ContactKey, AcceptedClientContact> dimContacts = CLIENT_CONTACTS.computeIfAbsent(dim,
                 ignored -> new HashMap<>());
         AcceptedClientContact previous = dimContacts.get(key);
@@ -199,6 +210,13 @@ public final class RopeContactTracker {
         long now = level.getGameTime();
         NetworkKey dim = NetworkKey.of(level);
         Map<ContactKey, AcceptedClientContact> contacts = CLIENT_CONTACTS.get(dim);
+        Map<ContactKey, Long> lastAccepted = CLIENT_CONTACT_LAST_ACCEPTED.get(dim);
+        if (lastAccepted != null) {
+            lastAccepted.entrySet().removeIf(e -> now - e.getValue() > CLIENT_CONTACT_TTL_TICKS);
+            if (lastAccepted.isEmpty()) {
+                CLIENT_CONTACT_LAST_ACCEPTED.remove(dim);
+            }
+        }
         List<RopeContactPulse.Entry> pulse = new ArrayList<>();
         if (contacts != null) {
             contacts.entrySet().removeIf(e -> now - e.getValue().tick() > CLIENT_CONTACT_TTL_TICKS);
@@ -291,8 +309,6 @@ public final class RopeContactTracker {
         player.connection.send(new ClientboundSetEntityMotionPacket(player));
         return new AppliedPush((float) px, (float) pz, (float) impulseMag, (float) depthRatio);
     }
-
-
 
     private static ContactEstimate fallbackContact(Vec3 a, Vec3 b, AABB playerBox,
             double radius, ServerPhysicsTuning tuning, double minDepth) {
@@ -431,10 +447,12 @@ public final class RopeContactTracker {
         NetworkKey key = NetworkKey.of(level);
         LAST_SENT_COUNT.remove(key);
         CLIENT_CONTACTS.remove(key);
+        CLIENT_CONTACT_LAST_ACCEPTED.remove(key);
     }
 
     public static void clearAllSims() {
         CLIENT_CONTACTS.clear();
+        CLIENT_CONTACT_LAST_ACCEPTED.clear();
         LAST_SENT_COUNT.clear();
         lastContacts = 0;
     }

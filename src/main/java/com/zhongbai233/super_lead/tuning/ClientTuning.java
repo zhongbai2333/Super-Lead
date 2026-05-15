@@ -248,9 +248,6 @@ public final class ClientTuning {
     public static final TuningKey<Double> ENTITY_PUSH_GAIN = registerD(
             "contact.entityPushGain", "physics.solverExt", 0.80D, 0.0D, 4.0D,
             "Extra horizontal rope displacement gained from entity approach speed, making high-impulse impacts bend the rope.");
-    public static final TuningKey<Double> SERVER_BLEND_ALPHA = registerD(
-            "serverBlendAlpha", "physics.solverExt", 0.20D, 0.0D, 1.0D,
-            "Blend factor for server-authoritative node positions. 0 = ignore server.");
     public static final TuningKey<Double> ROPE_ROPE_PARALLEL_RELAX = registerD(
             "ropeRopeParallelRelax", "physics.solverExt", 0.60D, 0.10D, 1.0D,
             "Under-relaxation for rope-rope corrections in parallel solve.");
@@ -296,9 +293,6 @@ public final class ClientTuning {
     public static final TuningKey<Double> TUNNEL_THRESHOLD_SQR = registerD(
             "tunnelThresholdSqr", "physics.step", 0.25D, 0.01D, 2.0D,
             "Squared movement threshold for sweep-and-prune tunnel detection.");
-    public static final TuningKey<Integer> SERVER_BLEND_STALE_TICKS = registerI(
-            "serverBlendStaleTicks", "physics.step", 6, 1, 40,
-            "Ticks after which server-broadcast node positions are considered stale.");
 
     private ClientTuning() {
     }
@@ -336,41 +330,41 @@ public final class ClientTuning {
     }
 
     public static TuningKey<?> byId(String id) {
-                if (LEGACY_SLACK_LOOSE_ID.equals(id) || LEGACY_SLACK_TIGHT_ID.equals(id)) {
-                        return SLACK;
-                }
+        if (LEGACY_SLACK_LOOSE_ID.equals(id) || LEGACY_SLACK_TIGHT_ID.equals(id)) {
+            return SLACK;
+        }
         return KEYS.get(id);
     }
 
-        public static <T> String overrideValue(Map<String, String> overrides, TuningKey<T> key) {
-                if (overrides == null || overrides.isEmpty()) {
-                        return null;
-                }
-                String raw = overrides.get(key.id);
-                if (raw != null || key != SLACK) {
-                        return raw;
-                }
-                raw = overrides.get(LEGACY_SLACK_TIGHT_ID);
-                return raw != null ? raw : overrides.get(LEGACY_SLACK_LOOSE_ID);
+    public static <T> String overrideValue(Map<String, String> overrides, TuningKey<T> key) {
+        if (overrides == null || overrides.isEmpty()) {
+            return null;
         }
+        String raw = overrides.get(key.id);
+        if (raw != null || key != SLACK) {
+            return raw;
+        }
+        raw = overrides.get(LEGACY_SLACK_TIGHT_ID);
+        return raw != null ? raw : overrides.get(LEGACY_SLACK_LOOSE_ID);
+    }
 
-        public static Map<String, String> normalizeOverrides(Map<String, String> overrides) {
-                if (overrides == null || overrides.isEmpty()) {
-                        return Map.of();
-                }
-                LinkedHashMap<String, String> normalized = new LinkedHashMap<>(overrides);
-                String slack = overrideValue(normalized, SLACK);
-                normalized.remove(LEGACY_SLACK_LOOSE_ID);
-                normalized.remove(LEGACY_SLACK_TIGHT_ID);
-                if (slack != null) {
-                        normalized.put(SLACK.id, slack);
-                }
-                return Map.copyOf(normalized);
+    public static Map<String, String> normalizeOverrides(Map<String, String> overrides) {
+        if (overrides == null || overrides.isEmpty()) {
+            return Map.of();
         }
+        LinkedHashMap<String, String> normalized = new LinkedHashMap<>(overrides);
+        String slack = overrideValue(normalized, SLACK);
+        normalized.remove(LEGACY_SLACK_LOOSE_ID);
+        normalized.remove(LEGACY_SLACK_TIGHT_ID);
+        if (slack != null) {
+            normalized.put(SLACK.id, slack);
+        }
+        return Map.copyOf(normalized);
+    }
 
-        public static boolean isUncheckedFiniteDoubleKey(TuningKey<?> key) {
-                return key == SLACK;
-        }
+    public static boolean isUncheckedFiniteDoubleKey(TuningKey<?> key) {
+        return key == SLACK;
+    }
 
     public static Collection<TuningKey<?>> allKeys() {
         return KEYS.values();

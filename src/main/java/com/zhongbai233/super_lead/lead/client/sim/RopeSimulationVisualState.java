@@ -118,7 +118,7 @@ abstract class RopeSimulationVisualState extends RopeSimulationRenderCache {
     // ============================================================================================
     /** Set or refresh the contact for this rope. Pass {@code t < 0} to clear. */
     public void setExternalContact(long currentTick, float t, double dx, double dy, double dz) {
-        if (t < 0.0F) {
+        if (t < 0.0F || !visualPushEnabled() || contactPushGain <= 0.0D) {
             contactT = -1.0F;
             return;
         }
@@ -138,95 +138,8 @@ abstract class RopeSimulationVisualState extends RopeSimulationRenderCache {
      * packets).
      */
     public boolean hasExternalContact(long currentTick) {
-        return contactT >= 0.0F && (currentTick - contactRefreshTick) <= 5L;
-    }
-
-    // ============================================================================================
-    // Server Verlet snapshot (coarse-to-fine sync)
-    // ============================================================================================
-    /**
-     * Push the latest server-side Verlet shape for this rope. {@code interior} is
-     * the
-     * interleaved xyz triples of the server's interior nodes (length must be
-     * {@code (segments-1)*3}). Pass {@code segments <= 0} or null array to disable.
-     */
-    public void setServerNodes(long currentTick, int segments, float[] interior) {
-        if (segments <= 0 || interior == null || interior.length != Math.max(0, segments - 1) * 3) {
-            serverNodesSegments = 0;
-            serverInterior = null;
-            serverNodesRefreshTick = Long.MIN_VALUE;
-            return;
-        }
-        serverNodesSegments = segments;
-        serverInterior = java.util.Arrays.copyOf(interior, interior.length);
-        serverNodesRefreshTick = currentTick;
-    }
-
-    public void clearServerNodes() {
-        serverNodesSegments = 0;
-        serverInterior = null;
-        serverNodesRefreshTick = Long.MIN_VALUE;
-    }
-
-    protected boolean hasFreshServerNodes(long currentTick) {
-        return serverNodesSegments > 0
-                && serverInterior != null
-                && (currentTick - serverNodesRefreshTick) <= serverBlendStaleTicks;
-    }
-
-    /**
-     * Soft pull of every interior node toward its corresponding point on the server
-     * polyline.
-     * Called once per game tick; XPBD constraints subsequently smooth and
-     * re-tighten the chain.
-     */
-    protected void applyServerNodeBlend(Vec3 a, Vec3 b, long currentTick) {
-        if (!hasFreshServerNodes(currentTick))
-            return;
-        int sSeg = serverNodesSegments;
-        // Walk client interior nodes 1..nodes-2.
-        for (int j = 1; j < nodes - 1; j++) {
-            if (pinned[j])
-                continue;
-            double tj = j / (double) segments;
-            // Locate the server segment containing tj.
-            double sPos = tj * sSeg;
-            int sIdx = (int) Math.floor(sPos);
-            if (sIdx < 0)
-                sIdx = 0;
-            if (sIdx > sSeg - 1)
-                sIdx = sSeg - 1;
-            double frac = sPos - sIdx;
-            // Server polyline points: P0 = a, P1..P_{sSeg-1} = interior, P_{sSeg} = b.
-            double p0x, p0y, p0z, p1x, p1y, p1z;
-            if (sIdx == 0) {
-                p0x = a.x;
-                p0y = a.y;
-                p0z = a.z;
-            } else {
-                int o = (sIdx - 1) * 3;
-                p0x = serverInterior[o];
-                p0y = serverInterior[o + 1];
-                p0z = serverInterior[o + 2];
-            }
-            int next = sIdx + 1;
-            if (next >= sSeg) {
-                p1x = b.x;
-                p1y = b.y;
-                p1z = b.z;
-            } else {
-                int o = (next - 1) * 3;
-                p1x = serverInterior[o];
-                p1y = serverInterior[o + 1];
-                p1z = serverInterior[o + 2];
-            }
-            double tx = p0x + (p1x - p0x) * frac;
-            double ty = p0y + (p1y - p0y) * frac;
-            double tz = p0z + (p1z - p0z) * frac;
-            x[j] += (tx - x[j]) * serverBlendAlpha;
-            y[j] += (ty - y[j]) * serverBlendAlpha;
-            z[j] += (tz - z[j]) * serverBlendAlpha;
-        }
+        return visualPushEnabled() && contactPushGain > 0.0D
+                && contactT >= 0.0F && (currentTick - contactRefreshTick) <= 5L;
     }
 
     /**

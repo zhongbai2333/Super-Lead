@@ -51,7 +51,10 @@ import net.neoforged.neoforge.transfer.transaction.Transaction;
 public final class SuperLeadNetwork {
     public static final double MAX_LEASH_DISTANCE = 12.0D;
     private static final double SERVER_CONFIRMED_PICK_RADIUS = 0.95D;
-    /** Wider envelope for attachment removal so multi-rope stacks don't foil the server check. */
+    /**
+     * Wider envelope for attachment removal so multi-rope stacks don't foil the
+     * server check.
+     */
     private static final double SERVER_CONFIRMED_ATTACH_REMOVAL_RADIUS = 2.50D;
     private static final double SERVER_CONFIRMED_PICK_REACH = MAX_LEASH_DISTANCE + 1.5D;
     private static final int SERVER_CONFIRMED_CURVE_SAMPLES = 12;
@@ -80,6 +83,7 @@ public final class SuperLeadNetwork {
     private static final Map<BlockPos, Integer> ITEM_RR_CURSOR = new HashMap<>();
     private static final Map<BlockPos, Integer> FLUID_RR_CURSOR = new HashMap<>();
     private static final Map<BlockPos, Integer> PRESSURIZED_RR_CURSOR = new HashMap<>();
+    private static final int MAX_TRANSFER_SEARCH_DEPTH = 64;
     private static final int ITEM_PULSE_DURATION_TICKS = 10;
     private static final long STUCK_CHECK_INTERVAL_TICKS = 5L;
     private static final long STUCK_BREAK_TICKS = 100L;
@@ -190,6 +194,19 @@ public final class SuperLeadNetwork {
             return SuperLeadSavedData.get(serverLevel).connections();
         }
         return CONNECTIONS.getOrDefault(NetworkKey.of(level), List.of());
+    }
+
+    private static List<LeadConnection> connectionsOfKind(Level level, LeadKind kind) {
+        if (!level.isClientSide() && level instanceof ServerLevel serverLevel) {
+            return SuperLeadSavedData.get(serverLevel).connectionsOfKind(kind);
+        }
+        ArrayList<LeadConnection> out = new ArrayList<>();
+        for (LeadConnection connection : connections(level)) {
+            if (connection.kind() == kind) {
+                out.add(connection);
+            }
+        }
+        return out;
     }
 
     public static void replaceConnections(Level level, List<LeadConnection> connections) {
@@ -347,7 +364,7 @@ public final class SuperLeadNetwork {
         LeadEndpointLayout.Endpoints endpoints = endpoints(level, connection);
         return level.getBlockState(connection.from().pos()).isAir()
                 || level.getBlockState(connection.to().pos()).isAir()
-            || endpoints.from().distanceTo(endpoints.to()) > MAX_LEASH_DISTANCE;
+                || endpoints.from().distanceTo(endpoints.to()) > MAX_LEASH_DISTANCE;
     }
 
     public static void tickStuckBreaks(ServerLevel level) {
@@ -530,9 +547,7 @@ public final class SuperLeadNetwork {
         }
         SuperLeadSavedData data = SuperLeadSavedData.get(serverLevel);
         boolean any = false;
-        for (LeadConnection connection : new ArrayList<>(data.connections())) {
-            if (connection.kind() != kind)
-                continue;
+        for (LeadConnection connection : new ArrayList<>(data.connectionsOfKind(kind))) {
             int newExtract;
             if (connection.from().pos().equals(pos)) {
                 newExtract = connection.extractAnchor() == 1 ? 0 : 1;
@@ -563,9 +578,8 @@ public final class SuperLeadNetwork {
     }
 
     private static boolean hasKindConnectionAt(Level level, BlockPos pos, LeadKind kind) {
-        for (LeadConnection connection : connections(level)) {
-            if (connection.kind() == kind
-                    && (connection.from().pos().equals(pos) || connection.to().pos().equals(pos))) {
+        for (LeadConnection connection : connectionsOfKind(level, kind)) {
+            if (connection.from().pos().equals(pos) || connection.to().pos().equals(pos)) {
                 return true;
             }
         }
@@ -600,10 +614,15 @@ public final class SuperLeadNetwork {
 
     /** Find a known connection by id in the given level (server or client). */
     public static Optional<LeadConnection> findConnectionById(Level level, UUID id) {
-        for (LeadConnection connection : connections(level)) {
-            if (connection.id().equals(id)) {
-                return Optional.of(connection);
-            }
+        if (id == null) {
+            return Optional.empty();
+        }
+        if (!level.isClientSide() && level instanceof ServerLevel serverLevel) {
+            return SuperLeadSavedData.get(serverLevel).find(id);
+        }
+        Map<UUID, LeadConnection> byId = CLIENT_CONNECTIONS_BY_ID.get(NetworkKey.of(level));
+        if (byId != null) {
+            return Optional.ofNullable(byId.get(id));
         }
         return Optional.empty();
     }
@@ -636,9 +655,9 @@ public final class SuperLeadNetwork {
 
         Vec3 origin = player.getEyePosition(1.0F);
         Vec3 direction = player.getViewVector(1.0F).normalize();
-    LeadEndpointLayout.Endpoints endpoints = endpoints(level, connection);
-    Vec3 a = endpoints.from();
-    Vec3 b = endpoints.to();
+        LeadEndpointLayout.Endpoints endpoints = endpoints(level, connection);
+        Vec3 a = endpoints.from();
+        Vec3 b = endpoints.to();
         double reach = clippedAimReach(level, player, origin, direction,
                 SERVER_CONFIRMED_PICK_REACH, SERVER_CLAIM_BLOCK_SLACK);
 
@@ -710,8 +729,8 @@ public final class SuperLeadNetwork {
         Vec3 a = endpoints.from();
         Vec3 b = endpoints.to();
         double reach = clippedAimReach(level, player, origin, direction,
-                SERVER_CONFIRMED_PICK_REACH, SERVER_CONFIRMED_PICK_RADIUS);
-        return connectionEnvelope(a, b, SERVER_CONFIRMED_PICK_RADIUS)
+                SERVER_CONFIRMED_PICK_REACH, SERVER_CLAIM_BLOCK_SLACK);
+        return connectionEnvelope(a, b, SERVER_CLAIM_ROPE_RADIUS)
                 .clip(origin, origin.add(direction.scale(reach)))
                 .isPresent();
     }
@@ -739,8 +758,8 @@ public final class SuperLeadNetwork {
         }
         if (!connection.physicsPreset().isBlank()) {
             double[] closest = new double[4];
-            if (ServerRopeCurve.distancePointToCurveSqr(ServerRopeCurve.from(level, connection, a, b), hit, closest)
-                    <= radiusSqr) {
+            if (ServerRopeCurve.distancePointToCurveSqr(ServerRopeCurve.from(level, connection, a, b), hit,
+                    closest) <= radiusSqr) {
                 return true;
             }
         }
@@ -1259,12 +1278,7 @@ public final class SuperLeadNetwork {
 
     public static void tickRedstone(ServerLevel level) {
         SuperLeadSavedData data = SuperLeadSavedData.get(level);
-        List<LeadConnection> redstoneConnections = new ArrayList<>();
-        for (LeadConnection connection : data.connections()) {
-            if (connection.kind() == LeadKind.REDSTONE) {
-                redstoneConnections.add(connection);
-            }
-        }
+        List<LeadConnection> redstoneConnections = data.connectionsOfKind(LeadKind.REDSTONE);
         if (redstoneConnections.isEmpty()) {
             return;
         }
@@ -1272,6 +1286,7 @@ public final class SuperLeadNetwork {
         boolean changed = false;
         boolean[] visited = new boolean[redstoneConnections.size()];
         Map<LeadAnchor, List<Integer>> connectionsByAnchor = indexConnectionsByAnchor(redstoneConnections);
+        RedstoneTraversalCache redstoneCache = new RedstoneTraversalCache(level);
         for (int i = 0; i < redstoneConnections.size(); i++) {
             if (visited[i]) {
                 continue;
@@ -1284,11 +1299,11 @@ public final class SuperLeadNetwork {
 
             for (int cursor = 0; cursor < component.size(); cursor++) {
                 LeadConnection current = redstoneConnections.get(component.get(cursor));
-                power = Math.max(power, externalSignalAt(level, current.from()));
-                power = Math.max(power, externalSignalAt(level, current.to()));
+                power = Math.max(power, redstoneCache.externalSignalAt(current.from()));
+                power = Math.max(power, redstoneCache.externalSignalAt(current.to()));
 
-                addUnvisitedNeighborsBridge(level, current.from(), connectionsByAnchor, visited, component);
-                addUnvisitedNeighborsBridge(level, current.to(), connectionsByAnchor, visited, component);
+                addUnvisitedNeighborsBridge(redstoneCache, current.from(), connectionsByAnchor, visited, component);
+                addUnvisitedNeighborsBridge(redstoneCache, current.to(), connectionsByAnchor, visited, component);
             }
 
             final int componentPower = power;
@@ -1310,20 +1325,18 @@ public final class SuperLeadNetwork {
     }
 
     public static void tickEnergy(ServerLevel level) {
-        List<LeadConnection> energyConnections = new ArrayList<>();
-        for (LeadConnection connection : SuperLeadSavedData.get(level).connections()) {
-            if (connection.kind() == LeadKind.ENERGY) {
-                energyConnections.add(connection);
-            }
-        }
+        SuperLeadSavedData data = SuperLeadSavedData.get(level);
+        List<LeadConnection> energyConnections = data.connectionsOfKind(LeadKind.ENERGY);
         if (energyConnections.isEmpty()) {
             return;
         }
 
         long now = level.getGameTime();
+        EnergyHandlerCache energyHandlers = new EnergyHandlerCache();
         Set<UUID> transferredIds = new HashSet<>();
         boolean[] visited = new boolean[energyConnections.size()];
         Map<LeadAnchor, List<Integer>> connectionsByAnchor = indexConnectionsByAnchor(energyConnections);
+        RedstoneTraversalCache bridgeCache = new RedstoneTraversalCache(level);
         for (int i = 0; i < energyConnections.size(); i++) {
             if (visited[i]) {
                 continue;
@@ -1335,11 +1348,11 @@ public final class SuperLeadNetwork {
 
             for (int cursor = 0; cursor < component.size(); cursor++) {
                 LeadConnection current = energyConnections.get(component.get(cursor));
-                addUnvisitedNeighborsBridge(level, current.from(), connectionsByAnchor, visited, component);
-                addUnvisitedNeighborsBridge(level, current.to(), connectionsByAnchor, visited, component);
+                addUnvisitedNeighborsBridge(bridgeCache, current.from(), connectionsByAnchor, visited, component);
+                addUnvisitedNeighborsBridge(bridgeCache, current.to(), connectionsByAnchor, visited, component);
             }
 
-            transferEnergyComponent(level, component, energyConnections, transferredIds);
+            transferEnergyComponent(level, component, energyConnections, transferredIds, energyHandlers);
         }
 
         // Refresh sticky deadlines for connections that actually moved energy this
@@ -1348,7 +1361,6 @@ public final class SuperLeadNetwork {
             ENERGY_ACTIVE_UNTIL.put(id, now + ENERGY_STICKY_TICKS);
         }
 
-        SuperLeadSavedData data = SuperLeadSavedData.get(level);
         boolean changed = false;
         Set<UUID> currentIds = new HashSet<>();
         for (LeadConnection connection : energyConnections) {
@@ -1367,7 +1379,7 @@ public final class SuperLeadNetwork {
     }
 
     private static void transferEnergyComponent(ServerLevel level, List<Integer> component,
-            List<LeadConnection> energyConnections, Set<UUID> transferredIds) {
+            List<LeadConnection> energyConnections, Set<UUID> transferredIds, EnergyHandlerCache energyHandlers) {
         List<EnergyEndpoint> endpoints = new ArrayList<>();
         Set<LeadAnchor> seenAnchors = new HashSet<>();
         int componentRate = 0;
@@ -1377,8 +1389,8 @@ public final class SuperLeadNetwork {
             int tier = Math.min(30, connection.tier());
             long rate = base << tier;
             componentRate = (int) Math.min(Integer.MAX_VALUE, (long) componentRate + rate);
-            addEnergyEndpoint(level, connection.from(), endpoints, seenAnchors);
-            addEnergyEndpoint(level, connection.to(), endpoints, seenAnchors);
+            addEnergyEndpoint(level, connection.from(), endpoints, seenAnchors, energyHandlers);
+            addEnergyEndpoint(level, connection.to(), endpoints, seenAnchors, energyHandlers);
         }
 
         boolean componentMoved = false;
@@ -1409,15 +1421,12 @@ public final class SuperLeadNetwork {
     }
 
     private static void addEnergyEndpoint(ServerLevel level, LeadAnchor anchor, List<EnergyEndpoint> endpoints,
-            Set<LeadAnchor> seenAnchors) {
+            Set<LeadAnchor> seenAnchors, EnergyHandlerCache energyHandlers) {
         if (!seenAnchors.add(anchor)) {
             return;
         }
 
-        EnergyHandler handler = level.getCapability(Capabilities.Energy.BLOCK, anchor.pos(), anchor.face());
-        if (handler == null) {
-            handler = level.getCapability(Capabilities.Energy.BLOCK, anchor.pos(), null);
-        }
+        EnergyHandler handler = energyHandlers.get(level, anchor);
         if (handler != null && handler.getCapacityAsLong() > 0L) {
             endpoints.add(new EnergyEndpoint(anchor, handler));
         }
@@ -1488,16 +1497,12 @@ public final class SuperLeadNetwork {
             return;
         }
 
-        List<LeadConnection> thermalConnections = new ArrayList<>();
-        for (LeadConnection connection : SuperLeadSavedData.get(level).connections()) {
-            if (connection.kind() == LeadKind.THERMAL) {
-                thermalConnections.add(connection);
-            }
-        }
+        List<LeadConnection> thermalConnections = SuperLeadSavedData.get(level).connectionsOfKind(LeadKind.THERMAL);
         if (thermalConnections.isEmpty()) {
             return;
         }
 
+        MekanismHeatBridge.HandlerCache heatHandlers = new MekanismHeatBridge.HandlerCache();
         boolean[] visited = new boolean[thermalConnections.size()];
         Map<BlockPos, List<Integer>> connectionsByPos = indexConnectionsByBlockPos(thermalConnections);
         for (int i = 0; i < thermalConnections.size(); i++) {
@@ -1515,7 +1520,7 @@ public final class SuperLeadNetwork {
                 addUnvisitedNeighborsByPos(current.to().pos(), connectionsByPos, visited, component);
             }
 
-            balanceThermalComponent(level, component, thermalConnections);
+            balanceThermalComponent(level, component, thermalConnections, heatHandlers);
         }
     }
 
@@ -1523,25 +1528,22 @@ public final class SuperLeadNetwork {
         if (!isAe2Loaded()) {
             return;
         }
-        List<LeadConnection> aeConnections = new ArrayList<>();
-        for (LeadConnection connection : SuperLeadSavedData.get(level).connections()) {
-            if (connection.kind() == LeadKind.AE_NETWORK) {
-                aeConnections.add(connection);
-            }
-        }
+        List<LeadConnection> aeConnections = SuperLeadSavedData.get(level).connectionsOfKind(LeadKind.AE_NETWORK);
         AE2NetworkBridge.reconcile(level, aeConnections);
     }
 
     private static void tickPressurizedTransfer(ServerLevel level) {
         SuperLeadSavedData data = SuperLeadSavedData.get(level);
 
+        List<LeadConnection> pressurizedConnections = data.connectionsOfKind(LeadKind.PRESSURIZED);
+        if (pressurizedConnections.isEmpty()) {
+            return;
+        }
+
+        MekanismChemicalBridge.HandlerCache chemicalHandlers = new MekanismChemicalBridge.HandlerCache();
         Map<BlockPos, List<LeadConnection>> ropesAt = new HashMap<>();
         Map<BlockPos, List<LeadConnection>> startsBySource = new HashMap<>();
-        for (LeadConnection c : data.connections()) {
-            if (c.kind() != LeadKind.PRESSURIZED) {
-                continue;
-            }
-
+        for (LeadConnection c : pressurizedConnections) {
             BlockPos a = c.from().pos().immutable();
             BlockPos b = c.to().pos().immutable();
             ropesAt.computeIfAbsent(a, k -> new ArrayList<>()).add(c);
@@ -1571,7 +1573,7 @@ public final class SuperLeadNetwork {
                 LeadAnchor sourceAnchor = rope.extractSource();
                 LeadAnchor firstFar = rope.extractTarget();
                 if (sourceAnchor == null || firstFar == null
-                        || !MekanismChemicalBridge.hasHandler(level, sourceAnchor)) {
+                        || !chemicalHandlers.has(level, sourceAnchor)) {
                     continue;
                 }
 
@@ -1583,7 +1585,7 @@ public final class SuperLeadNetwork {
                 path.add(new PathStep(rope, rope.extractAnchor() == 2));
 
                 if (walkAndTransferPressurized(level, sourceAnchor, batch, firstFar, ropesAt,
-                        PRESSURIZED_RR_CURSOR, visited, path, rrChoices)) {
+                        PRESSURIZED_RR_CURSOR, chemicalHandlers, visited, path, rrChoices, 1)) {
                     long now = level.getGameTime();
                     for (int i = 0; i < path.size(); i++) {
                         PathStep s = path.get(i);
@@ -1608,7 +1610,7 @@ public final class SuperLeadNetwork {
     }
 
     private static void balanceThermalComponent(ServerLevel level, List<Integer> component,
-            List<LeadConnection> thermalConnections) {
+            List<LeadConnection> thermalConnections, MekanismHeatBridge.HandlerCache heatHandlers) {
         List<LeadAnchor> endpoints = new ArrayList<>();
         Set<LeadAnchor> seenAnchors = new HashSet<>();
         double componentRate = 0.0D;
@@ -1616,8 +1618,8 @@ public final class SuperLeadNetwork {
             LeadConnection connection = thermalConnections.get(index);
             componentRate = Math.min(1.0e12D,
                     componentRate + Config.thermalBaseTransfer() * connection.speedMultiplier());
-            addThermalEndpoint(level, connection.from(), endpoints, seenAnchors);
-            addThermalEndpoint(level, connection.to(), endpoints, seenAnchors);
+            addThermalEndpoint(level, connection.from(), endpoints, seenAnchors, heatHandlers);
+            addThermalEndpoint(level, connection.to(), endpoints, seenAnchors, heatHandlers);
         }
         if (endpoints.size() < 2 || componentRate <= 0.0D) {
             return;
@@ -1625,14 +1627,14 @@ public final class SuperLeadNetwork {
 
         for (int i = 0; i < endpoints.size(); i++) {
             for (int j = i + 1; j < endpoints.size(); j++) {
-                MekanismHeatBridge.balance(level, endpoints.get(i), endpoints.get(j), componentRate);
+                heatHandlers.balance(level, endpoints.get(i), endpoints.get(j), componentRate);
             }
         }
     }
 
     private static void addThermalEndpoint(ServerLevel level, LeadAnchor anchor, List<LeadAnchor> endpoints,
-            Set<LeadAnchor> seenAnchors) {
-        if (seenAnchors.add(anchor) && MekanismHeatBridge.hasHandler(level, anchor)) {
+            Set<LeadAnchor> seenAnchors, MekanismHeatBridge.HandlerCache heatHandlers) {
+        if (seenAnchors.add(anchor) && heatHandlers.has(level, anchor)) {
             endpoints.add(anchor);
         }
     }
@@ -1652,17 +1654,18 @@ public final class SuperLeadNetwork {
             Map<BlockPos, Integer> rrCursor,
             java.util.function.ToIntFunction<LeadConnection> batchOf) {
         SuperLeadSavedData data = SuperLeadSavedData.get(level);
+        List<LeadConnection> transferConnections = data.connectionsOfKind(kind);
+        if (transferConnections.isEmpty()) {
+            return;
+        }
 
         // Index every rope of this kind by both endpoint positions so we can walk
         // through
         // fence-knot junctions where multiple ropes share a BlockPos.
+        ResourceHandlerCache<R> handlers = new ResourceHandlerCache<>();
         Map<BlockPos, List<LeadConnection>> ropesAt = new HashMap<>();
         Map<BlockPos, List<LeadConnection>> startsBySource = new HashMap<>();
-        for (LeadConnection c : data.connections()) {
-            if (c.kind() != kind) {
-                continue;
-            }
-
+        for (LeadConnection c : transferConnections) {
             BlockPos a = c.from().pos().immutable();
             BlockPos b = c.to().pos().immutable();
             ropesAt.computeIfAbsent(a, k -> new ArrayList<>()).add(c);
@@ -1696,7 +1699,7 @@ public final class SuperLeadNetwork {
                 if (sourceAnchor == null || firstFar == null)
                     continue;
 
-                ResourceHandler<R> sourceHandler = handler(level, sourceAnchor, cap);
+                ResourceHandler<R> sourceHandler = handlers.get(level, sourceAnchor, cap);
                 if (sourceHandler == null)
                     continue;
 
@@ -1708,8 +1711,8 @@ public final class SuperLeadNetwork {
                 visited.add(rope.id());
                 path.add(new PathStep(rope, rope.extractAnchor() == 2));
 
-                if (walkAndTransfer(level, cap, sourceHandler, batch, firstFar, ropesAt, rrCursor, visited, path,
-                        rrChoices)) {
+                if (walkAndTransfer(level, cap, handlers, sourceHandler, batch, firstFar, ropesAt, rrCursor, visited,
+                        path, rrChoices, 1)) {
                     long now = level.getGameTime();
                     for (int i = 0; i < path.size(); i++) {
                         PathStep s = path.get(i);
@@ -1745,6 +1748,7 @@ public final class SuperLeadNetwork {
     private static <R extends Resource> boolean walkAndTransfer(
             ServerLevel level,
             BlockCapability<ResourceHandler<R>, Direction> cap,
+            ResourceHandlerCache<R> handlers,
             ResourceHandler<R> sourceHandler,
             int batch,
             LeadAnchor current,
@@ -1752,8 +1756,12 @@ public final class SuperLeadNetwork {
             Map<BlockPos, Integer> rrCursor,
             Set<UUID> visited,
             List<PathStep> path,
-            List<RrChoice> rrChoices) {
-        ResourceHandler<R> h = handler(level, current, cap);
+            List<RrChoice> rrChoices,
+            int depth) {
+        if (depth > MAX_TRANSFER_SEARCH_DEPTH) {
+            return false;
+        }
+        ResourceHandler<R> h = handlers.get(level, current, cap);
         if (h != null) {
             return transferOne(sourceHandler, h, batch, resource -> pathAllowsResource(path, resource));
         }
@@ -1783,7 +1791,8 @@ public final class SuperLeadNetwork {
             path.add(new PathStep(branch, reverse));
             rrChoices.add(new RrChoice(knot, idx, n));
 
-            if (walkAndTransfer(level, cap, sourceHandler, batch, far, ropesAt, rrCursor, visited, path, rrChoices)) {
+            if (walkAndTransfer(level, cap, handlers, sourceHandler, batch, far, ropesAt, rrCursor, visited, path,
+                    rrChoices, depth + 1)) {
                 return true;
             }
 
@@ -1801,11 +1810,16 @@ public final class SuperLeadNetwork {
             LeadAnchor current,
             Map<BlockPos, List<LeadConnection>> ropesAt,
             Map<BlockPos, Integer> rrCursor,
+            MekanismChemicalBridge.HandlerCache chemicalHandlers,
             Set<UUID> visited,
             List<PathStep> path,
-            List<RrChoice> rrChoices) {
-        if (MekanismChemicalBridge.hasHandler(level, current)) {
-            return MekanismChemicalBridge.transferOne(level, sourceAnchor, current, batch,
+            List<RrChoice> rrChoices,
+            int depth) {
+        if (depth > MAX_TRANSFER_SEARCH_DEPTH) {
+            return false;
+        }
+        if (chemicalHandlers.has(level, current)) {
+            return chemicalHandlers.transferOne(level, sourceAnchor, current, batch,
                     MekanismChemicalBridge.ChemicalFilter.ANY, pathConnections(path)) > 0L;
         }
 
@@ -1835,7 +1849,7 @@ public final class SuperLeadNetwork {
             rrChoices.add(new RrChoice(knot, idx, n));
 
             if (walkAndTransferPressurized(level, sourceAnchor, batch, far, ropesAt, rrCursor,
-                    visited, path, rrChoices)) {
+                    chemicalHandlers, visited, path, rrChoices, depth + 1)) {
                 return true;
             }
 
@@ -1853,6 +1867,18 @@ public final class SuperLeadNetwork {
             h = level.getCapability(cap, anchor.pos(), null);
         }
         return h;
+    }
+
+    private static EnergyHandler energyHandler(ServerLevel level, LeadAnchor anchor) {
+        EnergyHandler handler = level.getCapability(Capabilities.Energy.BLOCK, anchor.pos(), anchor.face());
+        if (handler == null) {
+            handler = level.getCapability(Capabilities.Energy.BLOCK, anchor.pos(), null);
+        }
+        return handler;
+    }
+
+    private static LeadAnchor cacheKey(LeadAnchor anchor) {
+        return new LeadAnchor(anchor.pos().immutable(), anchor.face());
     }
 
     private static List<LeadConnection> pathConnections(List<PathStep> path) {
@@ -2017,11 +2043,10 @@ public final class SuperLeadNetwork {
         }
     }
 
-    private static void addUnvisitedNeighborsBridge(ServerLevel level, LeadAnchor anchor,
+    private static void addUnvisitedNeighborsBridge(RedstoneTraversalCache cache, LeadAnchor anchor,
             Map<LeadAnchor, List<Integer>> byAnchor, boolean[] visited, List<Integer> component) {
         addUnvisitedNeighbors(anchor, byAnchor, visited, component);
-        if (!com.zhongbai233.super_lead.data.BlockPropertyRegistry.signalBridgeEnabled(
-                level.getBlockState(anchor.pos()).getBlock())) {
+        if (!cache.signalBridgeEnabled(anchor.pos())) {
             return;
         }
         for (Direction face : Direction.values()) {
@@ -2038,7 +2063,10 @@ public final class SuperLeadNetwork {
         }
 
         int signal = 0;
-        for (LeadConnection connection : connections(level)) {
+        List<LeadConnection> redstoneConnections = level instanceof ServerLevel serverLevel
+                ? SuperLeadSavedData.get(serverLevel).connectionsOfKind(LeadKind.REDSTONE)
+                : connections(level);
+        for (LeadConnection connection : redstoneConnections) {
             if (connection.kind() != LeadKind.REDSTONE || connection.power() <= 0) {
                 continue;
             }
@@ -2485,6 +2513,86 @@ public final class SuperLeadNetwork {
     }
 
     private record ConnectionPick(LeadConnection connection, Vec3 point, double distanceSqr, double along) {
+    }
+
+    private static final class ResourceHandlerCache<R extends Resource> {
+        private final Map<LeadAnchor, ResourceHandler<R>> hits = new HashMap<>();
+        private final Set<LeadAnchor> misses = new HashSet<>();
+
+        private ResourceHandler<R> get(ServerLevel level, LeadAnchor anchor,
+                BlockCapability<ResourceHandler<R>, Direction> cap) {
+            if (anchor == null) {
+                return null;
+            }
+            LeadAnchor key = cacheKey(anchor);
+            ResourceHandler<R> cached = hits.get(key);
+            if (cached != null || misses.contains(key)) {
+                return cached;
+            }
+            ResourceHandler<R> found = handler(level, key, cap);
+            if (found == null) {
+                misses.add(key);
+            } else {
+                hits.put(key, found);
+            }
+            return found;
+        }
+    }
+
+    private static final class EnergyHandlerCache {
+        private final Map<LeadAnchor, EnergyHandler> hits = new HashMap<>();
+        private final Set<LeadAnchor> misses = new HashSet<>();
+
+        private EnergyHandler get(ServerLevel level, LeadAnchor anchor) {
+            if (anchor == null) {
+                return null;
+            }
+            LeadAnchor key = cacheKey(anchor);
+            EnergyHandler cached = hits.get(key);
+            if (cached != null || misses.contains(key)) {
+                return cached;
+            }
+            EnergyHandler found = energyHandler(level, key);
+            if (found == null) {
+                misses.add(key);
+            } else {
+                hits.put(key, found);
+            }
+            return found;
+        }
+    }
+
+    private static final class RedstoneTraversalCache {
+        private final ServerLevel level;
+        private final Map<LeadAnchor, Integer> externalSignals = new HashMap<>();
+        private final Map<BlockPos, Boolean> signalBridgeEnabled = new HashMap<>();
+
+        private RedstoneTraversalCache(ServerLevel level) {
+            this.level = level;
+        }
+
+        private int externalSignalAt(LeadAnchor anchor) {
+            LeadAnchor key = cacheKey(anchor);
+            Integer cached = externalSignals.get(key);
+            if (cached != null) {
+                return cached.intValue();
+            }
+            int signal = SuperLeadNetwork.externalSignalAt(level, key);
+            externalSignals.put(key, signal);
+            return signal;
+        }
+
+        private boolean signalBridgeEnabled(BlockPos pos) {
+            BlockPos key = pos.immutable();
+            Boolean cached = signalBridgeEnabled.get(key);
+            if (cached != null) {
+                return cached.booleanValue();
+            }
+            boolean enabled = com.zhongbai233.super_lead.data.BlockPropertyRegistry.signalBridgeEnabled(
+                    level.getBlockState(key).getBlock());
+            signalBridgeEnabled.put(key, enabled);
+            return enabled;
+        }
     }
 
     private record EnergyEndpoint(LeadAnchor anchor, EnergyHandler handler) {

@@ -5,6 +5,7 @@ import com.mojang.serialization.codecs.RecordCodecBuilder;
 import com.zhongbai233.super_lead.Super_lead;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -43,6 +44,7 @@ public final class SuperLeadSavedData extends SavedData {
     }
 
     private final Map<UUID, StoredRope> byId = new LinkedHashMap<>();
+    private final EnumMap<LeadKind, LinkedHashMap<UUID, LeadConnection>> byKind = new EnumMap<>(LeadKind.class);
     private final Map<Long, List<LeadConnection>> ownedByChunk = new HashMap<>();
     private final Map<Long, Set<UUID>> refsByChunk = new HashMap<>();
     private final Set<Long> dirtyChunkKeys = new LinkedHashSet<>();
@@ -54,11 +56,17 @@ public final class SuperLeadSavedData extends SavedData {
         for (RopeChunkBucket bucket : buckets) {
             long ownerChunk = bucket.chunkKey();
             for (LeadConnection connection : bucket.owned()) {
-                StoredRope stored = byId.computeIfAbsent(connection.id(),
-                        id -> new StoredRope(connection, ownerChunk));
+                StoredRope stored = byId.get(connection.id());
+                if (stored == null) {
+                    stored = new StoredRope(connection, ownerChunk);
+                    byId.put(connection.id(), stored);
+                } else {
+                    unindexByKind(stored.connection);
+                }
                 stored.connection = connection;
                 stored.ownerChunk = ownerChunk;
                 stored.coveredChunks.add(ownerChunk);
+                indexByKind(connection);
                 ownedByChunk.computeIfAbsent(ownerChunk, key -> new ArrayList<>()).add(connection);
             }
         }
@@ -98,6 +106,11 @@ public final class SuperLeadSavedData extends SavedData {
             out.add(stored.connection);
         }
         return Collections.unmodifiableList(out);
+    }
+
+    public List<LeadConnection> connectionsOfKind(LeadKind kind) {
+        LinkedHashMap<UUID, LeadConnection> indexed = byKind.get(kind);
+        return indexed == null || indexed.isEmpty() ? List.of() : List.copyOf(indexed.values());
     }
 
     public List<LeadConnection> connectionsForChunk(ChunkPos chunk) {
@@ -171,6 +184,19 @@ public final class SuperLeadSavedData extends SavedData {
         if (newConnection.equals(oldConnection)) {
             return false;
         }
+        long newOwner = ownerChunkKey(newConnection);
+        LinkedHashSet<Long> newCovered = coveredChunkKeys(newConnection);
+        newCovered.add(newOwner);
+        if (newConnection.id().equals(id)
+                && stored.ownerChunk == newOwner
+                && stored.coveredChunks.equals(newCovered)) {
+            replaceStoredConnection(stored, oldConnection, newConnection);
+            markDirtyChunks(stored.coveredChunks);
+            if (markDirty) {
+                setDirty();
+            }
+            return true;
+        }
         remove(id);
         put(newConnection, false);
         if (markDirty) {
@@ -188,6 +214,7 @@ public final class SuperLeadSavedData extends SavedData {
         StoredRope stored = new StoredRope(connection, owner);
         stored.coveredChunks.addAll(covered);
         byId.put(connection.id(), stored);
+        indexByKind(connection);
 
         List<LeadConnection> owned = ownedByChunk.computeIfAbsent(owner, key -> new ArrayList<>());
         owned.removeIf(c -> c.id().equals(connection.id()));
@@ -209,6 +236,7 @@ public final class SuperLeadSavedData extends SavedData {
         if (stored == null) {
             return;
         }
+        unindexByKind(stored.connection);
         List<LeadConnection> owned = ownedByChunk.get(stored.ownerChunk);
         if (owned != null) {
             owned.removeIf(c -> c.id().equals(id));
@@ -230,6 +258,50 @@ public final class SuperLeadSavedData extends SavedData {
 
     private void markDirtyChunks(Set<Long> chunks) {
         dirtyChunkKeys.addAll(chunks);
+    }
+
+    private void indexByKind(LeadConnection connection) {
+        byKind.computeIfAbsent(connection.kind(), key -> new LinkedHashMap<>())
+                .put(connection.id(), connection);
+    }
+
+    private void unindexByKind(LeadConnection connection) {
+        LinkedHashMap<UUID, LeadConnection> indexed = byKind.get(connection.kind());
+        if (indexed == null) {
+            return;
+        }
+        indexed.remove(connection.id());
+        if (indexed.isEmpty()) {
+            byKind.remove(connection.kind());
+        }
+    }
+
+    private void replaceStoredConnection(StoredRope stored, LeadConnection oldConnection,
+            LeadConnection newConnection) {
+        stored.connection = newConnection;
+        replaceOwnedConnection(stored.ownerChunk, newConnection);
+        if (oldConnection.kind() != newConnection.kind()) {
+            unindexByKind(oldConnection);
+            indexByKind(newConnection);
+        } else {
+            byKind.computeIfAbsent(newConnection.kind(), key -> new LinkedHashMap<>())
+                    .put(newConnection.id(), newConnection);
+        }
+    }
+
+    private void replaceOwnedConnection(long ownerChunk, LeadConnection connection) {
+        List<LeadConnection> owned = ownedByChunk.get(ownerChunk);
+        if (owned == null) {
+            ownedByChunk.computeIfAbsent(ownerChunk, key -> new ArrayList<>()).add(connection);
+            return;
+        }
+        for (int i = 0; i < owned.size(); i++) {
+            if (owned.get(i).id().equals(connection.id())) {
+                owned.set(i, connection);
+                return;
+            }
+        }
+        owned.add(connection);
     }
 
     private List<RopeChunkBucket> bucketRecords() {

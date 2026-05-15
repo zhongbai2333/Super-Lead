@@ -1,6 +1,10 @@
 package com.zhongbai233.super_lead.lead.integration.mekanism;
 
 import com.zhongbai233.super_lead.lead.LeadAnchor;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Map;
+import java.util.Set;
 import mekanism.api.heat.IHeatHandler;
 import mekanism.common.capabilities.Capabilities;
 import net.minecraft.server.level.ServerLevel;
@@ -63,8 +67,43 @@ public final class MekanismHeatBridge {
         return transfer;
     }
 
+    public static final class HandlerCache {
+        private final Map<LeadAnchor, IHeatHandler> hits = new HashMap<>();
+        private final Set<LeadAnchor> misses = new HashSet<>();
+
+        public boolean has(ServerLevel level, LeadAnchor anchor) {
+            return usable(get(level, anchor));
+        }
+
+        public double balance(ServerLevel level, LeadAnchor first, LeadAnchor second, double maxHeat) {
+            return MekanismHeatBridge.balance(get(level, first), get(level, second), maxHeat);
+        }
+
+        private IHeatHandler get(ServerLevel level, LeadAnchor anchor) {
+            if (anchor == null) {
+                return null;
+            }
+            LeadAnchor key = cacheKey(anchor);
+            IHeatHandler cached = hits.get(key);
+            if (cached != null || misses.contains(key)) {
+                return cached;
+            }
+            IHeatHandler found = handler(level, key);
+            if (found == null) {
+                misses.add(key);
+            } else {
+                hits.put(key, found);
+            }
+            return found;
+        }
+    }
+
     private static boolean usable(IHeatHandler handler) {
         return handler != null && handler.getHeatCapacitorCount() > 0;
+    }
+
+    private static LeadAnchor cacheKey(LeadAnchor anchor) {
+        return new LeadAnchor(anchor.pos().immutable(), anchor.face());
     }
 
     private static boolean finitePositive(double value) {

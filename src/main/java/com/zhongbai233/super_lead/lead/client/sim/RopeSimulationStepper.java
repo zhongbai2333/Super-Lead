@@ -77,14 +77,14 @@ abstract class RopeSimulationStepper extends RopeSimulationContactConstraints {
     /**
      * Advance one logical tick. Driver supplies neighbours (already pre-filtered by
      * bounds),
-         * external force fields, and a list of nearby entity body snapshots that push
+     * external force fields, and a list of nearby entity body snapshots that push
      * the rope.
      */
     public boolean step(
             Level level, Vec3 a, Vec3 b, long currentTick,
             List<RopeSimulation> neighbors,
             List<RopeForceField> forceFields,
-             List<RopeEntityContact> entityContacts) {
+            List<RopeEntityContact> entityContacts) {
         lastTouchTick = currentTick;
 
         if (lastSteppedTick == UNINIT) {
@@ -115,16 +115,16 @@ abstract class RopeSimulationStepper extends RopeSimulationContactConstraints {
         terrainNearbyLast = terrainNearby;
         boolean blockChanged = terrainStateChanged || (terrainNearby && blockHashChangedNow);
         boolean neighborAwake = anyNeighborAwake(neighbors);
-        // Entity overlap forces a wake-up: a frozen airborne rope would otherwise let
-        // the player
-        // walk through it because no constraint loop runs at all.
-        boolean entityNearby = !entityContacts.isEmpty();
-        boolean serverPullActive = hasFreshServerNodes(currentTick);
+        // Entity overlap normally wakes the rope so bodies can visually push it. Fully
+        // taut ropes have no useful travel budget, so ignore this cosmetic push path at
+        // slack=0 instead of waking a few trapped joints every tick.
+        boolean entityPushActive = visualPushEnabled() && !entityContacts.isEmpty();
         boolean forceActive = !forceFields.isEmpty();
-        boolean awake = endpointMoved || blockChanged || neighborAwake || entityNearby || forceActive || !isSettled()
-                || hasExternalContact(currentTick) || serverPullActive;
-        if (endpointMoved || blockChanged || neighborAwake || entityNearby || hasExternalContact(currentTick)
-                || serverPullActive || forceActive) {
+        boolean awake = endpointMoved || blockChanged || neighborAwake || entityPushActive || forceActive
+                || !isSettled()
+                || hasExternalContact(currentTick);
+        if (endpointMoved || blockChanged || neighborAwake || entityPushActive || hasExternalContact(currentTick)
+                || forceActive) {
             settledTicks = 0;
         }
 
@@ -147,7 +147,6 @@ abstract class RopeSimulationStepper extends RopeSimulationContactConstraints {
 
         for (int t = 0; t < delta; t++) {
             applyExternalContactPush(currentTick);
-            applyServerNodeBlend(a, b, currentTick);
             int substeps = chooseSubsteps(a, b);
             double h = 1.0D / substeps;
             for (int sub = 0; sub < substeps; sub++) {
@@ -161,7 +160,7 @@ abstract class RopeSimulationStepper extends RopeSimulationContactConstraints {
                         lastBy + (b.y - lastBy) * frac,
                         lastBz + (b.z - lastBz) * frac);
                 substep(level, aInterp, bInterp, h, currentTick, terrainNearby,
-                        neighbors, forceFields, entityContacts);
+                        neighbors, forceFields, entityPushActive ? entityContacts : List.of());
             }
         }
 
@@ -249,7 +248,7 @@ abstract class RopeSimulationStepper extends RopeSimulationContactConstraints {
         // middle segments never reaches a pinned end). Ensure we run at least
         // ceil(segments/2) passes so corrections from both ends meet in the middle.
         int minPasses = Math.max((segments + 1) / 2,
-            (int) Math.ceil(segments * (1.0D + tautWeight * 3.0D)));
+                (int) Math.ceil(segments * (1.0D + tautWeight * 3.0D)));
         if (iterations < minPasses)
             iterations = minPasses;
         for (int it = 0; it < iterations; it++) {

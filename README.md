@@ -126,9 +126,9 @@ the rope kind, tier multiplier (where applicable), and powered state.
 - A removed endpoint, an air block under an anchor, or a stretched-too-far
   endpoint will prune the connection automatically.
 - Fence knots are recreated on load to match stored connections.
-- Sync packet (`SyncConnections`) updates every client in the dimension on any
-  change. Item/fluid transfers also broadcast a tiny `ItemPulse` payload per
-  successful transfer to drive the bulge animation.
+- Chunk-scoped sync (`SyncRopeChunk` plus `ClearRopeCache` on login/dimension
+  changes) only updates watched chunks. Item/fluid transfers also broadcast a
+  tiny `ItemPulse` payload per successful transfer to drive the bulge animation.
 
 ## Balance
 

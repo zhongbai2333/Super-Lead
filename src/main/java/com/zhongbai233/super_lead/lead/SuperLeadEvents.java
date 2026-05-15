@@ -8,6 +8,7 @@ import net.minecraft.ChatFormatting;
 import net.minecraft.core.Direction;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.network.chat.Component;
+import net.minecraft.util.TriState;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.InteractionHand;
@@ -29,14 +30,20 @@ public final class SuperLeadEvents {
     private SuperLeadEvents() {
     }
 
+    private static void consumeBlockInteraction(PlayerInteractEvent.RightClickBlock event, InteractionResult result) {
+        event.setUseBlock(TriState.FALSE);
+        event.setUseItem(TriState.FALSE);
+        event.setCanceled(true);
+        event.setCancellationResult(result);
+    }
+
     @SubscribeEvent
     public static void onRightClickBlock(PlayerInteractEvent.RightClickBlock event) {
         ItemStack stack = event.getItemStack();
 
         if (tryUsePresetBinder(event.getEntity(), event.getHand(), event.getLevel(),
                 event.getEntity().isShiftKeyDown())) {
-            event.setCanceled(true);
-            event.setCancellationResult(InteractionResult.SUCCESS);
+            consumeBlockInteraction(event, InteractionResult.SUCCESS);
             return;
         }
 
@@ -55,8 +62,7 @@ public final class SuperLeadEvents {
                 return;
             }
             if (isSeedItem(stack) && tryBoostRopePerch(event)) {
-                event.setCanceled(true);
-                event.setCancellationResult(InteractionResult.SUCCESS);
+                consumeBlockInteraction(event, InteractionResult.SUCCESS);
                 return;
             }
             if (stack.is(Items.HOPPER) && tryToggleItemExtract(event)) {
@@ -73,23 +79,19 @@ public final class SuperLeadEvents {
             }
         } else {
             if (tryOpenRopeAttachmentAeTerminal(event.getEntity(), event.getLevel(), stack)) {
-                event.setCanceled(true);
-                event.setCancellationResult(InteractionResult.SUCCESS);
+                consumeBlockInteraction(event, InteractionResult.SUCCESS);
                 return;
             }
             if (tryEditRopeAttachmentSign(event.getEntity(), event.getLevel(), stack)) {
-                event.setCanceled(true);
-                event.setCancellationResult(InteractionResult.SUCCESS);
+                consumeBlockInteraction(event, InteractionResult.SUCCESS);
                 return;
             }
             if (tryRopeAttachmentSignDye(event.getEntity(), event.getLevel(), stack)) {
-                event.setCanceled(true);
-                event.setCancellationResult(InteractionResult.SUCCESS);
+                consumeBlockInteraction(event, InteractionResult.SUCCESS);
                 return;
             }
             if (tryRopeAttachmentSignGlow(event.getEntity(), event.getLevel(), stack)) {
-                event.setCanceled(true);
-                event.setCancellationResult(InteractionResult.SUCCESS);
+                consumeBlockInteraction(event, InteractionResult.SUCCESS);
                 return;
             } // Non-sneak: attach decoration to upgraded ropes. Kept separate from the
               // upgrade
@@ -97,15 +99,13 @@ public final class SuperLeadEvents {
               // decorate
               // (no sneak) without conflict.
             if (tryAddRopeAttachment(event.getEntity(), event.getHand(), event.getLevel())) {
-                event.setCanceled(true);
-                event.setCancellationResult(InteractionResult.SUCCESS);
+                consumeBlockInteraction(event, InteractionResult.SUCCESS);
                 return;
             }
         }
 
         if (tryUpgradeHeldLead(event.getEntity(), event.getHand())) {
-            event.setCanceled(true);
-            event.setCancellationResult(InteractionResult.SUCCESS);
+            consumeBlockInteraction(event, InteractionResult.SUCCESS);
             return;
         }
 
@@ -116,8 +116,7 @@ public final class SuperLeadEvents {
         LeadAnchor anchor = createAnchor(event);
         InteractionResult result = handleLeadUse(event.getLevel(), event.getEntity(), stack, anchor);
 
-        event.setCanceled(true);
-        event.setCancellationResult(result);
+        consumeBlockInteraction(event, result);
     }
 
     private static boolean tryUseZoneSelectionTool(PlayerInteractEvent.RightClickBlock event) {
@@ -242,8 +241,7 @@ public final class SuperLeadEvents {
             if (event.getLevel() instanceof ServerLevel serverLevel
                     && SuperLeadNetwork.hasClientPickCompatibleConnectionInView(
                             serverLevel, event.getEntity(), action::canTarget)) {
-                event.setCanceled(true);
-                event.setCancellationResult(InteractionResult.SUCCESS);
+                consumeBlockInteraction(event, InteractionResult.SUCCESS);
                 return true;
             }
             return false;
@@ -251,8 +249,7 @@ public final class SuperLeadEvents {
         if (!sendClientUseAction(event.getEntity(), event.getHand(), action)) {
             return false;
         }
-        event.setCanceled(true);
-        event.setCancellationResult(InteractionResult.SUCCESS);
+        consumeBlockInteraction(event, InteractionResult.SUCCESS);
         return true;
     }
 
@@ -272,6 +269,12 @@ public final class SuperLeadEvents {
     public static void onRightClickItem(PlayerInteractEvent.RightClickItem event) {
         ItemStack stack = event.getItemStack();
         boolean shift = event.getEntity().isShiftKeyDown();
+
+        if (!shift && tryOpenRopeAttachmentAeTerminal(event.getEntity(), event.getLevel(), stack)) {
+            event.setCanceled(true);
+            event.setCancellationResult(InteractionResult.SUCCESS);
+            return;
+        }
 
         if (tryUsePresetBinder(event.getEntity(), event.getHand(), event.getLevel(), shift)) {
             event.setCanceled(true);
@@ -476,9 +479,8 @@ public final class SuperLeadEvents {
     private static boolean tryOpenRopeAttachmentAeTerminal(Player player, Level level, ItemStack heldStack) {
         if (!level.isClientSide())
             return false;
-        // Keep this empty-hand only so normal item use/attachment placement remains predictable.
-        if (!heldStack.isEmpty())
-            return false;
+        // AE terminal panels are interactive UI surfaces. If the crosshair is on one,
+        // opening the panel should win over vanilla item use such as block placement.
         return com.zhongbai233.super_lead.lead.client.SuperLeadClientEvents
                 .tryOpenRopeAttachmentAeTerminal();
     }
@@ -738,7 +740,7 @@ public final class SuperLeadEvents {
 
     private static LeadAnchor createAnchor(PlayerInteractEvent.RightClickBlock event) {
         Direction face = LeadAnchor.knotFace(event.getLevel().getBlockState(event.getPos()),
-            event.getHitVec().getDirection());
+                event.getHitVec().getDirection());
         return new LeadAnchor(event.getPos().immutable(), face);
     }
 

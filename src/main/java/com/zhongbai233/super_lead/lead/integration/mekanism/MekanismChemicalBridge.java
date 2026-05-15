@@ -3,7 +3,11 @@ package com.zhongbai233.super_lead.lead.integration.mekanism;
 import com.zhongbai233.super_lead.lead.LeadAnchor;
 import com.zhongbai233.super_lead.lead.LeadConnection;
 import com.zhongbai233.super_lead.lead.RopeAttachment;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.function.Predicate;
 import mekanism.api.Action;
 import mekanism.api.MekanismAPITags;
@@ -19,7 +23,8 @@ import net.neoforged.neoforge.transfer.access.ItemAccess;
  * <p>
  * Super Lead's item/fluid transfer code is based on NeoForge's
  * {@code ResourceHandler<R extends Resource>} model. Mekanism 26.1 exposes
- * chemicals through its own {@link IChemicalHandler} instead, so trying to force
+ * chemicals through its own {@link IChemicalHandler} instead, so trying to
+ * force
  * chemicals through the existing generic transfer path makes call sites hard to
  * read and fragile. Keep all Mekanism-specific API use here and let the rope
  * logic call simple ChemicalStack-based methods.
@@ -65,15 +70,20 @@ public final class MekanismChemicalBridge {
 
     public static long transferOne(ServerLevel level, LeadAnchor source, LeadAnchor target, long maxAmount,
             ChemicalFilter filter, List<LeadConnection> path) {
-        ChemicalFilter effectiveFilter = filter == null ? ChemicalFilter.ANY : filter;
-        return transferOne(handler(level, source), handler(level, target), maxAmount,
-                stack -> effectiveFilter.accepts(stack) && pathAllows(path, stack));
+        return transferOne(handler(level, source), handler(level, target), maxAmount, filter, path);
     }
 
     public static long transferOne(IChemicalHandler source, IChemicalHandler target, long maxAmount,
             ChemicalFilter filter) {
         ChemicalFilter effectiveFilter = filter == null ? ChemicalFilter.ANY : filter;
         return transferOne(source, target, maxAmount, effectiveFilter::accepts);
+    }
+
+    public static long transferOne(IChemicalHandler source, IChemicalHandler target, long maxAmount,
+            ChemicalFilter filter, List<LeadConnection> path) {
+        ChemicalFilter effectiveFilter = filter == null ? ChemicalFilter.ANY : filter;
+        return transferOne(source, target, maxAmount,
+                stack -> effectiveFilter.accepts(stack) && pathAllows(path, stack));
     }
 
     public static long transferOne(IChemicalHandler source, IChemicalHandler target, long maxAmount,
@@ -115,6 +125,38 @@ public final class MekanismChemicalBridge {
             }
         }
         return 0L;
+    }
+
+    public static final class HandlerCache {
+        private final Map<LeadAnchor, IChemicalHandler> hits = new HashMap<>();
+        private final Set<LeadAnchor> misses = new HashSet<>();
+
+        public boolean has(ServerLevel level, LeadAnchor anchor) {
+            return get(level, anchor) != null;
+        }
+
+        public long transferOne(ServerLevel level, LeadAnchor source, LeadAnchor target, long maxAmount,
+                ChemicalFilter filter, List<LeadConnection> path) {
+            return MekanismChemicalBridge.transferOne(get(level, source), get(level, target), maxAmount, filter, path);
+        }
+
+        private IChemicalHandler get(ServerLevel level, LeadAnchor anchor) {
+            if (anchor == null) {
+                return null;
+            }
+            LeadAnchor key = cacheKey(anchor);
+            IChemicalHandler cached = hits.get(key);
+            if (cached != null || misses.contains(key)) {
+                return cached;
+            }
+            IChemicalHandler found = handler(level, key);
+            if (found == null) {
+                misses.add(key);
+            } else {
+                hits.put(key, found);
+            }
+            return found;
+        }
     }
 
     private static boolean pathAllows(List<LeadConnection> path, ChemicalStack stack) {
@@ -171,6 +213,10 @@ public final class MekanismChemicalBridge {
         }
         ChemicalStack remainder = target.insertChemical(stack, Action.SIMULATE);
         return Math.max(0L, stack.amount() - remainder.amount());
+    }
+
+    private static LeadAnchor cacheKey(LeadAnchor anchor) {
+        return new LeadAnchor(anchor.pos().immutable(), anchor.face());
     }
 
     private static void reinsert(IChemicalHandler source, ChemicalStack stack) {

@@ -28,7 +28,7 @@ public record SyncRopeChunk(ChunkPos chunk, List<LeadConnection> connections) im
         buffer.writeChunkPos(chunk);
         buffer.writeVarInt(connections.size());
         for (LeadConnection connection : connections) {
-            SyncConnections.writeConnection(buffer, connection);
+            LeadConnectionPayloadCodec.writeConnection(buffer, connection);
         }
     }
 
@@ -37,7 +37,7 @@ public record SyncRopeChunk(ChunkPos chunk, List<LeadConnection> connections) im
         int size = buffer.readVarInt();
         ArrayList<LeadConnection> connections = new ArrayList<>(size);
         for (int i = 0; i < size; i++) {
-            connections.add(SyncConnections.readConnection(buffer));
+            connections.add(LeadConnectionPayloadCodec.readConnection(buffer));
         }
         return new SyncRopeChunk(chunk, connections);
     }

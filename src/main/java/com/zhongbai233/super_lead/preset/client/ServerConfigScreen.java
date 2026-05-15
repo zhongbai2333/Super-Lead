@@ -1,11 +1,9 @@
 package com.zhongbai233.super_lead.preset.client;
 
 import com.zhongbai233.super_lead.Config;
-import com.zhongbai233.super_lead.preset.PresetListRequest;
+import com.zhongbai233.super_lead.preset.ServerQuery;
 import com.zhongbai233.super_lead.preset.RopePresetLibrary;
 import com.zhongbai233.super_lead.preset.SyncPhysicsZones;
-import com.zhongbai233.super_lead.preset.ZoneListRequest;
-import com.zhongbai233.super_lead.serverconfig.ServerConfigRequest;
 import com.zhongbai233.super_lead.serverconfig.ServerConfigSet;
 import com.zhongbai233.super_lead.serverconfig.client.ServerConfigClient;
 import java.util.ArrayList;
@@ -114,7 +112,7 @@ public final class ServerConfigScreen extends Screen {
         if (now - lastListMs < 200)
             return;
         lastListMs = now;
-        ClientPacketDistributor.sendToServer(PresetListRequest.INSTANCE);
+        ClientPacketDistributor.sendToServer(ServerQuery.presetList());
     }
 
     private void requestZones() {
@@ -122,7 +120,7 @@ public final class ServerConfigScreen extends Screen {
         if (now - lastZoneListMs < 200)
             return;
         lastZoneListMs = now;
-        ClientPacketDistributor.sendToServer(ZoneListRequest.INSTANCE);
+        ClientPacketDistributor.sendToServer(ServerQuery.zoneList());
     }
 
     private enum FieldKind {
@@ -144,14 +142,14 @@ public final class ServerConfigScreen extends Screen {
                     1, 12, "6"),
             new FieldDef("network.fluid_tier_max", "super_lead.server_config.field.network.fluid_tier_max",
                     FieldKind.INT, 1, 12, "4"),
-                new FieldDef("network.pressurized_tier_max",
+            new FieldDef("network.pressurized_tier_max",
                     "super_lead.server_config.field.network.pressurized_tier_max", FieldKind.INT, 1, 12, "4"),
-                new FieldDef("network.pressurized_batch_amount",
+            new FieldDef("network.pressurized_batch_amount",
                     "super_lead.server_config.field.network.pressurized_batch_amount", FieldKind.INT, 1, 100000,
                     "1000"),
-                new FieldDef("network.thermal_tier_max", "super_lead.server_config.field.network.thermal_tier_max",
+            new FieldDef("network.thermal_tier_max", "super_lead.server_config.field.network.thermal_tier_max",
                     FieldKind.INT, 1, 12, "4"),
-                new FieldDef("network.thermal_transfer_per_tick",
+            new FieldDef("network.thermal_transfer_per_tick",
                     "super_lead.server_config.field.network.thermal_transfer", FieldKind.DOUBLE, 1.0, 1000000.0,
                     "1000.0"),
             new FieldDef("network.item_transfer_interval_ticks",
@@ -182,7 +180,7 @@ public final class ServerConfigScreen extends Screen {
                 overrides.remove(k);
             this.rebuildWidgets();
         });
-        ClientPacketDistributor.sendToServer(ServerConfigRequest.INSTANCE);
+        ClientPacketDistributor.sendToServer(ServerQuery.serverConfig());
 
         int rowW = this.width - PADDING * 2;
         int labelW = 200;

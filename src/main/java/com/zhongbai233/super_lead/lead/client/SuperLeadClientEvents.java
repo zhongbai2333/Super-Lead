@@ -904,9 +904,10 @@ public final class SuperLeadClientEvents {
                 if (!forceFields.isEmpty()) {
                     parrotWeightedRopes.add(entry.connection().id());
                 }
-                List<RopeEntityContact> entityContacts = collectEntityContacts(level, entry.sim(), entry.a(), entry.b());
+                List<RopeEntityContact> entityContacts = collectEntityContacts(level, entry.sim(), entry.a(),
+                        entry.b());
                 entry.sim().step(level, entry.a(), entry.b(), tick,
-                    neighborsBySim.getOrDefault(entry.sim(), List.of()), forceFields, entityContacts);
+                        neighborsBySim.getOrDefault(entry.sim(), List.of()), forceFields, entityContacts);
                 maybeReportPlayerContact(minecraft.player, entry.connection(), entry.sim(), entry.a(), entry.b(), tick);
             }
         }
@@ -984,8 +985,8 @@ public final class SuperLeadClientEvents {
             int extractEnd = (entry.connection().kind() == LeadKind.ITEM
                     || entry.connection().kind() == LeadKind.FLUID
                     || entry.connection().kind() == LeadKind.PRESSURIZED)
-                    ? entry.connection().extractAnchor()
-                    : 0;
+                            ? entry.connection().extractAnchor()
+                            : 0;
             ropeJobs.add(LeashBuilder.collect(sim, blockA, blockB, skyA, skyB, highlightColor,
                     entry.connection().kind(), entry.connection().powered(), entry.connection().tier(),
                     pulses, extractEnd, chunkMeshActive));
@@ -1331,10 +1332,9 @@ public final class SuperLeadClientEvents {
             sim.setExternalContact(tick, contact.t(), contact.dx(), contact.dy(), contact.dz());
         }
 
-        sim.clearServerNodes();
     }
 
-        private static void maybeReportPlayerContact(Player player, LeadConnection connection,
+    private static void maybeReportPlayerContact(Player player, LeadConnection connection,
             RopeSimulation sim, Vec3 a, Vec3 b, long tick) {
         if (player == null || player.isSpectator())
             return;
@@ -1444,8 +1444,8 @@ public final class SuperLeadClientEvents {
      * support is vertical-only; side contacts cancel only inward horizontal normal
      * velocity so tangential and vertical motion stay intact.
      */
-        private static void applyLocalRigidContact(LocalPlayer player, double nx, double ny, double nz,
-                double depth, double radius, boolean jumpDown, boolean footSupport, double inputX, double inputZ) {
+    private static void applyLocalRigidContact(LocalPlayer player, double nx, double ny, double nz,
+            double depth, double radius, boolean jumpDown, boolean footSupport, double inputX, double inputZ) {
         Vec3 v = player.getDeltaMovement();
         if (footSupport) {
             player.setOnGround(true);
@@ -1815,7 +1815,8 @@ public final class SuperLeadClientEvents {
      * those are
      * filtered out so the rope doesn't shove its own anchors.
      */
-    private static List<RopeEntityContact> collectEntityContacts(ClientLevel level, RopeSimulation sim, Vec3 a, Vec3 b) {
+    private static List<RopeEntityContact> collectEntityContacts(ClientLevel level, RopeSimulation sim, Vec3 a,
+            Vec3 b) {
         AABB ropeBounds = sim.currentBounds().inflate(ENTITY_QUERY_MARGIN);
         List<Entity> raw = level.getEntities((Entity) null, ropeBounds, e -> !e.isSpectator() && e.isPickable());
         if (raw.isEmpty())

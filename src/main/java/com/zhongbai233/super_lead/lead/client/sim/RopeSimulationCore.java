@@ -36,12 +36,11 @@ abstract class RopeSimulationCore {
     protected final double substepSpeedTier3;
     protected final double supportDownInvMass;
     protected final double contactPushGain;
-    protected final double serverBlendAlpha;
-    protected final long serverBlendStaleTicks;
 
     // ============================================================================================
     // Settle / wake — now resolved from RopeTuning
     // ============================================================================================
+    protected static final double VISUAL_PUSH_MIN_SLACK = 1.0e-6D;
     protected final int settleThresholdTicks;
     protected final double settleMotionSqr;
     protected final double endpointWakeDistanceSqr;
@@ -203,19 +202,6 @@ abstract class RopeSimulationCore {
     protected double contactDx, contactDy, contactDz;
     protected long contactRefreshTick = Long.MIN_VALUE;
 
-    // Server-broadcast Verlet snapshot used as a soft target. Each tick the
-    // corresponding
-    // server interior nodes are sampled along the chord and each client interior
-    // node is
-    // nudged toward its target by SERVER_BLEND_ALPHA — small enough that local
-    // physics still
-    // refines the shape, large enough that all clients converge on the server's
-    // geometry.
-    // Cleared / made inactive by setting serverNodesSegments <= 0.
-    protected int serverNodesSegments = 0;
-    protected float[] serverInterior;
-    protected long serverNodesRefreshTick = Long.MIN_VALUE;
-
     // Precomputed per-segment AABBs (unpadded) for rope-vs-rope broad-phase.
     // Layout: 6 doubles
     // per segment in [minX,minY,minZ,maxX,maxY,maxZ] order. Refreshed at the start
@@ -307,8 +293,6 @@ abstract class RopeSimulationCore {
         this.substepSpeedTier3 = this.tuning.substepSpeedTier3();
         this.supportDownInvMass = this.tuning.supportDownInvMass();
         this.contactPushGain = this.tuning.contactPushGain();
-        this.serverBlendAlpha = this.tuning.serverBlendAlpha();
-        this.serverBlendStaleTicks = this.tuning.serverBlendStaleTicks();
         this.settleThresholdTicks = this.tuning.settleThresholdTicks();
         this.settleMotionSqr = this.tuning.settleMotionSqr();
         this.endpointWakeDistanceSqr = this.tuning.endpointWakeDistanceSqr();
@@ -403,6 +387,10 @@ abstract class RopeSimulationCore {
 
     public RopeTuning tuning() {
         return tuning;
+    }
+
+    protected boolean visualPushEnabled() {
+        return tuning != null && tuning.slack() > VISUAL_PUSH_MIN_SLACK;
     }
 
     public boolean physicsEnabled() {
@@ -501,13 +489,6 @@ abstract class RopeSimulationCore {
         contactDy = other.contactDy;
         contactDz = other.contactDz;
         contactRefreshTick = other.contactRefreshTick;
-        serverNodesSegments = other.serverNodesSegments;
-        if (other.serverInterior == null) {
-            serverInterior = null;
-        } else {
-            serverInterior = java.util.Arrays.copyOf(other.serverInterior, other.serverInterior.length);
-        }
-        serverNodesRefreshTick = other.serverNodesRefreshTick;
 
         lastSteppedTick = other.lastSteppedTick;
         lastTouchTick = other.lastTouchTick;

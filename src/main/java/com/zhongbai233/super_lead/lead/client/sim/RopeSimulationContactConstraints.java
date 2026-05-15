@@ -136,7 +136,7 @@ abstract class RopeSimulationContactConstraints extends RopeSimulationTerrainCon
     // Constraint: entity bodies (one-way: entity pushes rope, never the reverse)
     // ============================================================================================
     protected void solveEntityConstraints(List<RopeEntityContact> entityContacts) {
-        if (entityContacts.isEmpty())
+        if (entityContacts.isEmpty() || !visualPushEnabled())
             return;
         double baseRadius = ropeRadius + collisionEps;
         updateBounds();
