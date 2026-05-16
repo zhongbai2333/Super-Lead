@@ -11,6 +11,15 @@ import net.minecraft.client.renderer.rendertype.RenderTypes;
 import net.minecraft.util.LightCoordsUtil;
 import net.minecraft.world.phys.Vec3;
 
+/**
+ * Render-thread rope mesh builder and batching queue.
+ *
+ * <p>
+ * The class owns the hot path from {@link RopeJob} to emitted vertices. Keep
+ * allocations and abstraction overhead low here; helper extraction should focus
+ * on stateless math/color/baked-emission routines that do not add per-segment
+ * objects.
+ */
 public final class LeashBuilder {
     public static final int NO_HIGHLIGHT = 0;
     public static final int DEFAULT_HIGHLIGHT = 0x66FFEE84;

@@ -12,6 +12,15 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 
+/**
+ * Shared mutable state and cache plumbing for client rope simulation.
+ *
+ * <p>
+ * The simulation is performance-sensitive and array-backed by design. Prefer
+ * extracting cohesive state/cache structs over adding per-node objects or
+ * virtual
+ * calls inside solver loops.
+ */
 abstract class RopeSimulationCore {
 
     // ============================================================================================

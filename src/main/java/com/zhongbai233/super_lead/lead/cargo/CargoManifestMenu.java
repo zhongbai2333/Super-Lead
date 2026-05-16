@@ -1,6 +1,7 @@
 package com.zhongbai233.super_lead.lead.cargo;
 
 import com.zhongbai233.super_lead.lead.SuperLeadItems;
+import io.netty.handler.codec.DecoderException;
 import java.util.ArrayList;
 import java.util.List;
 import net.minecraft.core.NonNullList;
@@ -16,6 +17,7 @@ import net.minecraft.world.inventory.ContainerInput;
 import net.minecraft.world.inventory.Slot;
 import net.minecraft.world.item.ItemStack;
 
+/** Server/client menu backing the cargo manifest ghost-slot filter editor. */
 public class CargoManifestMenu extends AbstractContainerMenu {
     public static final int FILTER_SLOT_COUNT = CargoManifestData.FILTER_SLOT_COUNT;
     public static final int FILTER_X = 12;
@@ -87,7 +89,7 @@ public class CargoManifestMenu extends AbstractContainerMenu {
         };
 
         addManifestSlots();
-    addStandardInventorySlots(playerInventory, PLAYER_INV_X, PLAYER_INV_Y);
+        addStandardInventorySlots(playerInventory, PLAYER_INV_X, PLAYER_INV_Y);
         addDataSlots(optionData);
     }
 
@@ -96,7 +98,11 @@ public class CargoManifestMenu extends AbstractContainerMenu {
         boolean advanced = buffer.readBoolean();
         boolean whitelist = buffer.readBoolean();
         boolean matchNbt = buffer.readBoolean();
-        int tagCount = Math.min(buffer.readVarInt(), CargoManifestData.TAG_LIMIT);
+        int tagCount = buffer.readVarInt();
+        if (tagCount < 0 || tagCount > CargoManifestData.TAG_LIMIT) {
+            throw new DecoderException("cargo manifest tag count " + tagCount + " outside 0.."
+                    + CargoManifestData.TAG_LIMIT);
+        }
         List<String> tags = new ArrayList<>(tagCount);
         for (int i = 0; i < tagCount; i++) {
             String normalized = CargoManifestData.normalizeTagInput(buffer.readUtf(CargoManifestData.TAG_MAX_LENGTH));

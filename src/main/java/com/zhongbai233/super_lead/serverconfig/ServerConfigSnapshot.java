@@ -8,6 +8,7 @@ import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.resources.Identifier;
 
+/** S→C snapshot of editable runtime server config values. */
 public record ServerConfigSnapshot(Map<String, String> values) implements CustomPacketPayload {
     public static final CustomPacketPayload.Type<ServerConfigSnapshot> TYPE = new CustomPacketPayload.Type<>(
             Identifier.fromNamespaceAndPath(Super_lead.MODID, "server_config_snapshot"));

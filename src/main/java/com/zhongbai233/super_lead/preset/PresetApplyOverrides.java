@@ -23,12 +23,12 @@ public record PresetApplyOverrides(String presetName, Map<String, String> overri
     }
 
     private void write(RegistryFriendlyByteBuf buf) {
-        buf.writeUtf(presetName);
+        buf.writeUtf(presetName, PresetPayloadCodecs.NAME_MAX_LENGTH);
         PresetPayloadCodecs.writeStringMap(buf, overrides);
     }
 
     private static PresetApplyOverrides read(RegistryFriendlyByteBuf buf) {
-        String name = buf.readUtf();
+        String name = buf.readUtf(PresetPayloadCodecs.NAME_MAX_LENGTH);
         return new PresetApplyOverrides(name, PresetPayloadCodecs.readStringMap(buf));
     }
 }

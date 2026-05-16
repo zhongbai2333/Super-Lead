@@ -23,13 +23,15 @@ public record PresetEditKey(String presetName, String keyId, String value, boole
     }
 
     private void write(RegistryFriendlyByteBuf buf) {
-        buf.writeUtf(presetName);
-        buf.writeUtf(keyId);
-        buf.writeUtf(value);
+        buf.writeUtf(presetName, PresetPayloadCodecs.NAME_MAX_LENGTH);
+        buf.writeUtf(keyId, PresetPayloadCodecs.KEY_MAX_LENGTH);
+        buf.writeUtf(value, PresetPayloadCodecs.VALUE_MAX_LENGTH);
         buf.writeBoolean(clear);
     }
 
     private static PresetEditKey read(RegistryFriendlyByteBuf buf) {
-        return new PresetEditKey(buf.readUtf(), buf.readUtf(), buf.readUtf(), buf.readBoolean());
+        return new PresetEditKey(buf.readUtf(PresetPayloadCodecs.NAME_MAX_LENGTH),
+                buf.readUtf(PresetPayloadCodecs.KEY_MAX_LENGTH),
+                buf.readUtf(PresetPayloadCodecs.VALUE_MAX_LENGTH), buf.readBoolean());
     }
 }

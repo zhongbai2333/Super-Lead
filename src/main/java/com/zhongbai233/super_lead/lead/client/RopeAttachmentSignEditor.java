@@ -23,6 +23,15 @@ import net.minecraft.world.level.block.entity.SignBlockEntity;
 import net.minecraft.world.level.block.entity.SignText;
 import net.minecraft.world.level.block.state.BlockState;
 
+/**
+ * Client helper for editing sign-like rope attachments in-place.
+ *
+ * <p>
+ * The editor owns temporary UI state only; confirmed text is sent back through
+ * packets and validated server-side before it mutates the attachment stored on
+ * a
+ * rope connection.
+ */
 public final class RopeAttachmentSignEditor {
     private RopeAttachmentSignEditor() {
     }

@@ -26,6 +26,14 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.phys.Vec3;
 
+/**
+ * Client-side dynamic-light sampler for glowing or powered ropes.
+ *
+ * <p>
+ * It converts visible rope spans into temporary light sources while respecting
+ * render distance and chunk visibility. All state here is client presentation;
+ * it must not feed back into server gameplay.
+ */
 public final class RopeDynamicLights {
     private static final double SOURCE_RENDER_DISTANCE = 80.0D;
     private static final double SOURCE_RENDER_DISTANCE_SQR = SOURCE_RENDER_DISTANCE * SOURCE_RENDER_DISTANCE;
@@ -164,7 +172,7 @@ public final class RopeDynamicLights {
             Vec3 pa = RopeSagModel.point(a, b, ta, tuning.slack(), tuning.gravity(), fallback);
             Vec3 pb = RopeSagModel.point(a, b, tb, tuning.slack(), tuning.gravity(), fallback);
             Vec3 light = attachmentLightPosition(level, attachment.stack(), attachment.displayAsBlock(),
-                attachment.frontSide(), p.x, p.y, p.z, pa.x, pa.y, pa.z, pb.x, pb.y, pb.z);
+                    attachment.frontSide(), p.x, p.y, p.z, pa.x, pa.y, pa.z, pb.x, pb.y, pb.z);
             addLight(level, cameraPos, attachment.stack(), redstonePowered,
                     light.x, light.y, light.z, desired);
         }

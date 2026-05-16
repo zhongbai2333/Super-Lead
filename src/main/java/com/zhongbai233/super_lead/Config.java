@@ -4,6 +4,14 @@ import net.neoforged.fml.event.config.ModConfigEvent;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.neoforge.common.ModConfigSpec;
 
+/**
+ * Common-side config definition plus cached accessors for hot gameplay paths.
+ *
+ * <p>
+ * NeoForge config values are convenient but not free to read everywhere, so
+ * tick/render-sensitive systems should use the cached getter methods here after
+ * {@link #refreshCache()} has copied validated values from the spec.
+ */
 public final class Config {
     public static final int AE_CHANNEL_BASE = 8;
     /**
@@ -54,17 +62,17 @@ public final class Config {
                 .comment("Maximum upgrade tier for fluid leads.")
                 .defineInRange("fluid_tier_max", 4, 1, 12);
         NETWORK_PRESSURIZED_TIER_MAX = builder
-            .comment("Maximum upgrade tier for Mekanism pressurized (chemical/gas) leads.")
-            .defineInRange("pressurized_tier_max", 4, 1, 12);
+                .comment("Maximum upgrade tier for Mekanism pressurized (chemical/gas) leads.")
+                .defineInRange("pressurized_tier_max", 4, 1, 12);
         NETWORK_PRESSURIZED_BATCH_AMOUNT = builder
-            .comment("Per-rope batch amount for Mekanism chemical/gas transfers.")
-            .defineInRange("pressurized_batch_amount", 1000, 1, Integer.MAX_VALUE);
+                .comment("Per-rope batch amount for Mekanism chemical/gas transfers.")
+                .defineInRange("pressurized_batch_amount", 1000, 1, Integer.MAX_VALUE);
         NETWORK_THERMAL_TIER_MAX = builder
-            .comment("Maximum upgrade tier for Mekanism thermal leads.")
-            .defineInRange("thermal_tier_max", 4, 1, 12);
+                .comment("Maximum upgrade tier for Mekanism thermal leads.")
+                .defineInRange("thermal_tier_max", 4, 1, 12);
         NETWORK_THERMAL_TRANSFER = builder
-            .comment("Base heat units transferred per thermal lead per tick at tier 0.")
-            .defineInRange("thermal_transfer_per_tick", 1000.0D, 1.0D, 1.0e12D);
+                .comment("Base heat units transferred per thermal lead per tick at tier 0.")
+                .defineInRange("thermal_transfer_per_tick", 1000.0D, 1.0D, 1.0e12D);
         NETWORK_ITEM_TRANSFER_INTERVAL_TICKS = builder
                 .comment("Tick interval between item-lead transfer attempts. Lower = faster.")
                 .defineInRange("item_transfer_interval_ticks", 4, 1, 40);

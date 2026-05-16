@@ -8,6 +8,7 @@ import com.zhongbai233.super_lead.lead.SuperLeadNetwork;
 import com.zhongbai233.super_lead.lead.SuperLeadPayloads;
 import com.zhongbai233.super_lead.lead.SuperLeadSavedData;
 import com.zhongbai233.super_lead.lead.cargo.SuperLeadDataComponents;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -464,7 +465,8 @@ public final class PresetServerManager {
             return Optional.empty();
         }
 
-        binderStack.set(SuperLeadDataComponents.PRESET_BINDER.get(), new PresetBinderData(presetName, player.getUUID()));
+        binderStack.set(SuperLeadDataComponents.PRESET_BINDER.get(),
+                new PresetBinderData(presetName, player.getUUID()));
         player.getInventory().setChanged();
         player.sendSystemMessage(Component.translatable("message.super_lead.preset_binder.created", presetName)
                 .withStyle(ChatFormatting.GREEN));
@@ -493,7 +495,7 @@ public final class PresetServerManager {
         }
         if (!SuperLeadNetwork.canModifyRopes(player)) {
             player.sendSystemMessage(Component.translatable("message.super_lead.preset_binder.no_permission")
-                .withStyle(ChatFormatting.RED));
+                    .withStyle(ChatFormatting.RED));
             return false;
         }
 
@@ -560,6 +562,62 @@ public final class PresetServerManager {
         if (server == null)
             return;
         PacketDistributor.sendToPlayer(player, new PresetListResponse(library(server).list()));
+    }
+
+    public static void exportPresets(ServerPlayer player) {
+        if (!canManage(player))
+            return;
+        MinecraftServer server = player.level().getServer();
+        if (server == null)
+            return;
+        Path exchangeDir = RopePresetLibrary.exchangeDirectory(server);
+        int count = exportPresets(server);
+        if (count < 0) {
+            player.sendSystemMessage(Component.translatable("message.super_lead.preset.export_failed", exchangeDir)
+                    .withStyle(ChatFormatting.RED));
+            return;
+        }
+        player.sendSystemMessage(Component.translatable("message.super_lead.preset.exported", count, exchangeDir)
+                .withStyle(ChatFormatting.GREEN));
+    }
+
+    public static void importPresets(ServerPlayer player) {
+        if (!canManage(player))
+            return;
+        MinecraftServer server = player.level().getServer();
+        if (server == null)
+            return;
+        Path exchangeDir = RopePresetLibrary.exchangeDirectory(server);
+        int count = importPresets(server);
+        if (count < 0) {
+            player.sendSystemMessage(Component.translatable("message.super_lead.preset.import_failed", exchangeDir)
+                    .withStyle(ChatFormatting.RED));
+            return;
+        }
+        if (count == 0) {
+            player.sendSystemMessage(Component.translatable("message.super_lead.preset.import_none", exchangeDir)
+                    .withStyle(ChatFormatting.YELLOW));
+            return;
+        }
+        handleListRequest(player);
+        player.sendSystemMessage(Component.translatable("message.super_lead.preset.imported", count, exchangeDir)
+                .withStyle(ChatFormatting.GREEN));
+    }
+
+    public static int exportPresets(MinecraftServer server) {
+        if (!Config.allowOpVisualPresets())
+            return -1;
+        return library(server).exportAllTo(RopePresetLibrary.exchangeDirectory(server));
+    }
+
+    public static int importPresets(MinecraftServer server) {
+        if (!Config.allowOpVisualPresets())
+            return -1;
+        int count = library(server).importAllFrom(RopePresetLibrary.exchangeDirectory(server));
+        if (count > 0) {
+            refreshAllLoadedDimensions(server);
+        }
+        return count;
     }
 
     public static void handleDetailsRequest(ServerPlayer player, String name) {

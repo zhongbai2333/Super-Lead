@@ -11,6 +11,14 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.Level;
 
+/**
+ * Declarative registry of rope actions exposed to tools, keybinds and packets.
+ *
+ * <p>
+ * Each enum entry describes user-facing text, permission hints, cooldown and
+ * execution behavior. Keeping these actions data-driven avoids scattering
+ * right-click/keyboard behavior across item, packet and screen classes.
+ */
 public enum LeadConnectionAction {
     CUT(0x66FFEE84) {
         @Override

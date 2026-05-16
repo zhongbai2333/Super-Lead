@@ -25,6 +25,15 @@ import net.neoforged.neoforge.network.PacketDistributor;
  * authoritative-endpoint sag envelope, then applies a 3D contact response that
  * separates normal push, foot support, tangent friction and slack softening.
  */
+/**
+ * Server-side bridge from client-reported rope contact to gameplay pulses.
+ *
+ * <p>
+ * Clients own high-detail rendered rope geometry, so they report contact
+ * candidates. The server keeps the authoritative cooldowns and broadcasts
+ * compact
+ * contact pulses back to clients in the dimension.
+ */
 public final class RopeContactTracker {
     private static final double VISUAL_MAX_DEFLECT = 0.50D;
     private static final double CLIENT_REPORT_BASE_TOLERANCE = 0.85D;

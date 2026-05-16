@@ -5,6 +5,14 @@ import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 
+/**
+ * Terrain collision layer for the rope particle simulation.
+ *
+ * <p>
+ * It pushes rope particles out of block collision shapes while preserving the
+ * endpoint and length constraints handled by other layers. Keep this code
+ * allocation-light; it runs frequently for every visible dynamic rope.
+ */
 abstract class RopeSimulationTerrainConstraints extends RopeSimulationVisualState {
     protected RopeSimulationTerrainConstraints(Vec3 a, Vec3 b, long seed, RopeTuning tuning) {
         super(a, b, seed, tuning);

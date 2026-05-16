@@ -41,7 +41,8 @@ public record SyncDimensionPresets(Map<String, Map<String, String>> presets) imp
     }
 
     private void write(RegistryFriendlyByteBuf buffer) {
-        buffer.writeVarInt(presets.size());
+        PresetPayloadCodecs.writeCount(buffer, presets.size(), PresetPayloadCodecs.LIST_MAX_ENTRIES,
+                "dimension preset list");
         for (Map.Entry<String, Map<String, String>> entry : presets.entrySet()) {
             buffer.writeUtf(entry.getKey(), 64);
             PresetPayloadCodecs.writeStringMap(buffer, entry.getValue());
@@ -49,7 +50,8 @@ public record SyncDimensionPresets(Map<String, Map<String, String>> presets) imp
     }
 
     private static SyncDimensionPresets read(RegistryFriendlyByteBuf buffer) {
-        int size = buffer.readVarInt();
+        int size = PresetPayloadCodecs.readCount(buffer, PresetPayloadCodecs.LIST_MAX_ENTRIES,
+                "dimension preset list");
         Map<String, Map<String, String>> presets = new LinkedHashMap<>(Math.max(8, size));
         for (int i = 0; i < size; i++) {
             presets.put(buffer.readUtf(64), PresetPayloadCodecs.readStringMap(buffer));

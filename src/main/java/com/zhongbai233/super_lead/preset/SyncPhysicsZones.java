@@ -54,10 +54,11 @@ public record SyncPhysicsZones(List<Entry> zones) implements CustomPacketPayload
     }
 
     private void write(RegistryFriendlyByteBuf buffer) {
-        buffer.writeVarInt(zones.size());
+        PresetPayloadCodecs.writeCount(buffer, zones.size(), PresetPayloadCodecs.LIST_MAX_ENTRIES,
+                "physics zone list");
         for (Entry e : zones) {
-            buffer.writeUtf(e.name());
-            buffer.writeUtf(e.presetName());
+            buffer.writeUtf(e.name(), PresetPayloadCodecs.NAME_MAX_LENGTH);
+            buffer.writeUtf(e.presetName(), PresetPayloadCodecs.NAME_MAX_LENGTH);
             buffer.writeDouble(e.minX());
             buffer.writeDouble(e.minY());
             buffer.writeDouble(e.minZ());
@@ -69,12 +70,13 @@ public record SyncPhysicsZones(List<Entry> zones) implements CustomPacketPayload
     }
 
     private static SyncPhysicsZones read(RegistryFriendlyByteBuf buffer) {
-        int n = buffer.readVarInt();
+        int n = PresetPayloadCodecs.readCount(buffer, PresetPayloadCodecs.LIST_MAX_ENTRIES,
+                "physics zone list");
         List<Entry> list = new ArrayList<>(n);
         for (int i = 0; i < n; i++) {
             list.add(new Entry(
-                    buffer.readUtf(64),
-                    buffer.readUtf(64),
+                    buffer.readUtf(PresetPayloadCodecs.NAME_MAX_LENGTH),
+                    buffer.readUtf(PresetPayloadCodecs.NAME_MAX_LENGTH),
                     buffer.readDouble(), buffer.readDouble(), buffer.readDouble(),
                     buffer.readDouble(), buffer.readDouble(), buffer.readDouble(),
                     PresetPayloadCodecs.readStringMap(buffer)));

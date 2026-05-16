@@ -9,21 +9,22 @@ import net.neoforged.bus.api.IEventBus;
 import net.neoforged.neoforge.registries.DeferredHolder;
 import net.neoforged.neoforge.registries.DeferredRegister;
 
+/** Data component type registry for cargo manifests and preset binders. */
 public final class SuperLeadDataComponents {
     private static final DeferredRegister.DataComponents COMPONENTS = DeferredRegister
             .createDataComponents(Registries.DATA_COMPONENT_TYPE, Super_lead.MODID);
 
-    public static final DeferredHolder<DataComponentType<?>, DataComponentType<ItemContainerContents>> CARGO_MANIFEST_ITEMS =
-            COMPONENTS.registerComponentType("cargo_manifest_items", builder -> builder
+    public static final DeferredHolder<DataComponentType<?>, DataComponentType<ItemContainerContents>> CARGO_MANIFEST_ITEMS = COMPONENTS
+            .registerComponentType("cargo_manifest_items", builder -> builder
                     .persistent(ItemContainerContents.CODEC)
                     .networkSynchronized(ItemContainerContents.STREAM_CODEC)
                     .cacheEncoding());
 
-        public static final DeferredHolder<DataComponentType<?>, DataComponentType<PresetBinderData>> PRESET_BINDER =
-            COMPONENTS.registerComponentType("preset_binder", builder -> builder
-                .persistent(PresetBinderData.CODEC)
-                .networkSynchronized(PresetBinderData.STREAM_CODEC)
-                .cacheEncoding());
+    public static final DeferredHolder<DataComponentType<?>, DataComponentType<PresetBinderData>> PRESET_BINDER = COMPONENTS
+            .registerComponentType("preset_binder", builder -> builder
+                    .persistent(PresetBinderData.CODEC)
+                    .networkSynchronized(PresetBinderData.STREAM_CODEC)
+                    .cacheEncoding());
 
     private SuperLeadDataComponents() {
     }

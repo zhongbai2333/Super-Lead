@@ -37,6 +37,15 @@ import net.neoforged.neoforge.client.event.RegisterClientCommandsEvent;
 import net.neoforged.neoforge.client.event.SubmitCustomGeometryEvent;
 
 @EventBusSubscriber(modid = Super_lead.MODID, value = Dist.CLIENT)
+/**
+ * Client/server debug utility for spawning deterministic rope stress-test
+ * scenes.
+ *
+ * <p>
+ * Use this only from development commands or debug UI paths. It intentionally
+ * exercises dense rope networks and should stay isolated from normal gameplay
+ * event flow.
+ */
 public final class SuperLeadStressTest {
     private static final int MAX_COUNT = 20_000;
     private static final double DEFAULT_LENGTH = 8.0D;

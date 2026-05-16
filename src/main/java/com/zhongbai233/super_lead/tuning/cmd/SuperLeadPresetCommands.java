@@ -11,6 +11,7 @@ import com.zhongbai233.super_lead.preset.PresetServerManager;
 import com.zhongbai233.super_lead.preset.RopePreset;
 import com.zhongbai233.super_lead.preset.RopePresetLibrary;
 import com.zhongbai233.super_lead.tuning.ClientTuning;
+import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -41,6 +42,8 @@ public final class SuperLeadPresetCommands {
                 .requires(src -> src.permissions().hasPermission(OP))
                 .then(Commands.literal("preset")
                         .then(Commands.literal("list").executes(SuperLeadPresetCommands::list))
+                        .then(Commands.literal("export").executes(SuperLeadPresetCommands::exportAll))
+                        .then(Commands.literal("import").executes(SuperLeadPresetCommands::importAll))
                         .then(Commands.literal("show")
                                 .then(Commands.argument("name", StringArgumentType.word())
                                         .suggests(SUGGEST_PRESET)
@@ -87,6 +90,37 @@ public final class SuperLeadPresetCommands {
             ctx.getSource().sendSuccess(() -> Component.literal("  " + n).withStyle(ChatFormatting.AQUA), false);
         }
         return names.size();
+    }
+
+    private static int exportAll(CommandContext<CommandSourceStack> ctx) {
+        MinecraftServer server = ctx.getSource().getServer();
+        Path exchangeDir = RopePresetLibrary.exchangeDirectory(server);
+        int count = PresetServerManager.exportPresets(server);
+        if (count < 0) {
+            ctx.getSource().sendFailure(Component.literal("Could not export presets to " + exchangeDir));
+            return 0;
+        }
+        ctx.getSource().sendSuccess(() -> Component.literal("Exported " + count + " preset(s) to " + exchangeDir)
+                .withStyle(ChatFormatting.GREEN), true);
+        return Math.max(1, count);
+    }
+
+    private static int importAll(CommandContext<CommandSourceStack> ctx) {
+        MinecraftServer server = ctx.getSource().getServer();
+        Path exchangeDir = RopePresetLibrary.exchangeDirectory(server);
+        int count = PresetServerManager.importPresets(server);
+        if (count < 0) {
+            ctx.getSource().sendFailure(Component.literal("Could not import presets from " + exchangeDir));
+            return 0;
+        }
+        if (count == 0) {
+            ctx.getSource().sendSuccess(() -> Component.literal("No preset JSON files found in " + exchangeDir)
+                    .withStyle(ChatFormatting.YELLOW), false);
+            return 1;
+        }
+        ctx.getSource().sendSuccess(() -> Component.literal("Imported " + count + " preset(s) from " + exchangeDir)
+                .withStyle(ChatFormatting.GREEN), true);
+        return count;
     }
 
     private static int show(CommandContext<CommandSourceStack> ctx) {

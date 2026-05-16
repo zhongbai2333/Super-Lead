@@ -18,10 +18,10 @@ public record PresetDetailsRequest(String name) implements CustomPacketPayload {
     }
 
     private void write(RegistryFriendlyByteBuf buf) {
-        buf.writeUtf(name);
+        buf.writeUtf(name, PresetPayloadCodecs.NAME_MAX_LENGTH);
     }
 
     private static PresetDetailsRequest read(RegistryFriendlyByteBuf buf) {
-        return new PresetDetailsRequest(buf.readUtf());
+        return new PresetDetailsRequest(buf.readUtf(PresetPayloadCodecs.NAME_MAX_LENGTH));
     }
 }

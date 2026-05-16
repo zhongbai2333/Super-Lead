@@ -21,6 +21,16 @@ import net.minecraft.world.level.LightLayer;
 import net.minecraft.world.phys.Vec3;
 import net.minecraft.util.LightCoordsUtil;
 
+/**
+ * Builds static chunk-local rope mesh data for ropes that no longer need
+ * dynamic
+ * simulation.
+ *
+ * <p>
+ * The output is consumed by {@link StaticRopeChunkRegistry}; this builder keeps
+ * geometry deterministic per chunk section so upload/rebuild decisions can be
+ * made without touching gameplay state.
+ */
 public final class RopeStaticGeometry {
 
     private static final int NODE_COUNT = 16;

@@ -26,6 +26,15 @@ import net.neoforged.neoforge.event.level.ChunkWatchEvent;
 import net.neoforged.neoforge.event.tick.LevelTickEvent;
 
 @EventBusSubscriber(modid = Super_lead.MODID)
+/**
+ * Server/gameplay event hub for rope lifecycle maintenance.
+ *
+ * <p>
+ * This class wires NeoForge events into the rope systems: placement cleanup,
+ * transfer ticks, redstone updates, entity interaction hooks and data component
+ * registration. Keep one-off event glue here; move substantial state machines
+ * into package-private services so event handlers stay readable.
+ */
 public final class SuperLeadEvents {
     private SuperLeadEvents() {
     }

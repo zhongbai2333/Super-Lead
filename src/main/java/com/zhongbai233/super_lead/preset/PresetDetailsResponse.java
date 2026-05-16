@@ -24,13 +24,13 @@ public record PresetDetailsResponse(String name, boolean exists, Map<String, Str
     }
 
     private void write(RegistryFriendlyByteBuf buf) {
-        buf.writeUtf(name);
+        buf.writeUtf(name, PresetPayloadCodecs.NAME_MAX_LENGTH);
         buf.writeBoolean(exists);
         PresetPayloadCodecs.writeStringMap(buf, overrides);
     }
 
     private static PresetDetailsResponse read(RegistryFriendlyByteBuf buf) {
-        String name = buf.readUtf();
+        String name = buf.readUtf(PresetPayloadCodecs.NAME_MAX_LENGTH);
         boolean exists = buf.readBoolean();
         Map<String, String> overrides = PresetPayloadCodecs.readStringMap(buf);
         return new PresetDetailsResponse(name, exists, overrides);

@@ -20,10 +20,10 @@ public record PresetBinderCreate(boolean useOffhand, String displayName) impleme
 
     private void write(RegistryFriendlyByteBuf buffer) {
         buffer.writeBoolean(useOffhand);
-        buffer.writeUtf(displayName);
+        buffer.writeUtf(displayName, PresetPayloadCodecs.NAME_MAX_LENGTH);
     }
 
     private static PresetBinderCreate read(RegistryFriendlyByteBuf buffer) {
-        return new PresetBinderCreate(buffer.readBoolean(), buffer.readUtf());
+        return new PresetBinderCreate(buffer.readBoolean(), buffer.readUtf(PresetPayloadCodecs.NAME_MAX_LENGTH));
     }
 }

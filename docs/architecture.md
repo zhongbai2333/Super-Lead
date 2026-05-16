@@ -21,7 +21,7 @@
 | 渲染 | `lead/client/render/`, `lead/client/chunk/` | 动态几何、可见性剔除、静态绳区块烘焙 |
 | 调参 | `tuning/` | 本地客户端调参键、GUI、客户端命令、配置持久化 |
 | 预设与区域 | `preset/` | OP 预设包、物理区域、服务器推送/同步、区域选择 |
-| 服务端配置 GUI | `serverconfig/`, `preset/client/ServerConfigScreen.java` | OP 在线修改 common 配置并同步快照 |
+| 服务端配置 GUI | `serverconfig/`, `preset/client/ServerConfigScreen.java` | OP 在线修改 common 配置并同步快照；高风险性能参数需要 OP4 |
 | Mixin | `mixin/SignalGetterMixin.java` | 把红石牵绳信号接入原版 `SignalGetter#getSignal` |
 | 资源 | `src/main/resources/` | 语言、配方、物品模型、Mixin 配置 |
 
@@ -134,12 +134,13 @@
 
 `RopePresetLibrary` 是 JSON 文件库：
 
-- 目录：`<server directory>/config/super_lead/presets/`
+- 活跃目录：`<world directory>/serverconfig/super_lead/presets/`
+- 导入/导出交换目录：`<server directory>/config/super_lead/presets/`
 - 文件：`<presetName>.json`
 - 名称规则：`^[A-Za-z0-9_\-]{1,32}$`
 - 内容：预设名和 `TuningKey id -> string value` 的覆盖表。
 
-预设包不是维度存档的一部分；维度存档只保存区域引用了哪个预设包。
+预设包现在属于当前存档，避免预设绑定器或物理区域引用跨存档串台。旧的全局目录不再作为实时库使用，只作为一键导出/导入的交换目录；导入会复制 JSON 到当前存档的活跃目录并刷新已加载维度的预设缓存。
 
 ### 4.4 客户端本地调参文件
 

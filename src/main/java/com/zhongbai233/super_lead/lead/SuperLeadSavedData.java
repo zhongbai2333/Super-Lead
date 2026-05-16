@@ -23,6 +23,16 @@ import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.saveddata.SavedData;
 import net.minecraft.world.level.saveddata.SavedDataType;
 
+/**
+ * Authoritative per-dimension rope store on the server.
+ *
+ * <p>
+ * Ropes are indexed both by UUID and by chunk coverage. The chunk buckets are
+ * the persistence format and also feed chunk-scoped sync packets, so long ropes
+ * can be sent to every client watching any covered chunk without duplicating
+ * the
+ * canonical in-memory connection object.
+ */
 public final class SuperLeadSavedData extends SavedData {
     private static final Codec<RopeChunkBucket> BUCKET_CODEC = RecordCodecBuilder.create(instance -> instance.group(
             Codec.LONG.fieldOf("chunk").forGetter(RopeChunkBucket::chunkKey),

@@ -17,6 +17,15 @@ import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
 import net.minecraft.util.Mth;
 
+/**
+ * Client-side tuning screen for local visual/simulation preferences.
+ *
+ * <p>
+ * This is separate from the OP-only server config editor: changes here are
+ * written through {@link com.zhongbai233.super_lead.tuning.ClientTuning} and
+ * are
+ * meant for previewing and adjusting client presentation only.
+ */
 public final class SuperLeadConfigScreen extends Screen {
     static final int WIDGET_H = 16;
 

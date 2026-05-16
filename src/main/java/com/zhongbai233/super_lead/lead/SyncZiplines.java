@@ -9,7 +9,10 @@ import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.resources.Identifier;
 
-/** S→C snapshot of players currently riding Super Lead ziplines in this dimension. */
+/**
+ * S→C snapshot of players currently riding Super Lead ziplines in this
+ * dimension.
+ */
 public record SyncZiplines(List<Entry> entries) implements CustomPacketPayload {
     public record Entry(int entityId, UUID connectionId, float t) {
     }
@@ -29,7 +32,8 @@ public record SyncZiplines(List<Entry> entries) implements CustomPacketPayload {
     }
 
     private void write(RegistryFriendlyByteBuf buffer) {
-        buffer.writeVarInt(entries.size());
+        LeadConnectionPayloadCodec.writeCount(buffer, entries.size(),
+                LeadConnectionPayloadCodec.MAX_ZIPLINES_PER_PAYLOAD, "zipline");
         for (Entry entry : entries) {
             buffer.writeVarInt(entry.entityId());
             buffer.writeUUID(entry.connectionId());
@@ -38,7 +42,8 @@ public record SyncZiplines(List<Entry> entries) implements CustomPacketPayload {
     }
 
     private static SyncZiplines read(RegistryFriendlyByteBuf buffer) {
-        int count = buffer.readVarInt();
+        int count = LeadConnectionPayloadCodec.readCount(buffer,
+                LeadConnectionPayloadCodec.MAX_ZIPLINES_PER_PAYLOAD, "zipline");
         ArrayList<Entry> entries = new ArrayList<>(count);
         for (int i = 0; i < count; i++) {
             entries.add(new Entry(buffer.readVarInt(), buffer.readUUID(), buffer.readFloat()));

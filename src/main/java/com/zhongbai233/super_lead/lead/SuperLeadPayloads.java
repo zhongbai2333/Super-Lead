@@ -33,6 +33,16 @@ import net.neoforged.neoforge.network.PacketDistributor;
 import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
 import net.neoforged.neoforge.network.handling.IPayloadContext;
 
+/**
+ * Central registration point for Super Lead custom payloads.
+ *
+ * <p>
+ * Payload record classes stay small on purpose: each one owns its wire id and
+ * codec. This class wires those codecs to NeoForge directions and then
+ * delegates
+ * to gameplay managers. Keep transport validation here, but move substantial
+ * domain logic into the matching lead/cargo/preset/server-config service.
+ */
 public final class SuperLeadPayloads {
     private SuperLeadPayloads() {
     }
@@ -541,6 +551,8 @@ public final class SuperLeadPayloads {
         runOnServer(context, (player, level) -> {
             switch (payload.kind()) {
                 case PRESET_LIST -> PresetServerManager.handleListRequest(player);
+                case PRESET_EXPORT -> PresetServerManager.exportPresets(player);
+                case PRESET_IMPORT -> PresetServerManager.importPresets(player);
                 case ZONE_LIST -> {
                     if (PresetServerManager.canManage(player)) {
                         PresetServerManager.sendZones(player, level);

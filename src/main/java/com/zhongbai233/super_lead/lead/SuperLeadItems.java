@@ -14,6 +14,9 @@ import net.neoforged.neoforge.event.BuildCreativeModeTabContentsEvent;
 import net.neoforged.neoforge.registries.DeferredItem;
 import net.neoforged.neoforge.registries.DeferredRegister;
 
+/**
+ * Item registry and creative-tab population for all Super Lead tools/upgrades.
+ */
 public final class SuperLeadItems {
     private static final ResourceKey<CreativeModeTab> TOOLS_AND_UTILITIES = ResourceKey.create(
             Registries.CREATIVE_MODE_TAB,
@@ -22,13 +25,13 @@ public final class SuperLeadItems {
     public static final DeferredRegister.Items ITEMS = DeferredRegister.createItems(Super_lead.MODID);
     public static final DeferredItem<Item> SUPER_LEAD = ITEMS.registerSimpleItem("super_lead");
     public static final DeferredItem<CargoManifestItem> BASIC_CARGO_MANIFEST = ITEMS.registerItem(
-        "basic_cargo_manifest", properties -> new CargoManifestItem(properties, false),
+            "basic_cargo_manifest", properties -> new CargoManifestItem(properties, false),
             () -> new Item.Properties().stacksTo(1));
     public static final DeferredItem<CargoManifestItem> ADVANCED_CARGO_MANIFEST = ITEMS.registerItem(
-        "advanced_cargo_manifest", properties -> new CargoManifestItem(properties, true),
+            "advanced_cargo_manifest", properties -> new CargoManifestItem(properties, true),
             () -> new Item.Properties().stacksTo(1));
     public static final DeferredItem<PresetBinderItem> PRESET_BINDER = ITEMS.registerItem(
-        "preset_binder", PresetBinderItem::new,
+            "preset_binder", PresetBinderItem::new,
             () -> new Item.Properties().stacksTo(1));
 
     private SuperLeadItems() {

@@ -14,6 +14,14 @@ import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.client.event.RegisterClientCommandsEvent;
 
 @EventBusSubscriber(modid = Super_lead.MODID, value = Dist.CLIENT)
+/**
+ * Client-only tuning values used by render, simulation and debug UI paths.
+ *
+ * <p>
+ * These values are intentionally local and mutable so users can tune rope
+ * visuals without touching server gameplay config. Accessors should stay cheap;
+ * avoid doing file IO from render or physics hot paths.
+ */
 public final class ClientTuning {
     private static final Map<String, TuningKey<?>> KEYS = new LinkedHashMap<>();
     private static final List<BiConsumer<TuningKey<?>, Object>> LISTENERS = new CopyOnWriteArrayList<>();

@@ -6,6 +6,15 @@ import com.zhongbai233.super_lead.tuning.TuningKey;
 import java.util.Map;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 
+/**
+ * Lightweight rope preview model used by tuning screens.
+ *
+ * <p>
+ * It renders a deterministic sample rope independent of world state, making
+ * radius, sag and color changes immediately visible without spawning entities
+ * or
+ * touching the server simulation.
+ */
 public final class PreviewRope {
     private double spanMeters = 5.0D;
 

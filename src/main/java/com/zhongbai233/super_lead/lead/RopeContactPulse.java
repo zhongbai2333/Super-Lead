@@ -33,7 +33,8 @@ public record RopeContactPulse(List<Entry> contacts) implements CustomPacketPayl
     }
 
     private void write(RegistryFriendlyByteBuf buffer) {
-        buffer.writeVarInt(contacts.size());
+        LeadConnectionPayloadCodec.writeCount(buffer, contacts.size(),
+                LeadConnectionPayloadCodec.MAX_CONTACTS_PER_PAYLOAD, "rope contact");
         for (Entry e : contacts) {
             buffer.writeUUID(e.ropeId);
             buffer.writeUUID(e.playerId);
@@ -48,7 +49,8 @@ public record RopeContactPulse(List<Entry> contacts) implements CustomPacketPayl
     }
 
     private static RopeContactPulse read(RegistryFriendlyByteBuf buffer) {
-        int n = buffer.readVarInt();
+        int n = LeadConnectionPayloadCodec.readCount(buffer,
+                LeadConnectionPayloadCodec.MAX_CONTACTS_PER_PAYLOAD, "rope contact");
         List<Entry> list = new ArrayList<>(n);
         for (int i = 0; i < n; i++) {
             list.add(new Entry(

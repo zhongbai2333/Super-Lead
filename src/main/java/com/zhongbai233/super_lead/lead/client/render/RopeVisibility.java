@@ -9,6 +9,14 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 
+/**
+ * Visibility and distance helpers shared by rope renderers.
+ *
+ * <p>
+ * Centralizing frustum/range checks keeps render code consistent and prevents
+ * expensive geometry generation for ropes that cannot contribute to the current
+ * frame.
+ */
 public final class RopeVisibility {
     // Endpoint visibility samples used by the legacy whole-rope check. Kept for the
     // far LOD

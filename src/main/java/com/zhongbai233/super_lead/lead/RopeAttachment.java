@@ -9,6 +9,15 @@ import net.minecraft.network.codec.ByteBufCodecs;
 import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.world.item.ItemStack;
 
+/**
+ * Item or block-like decoration attached to a rope at parameter {@code t}.
+ *
+ * <p>
+ * {@code frontSide} stores the face shown to the viewer for directional
+ * attachments such as signs. The stack is copied/normalized so render and
+ * server
+ * drop logic can treat attachments as immutable samples.
+ */
 public record RopeAttachment(UUID id, double t, ItemStack stack, boolean displayAsBlock, int frontSide) {
     public static final Codec<RopeAttachment> CODEC = RecordCodecBuilder.create(instance -> instance.group(
             UUIDUtil.CODEC.fieldOf("id").forGetter(RopeAttachment::id),

@@ -26,7 +26,8 @@ public record SyncRopeChunk(ChunkPos chunk, List<LeadConnection> connections) im
 
     private void write(RegistryFriendlyByteBuf buffer) {
         buffer.writeChunkPos(chunk);
-        buffer.writeVarInt(connections.size());
+        LeadConnectionPayloadCodec.writeCount(buffer, connections.size(),
+                LeadConnectionPayloadCodec.MAX_CONNECTIONS_PER_PAYLOAD, "rope connection");
         for (LeadConnection connection : connections) {
             LeadConnectionPayloadCodec.writeConnection(buffer, connection);
         }
@@ -34,7 +35,8 @@ public record SyncRopeChunk(ChunkPos chunk, List<LeadConnection> connections) im
 
     private static SyncRopeChunk read(RegistryFriendlyByteBuf buffer) {
         ChunkPos chunk = buffer.readChunkPos();
-        int size = buffer.readVarInt();
+        int size = LeadConnectionPayloadCodec.readCount(buffer,
+                LeadConnectionPayloadCodec.MAX_CONNECTIONS_PER_PAYLOAD, "rope connection");
         ArrayList<LeadConnection> connections = new ArrayList<>(size);
         for (int i = 0; i < size; i++) {
             connections.add(LeadConnectionPayloadCodec.readConnection(buffer));

@@ -32,6 +32,17 @@ import org.joml.Matrix3f;
 import org.joml.Quaternionf;
 import org.joml.Vector3f;
 
+/**
+ * Renders rope attachments such as hanging items, signs, lanterns, and block
+ * samples.
+ *
+ * <p>
+ * This file still combines layout, block-state resolution, sign rendering,
+ * string geometry, and static baking. Those are good future split points, but
+ * the
+ * public entry points should remain thin render/bake methods used by the rope
+ * render pipeline.
+ */
 public final class RopeAttachmentRenderer {
     // Half-block render scale so attachments look like a small placed block.
     private static final float BLOCK_RENDER_SCALE = 0.50F;
@@ -199,7 +210,7 @@ public final class RopeAttachmentRenderer {
         HangFrame frame = computeFrame(ax, ay, az, bx, by, bz);
         Minecraft mc = Minecraft.getInstance();
         boolean asBlock = com.zhongbai233.super_lead.lead.RopeAttachmentItems.isBlockItem(stack)
-            || com.zhongbai233.super_lead.lead.RopeAttachmentItems.isPanelLikeItem(stack);
+                || com.zhongbai233.super_lead.lead.RopeAttachmentItems.isPanelLikeItem(stack);
         renderOne(collector, cameraPos, level, mc, mc.player, stack,
                 asBlock, false, viewerFrontSide(frame, px, py, pz, cameraPos),
                 px, py, pz, frame, lightPos, packedLight,
@@ -681,10 +692,10 @@ public final class RopeAttachmentRenderer {
             BlockProperty bp) {
         boolean asPanelItem = com.zhongbai233.super_lead.lead.RopeAttachmentItems.isPanelLikeItem(stack);
         boolean asBlockItem = displayAsBlock
-            && com.zhongbai233.super_lead.lead.RopeAttachmentItems.isBlockItem(stack);
+                && com.zhongbai233.super_lead.lead.RopeAttachmentItems.isBlockItem(stack);
         asBlockItem = asPanelItem || shouldRenderAsBlock(stack, displayAsBlock, bp);
         float bodyScale = isSignBlock(stack) ? SIGN_RENDER_SCALE
-            : asPanelItem ? PANEL_RENDER_SCALE : BLOCK_RENDER_SCALE;
+                : asPanelItem ? PANEL_RENDER_SCALE : BLOCK_RENDER_SCALE;
 
         // Pierced decision: explicit JSON value > shape-based heuristic
         boolean pierced;

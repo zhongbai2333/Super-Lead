@@ -10,6 +10,8 @@ import net.minecraft.resources.Identifier;
 public record ServerQuery(Kind kind) implements CustomPacketPayload {
     public enum Kind {
         PRESET_LIST,
+        PRESET_EXPORT,
+        PRESET_IMPORT,
         ZONE_LIST,
         SERVER_CONFIG
     }
@@ -25,6 +27,14 @@ public record ServerQuery(Kind kind) implements CustomPacketPayload {
 
     public static ServerQuery presetList() {
         return new ServerQuery(Kind.PRESET_LIST);
+    }
+
+    public static ServerQuery presetExport() {
+        return new ServerQuery(Kind.PRESET_EXPORT);
+    }
+
+    public static ServerQuery presetImport() {
+        return new ServerQuery(Kind.PRESET_IMPORT);
     }
 
     public static ServerQuery zoneList() {

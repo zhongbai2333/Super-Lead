@@ -23,12 +23,12 @@ public record PresetPromptOpen(String presetName, Map<String, String> overrides)
     }
 
     private void write(RegistryFriendlyByteBuf buf) {
-        buf.writeUtf(presetName);
+        buf.writeUtf(presetName, PresetPayloadCodecs.NAME_MAX_LENGTH);
         PresetPayloadCodecs.writeStringMap(buf, overrides);
     }
 
     private static PresetPromptOpen read(RegistryFriendlyByteBuf buf) {
-        String name = buf.readUtf();
+        String name = buf.readUtf(PresetPayloadCodecs.NAME_MAX_LENGTH);
         return new PresetPromptOpen(name, PresetPayloadCodecs.readStringMap(buf));
     }
 }

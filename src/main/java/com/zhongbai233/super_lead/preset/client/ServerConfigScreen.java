@@ -4,6 +4,7 @@ import com.zhongbai233.super_lead.Config;
 import com.zhongbai233.super_lead.preset.ServerQuery;
 import com.zhongbai233.super_lead.preset.RopePresetLibrary;
 import com.zhongbai233.super_lead.preset.SyncPhysicsZones;
+import com.zhongbai233.super_lead.serverconfig.ServerConfigManager;
 import com.zhongbai233.super_lead.serverconfig.ServerConfigSet;
 import com.zhongbai233.super_lead.serverconfig.client.ServerConfigClient;
 import java.util.ArrayList;
@@ -22,6 +23,15 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.util.Mth;
 import net.neoforged.neoforge.client.network.ClientPacketDistributor;
 
+/**
+ * Operator-facing runtime server-config editor.
+ *
+ * <p>
+ * The screen renders a whitelisted subset of common config values and sends
+ * typed mutation requests back to the server. Treat it as a thin UX layer:
+ * value
+ * bounds and permission checks must stay server-side.
+ */
 public final class ServerConfigScreen extends Screen {
     private static final int PADDING = 8;
     private static final int TAB_HEIGHT = 18;
@@ -304,6 +314,18 @@ public final class ServerConfigScreen extends Screen {
                 b -> tryCreatePreset(box.getValue()))
                 .bounds(boxX + boxW + 4, btnY, createW, 14).build();
         addRenderableWidget(create);
+
+        int detailW = Math.max(120, rowW - listW - 12);
+        int ioW = Math.max(54, Math.min(80, (detailW - 4) / 2));
+        addRenderableWidget(Button.builder(Component.translatable("super_lead.preset.op_screen.export"),
+                b -> ClientPacketDistributor.sendToServer(ServerQuery.presetExport()))
+                .bounds(detailX, btnY, ioW, 14).build());
+        addRenderableWidget(Button.builder(Component.translatable("super_lead.preset.op_screen.import"),
+                b -> {
+                    lastListMs = 0;
+                    ClientPacketDistributor.sendToServer(ServerQuery.presetImport());
+                })
+                .bounds(detailX + ioW + 4, btnY, ioW, 14).build());
         btnY += 18;
 
         // preset rows
@@ -503,7 +525,12 @@ public final class ServerConfigScreen extends Screen {
         int valueX = this.width - PADDING - 100;
         for (FieldDef field : SERVER_FIELDS) {
             if (y >= bodyTop - ROW_H && y <= bodyBottom) {
-                graphics.text(this.font, Component.translatable(field.label()), PADDING, y + 4, 0xFFE8E8E8);
+                Component label = Component.translatable(field.label());
+                if (ServerConfigManager.isDangerousKey(field.id())) {
+                    label = label.copy().append(Component.literal(" OP4")
+                            .withStyle(net.minecraft.ChatFormatting.RED));
+                }
+                graphics.text(this.font, label, PADDING, y + 4, 0xFFE8E8E8);
                 graphics.text(this.font, Component.literal(field.id()).copy()
                         .withStyle(net.minecraft.ChatFormatting.GRAY),
                         PADDING + 200, y + 4, 0xFF888888);

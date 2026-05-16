@@ -1,27 +1,19 @@
 package com.zhongbai233.super_lead.lead;
 
 import com.zhongbai233.super_lead.Config;
-import com.zhongbai233.super_lead.lead.cargo.CargoManifestData;
-import com.zhongbai233.super_lead.lead.integration.ae2.AE2NetworkBridge;
-import com.zhongbai233.super_lead.lead.integration.mekanism.MekanismChemicalBridge;
-import com.zhongbai233.super_lead.lead.integration.mekanism.MekanismHeatBridge;
 import com.zhongbai233.super_lead.preset.PresetServerManager;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
-import java.util.function.IntSupplier;
 import java.util.function.Predicate;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.particles.DustParticleOptions;
-import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.SignalGetter;
@@ -32,22 +24,26 @@ import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.Level;
-import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.FenceBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import net.minecraft.world.phys.shapes.VoxelShape;
-import net.neoforged.neoforge.capabilities.BlockCapability;
-import net.neoforged.neoforge.capabilities.Capabilities;
-import net.neoforged.neoforge.transfer.ResourceHandler;
-import net.neoforged.neoforge.transfer.energy.EnergyHandler;
-import net.neoforged.neoforge.transfer.fluid.FluidResource;
-import net.neoforged.neoforge.transfer.fluid.FluidUtil;
-import net.neoforged.neoforge.transfer.item.ItemResource;
-import net.neoforged.neoforge.transfer.resource.Resource;
-import net.neoforged.neoforge.transfer.transaction.Transaction;
 
+/**
+ * Server/client facade for rope gameplay operations.
+ *
+ * <p>
+ * This class is intentionally being slimmed down into smaller collaborators.
+ * Keep new stateful subsystems out of here when possible: client chunk mirrors
+ * live in {@link LeadClientConnectionCache}, first-click placement state lives
+ * in
+ * {@link LeadPlacementState}, resource transport lives in
+ * {@link LeadTransferService}, redstone/energy state lives in
+ * {@link LeadSignalService}, and future attachment/removal services should
+ * follow
+ * the same package-private helper pattern.
+ */
 public final class SuperLeadNetwork {
     public static final double MAX_LEASH_DISTANCE = 12.0D;
     private static final double SERVER_CONFIRMED_PICK_RADIUS = 0.95D;
@@ -64,27 +60,7 @@ public final class SuperLeadNetwork {
     private static final double SERVER_CLAIM_ROPE_RADIUS = 1.35D;
     private static final double SERVER_CLAIM_T_SLACK = 0.35D;
     private static final double SERVER_CLAIM_BLOCK_SLACK = 1.10D;
-    private static final Map<NetworkKey, List<LeadConnection>> CONNECTIONS = new HashMap<>();
-    private static final Map<NetworkKey, Map<UUID, LeadConnection>> CLIENT_CONNECTIONS_BY_ID = new HashMap<>();
-    private static final Map<NetworkKey, Map<Long, Set<UUID>>> CLIENT_CHUNK_CONNECTIONS = new HashMap<>();
-    private static final Map<NetworkKey, Map<UUID, Integer>> CLIENT_CONNECTION_REFCOUNTS = new HashMap<>();
-    private static final Map<PlayerKey, PendingLead> PENDING_LEADS = new HashMap<>();
     private static final Map<UUID, Long> INTERIOR_BLOCKED_SINCE = new HashMap<>();
-    // Sticky "recently active" deadline per ENERGY connection (gameTime tick at
-    // which power expires).
-    // Avoids visual flicker when transfer is intermittent (e.g. source pulses,
-    // target capped).
-    private static final Map<UUID, Long> ENERGY_ACTIVE_UNTIL = new HashMap<>();
-    private static final long ENERGY_STICKY_TICKS = 40L;
-    // Round-robin cursor per ITEM extract source position. Keyed by BlockPos so
-    // that ropes
-    // anchored to different faces of the same source block share one queue (a "rope
-    // knot").
-    private static final Map<BlockPos, Integer> ITEM_RR_CURSOR = new HashMap<>();
-    private static final Map<BlockPos, Integer> FLUID_RR_CURSOR = new HashMap<>();
-    private static final Map<BlockPos, Integer> PRESSURIZED_RR_CURSOR = new HashMap<>();
-    private static final int MAX_TRANSFER_SEARCH_DEPTH = 64;
-    private static final int ITEM_PULSE_DURATION_TICKS = 10;
     private static final long STUCK_CHECK_INTERVAL_TICKS = 5L;
     private static final long STUCK_BREAK_TICKS = 100L;
     private static final double STUCK_SAMPLE_STEP = 0.20D;
@@ -92,7 +68,6 @@ public final class SuperLeadNetwork {
     private static final double STUCK_INSIDE_EPS = 1.0e-4D;
     public static final int ITEM_TIER_MAX = 6;
     public static final int FLUID_TIER_MAX = 4;
-    private static final ThreadLocal<Boolean> SUPPRESS_LEAD_SIGNALS = ThreadLocal.withInitial(() -> false);
 
     private SuperLeadNetwork() {
     }
@@ -128,15 +103,11 @@ public final class SuperLeadNetwork {
     }
 
     public static Optional<LeadAnchor> pendingAnchor(Player player) {
-        return pendingLead(player).map(PendingLead::anchor);
+        return LeadPlacementState.pendingAnchor(player);
     }
 
     public static Optional<LeadKind> pendingKind(Player player) {
-        return pendingLead(player).map(PendingLead::kind);
-    }
-
-    private static Optional<PendingLead> pendingLead(Player player) {
-        return Optional.ofNullable(PENDING_LEADS.get(PlayerKey.of(player)));
+        return LeadPlacementState.pendingKind(player);
     }
 
     public static void setPendingAnchor(Player player, LeadAnchor anchor) {
@@ -144,11 +115,11 @@ public final class SuperLeadNetwork {
     }
 
     public static void setPendingAnchor(Player player, LeadAnchor anchor, LeadKind kind) {
-        PENDING_LEADS.put(PlayerKey.of(player), new PendingLead(anchor, kind));
+        LeadPlacementState.setPendingAnchor(player, anchor, kind);
     }
 
     public static void clearPendingAnchor(Player player) {
-        PENDING_LEADS.remove(PlayerKey.of(player));
+        LeadPlacementState.clearPendingAnchor(player);
     }
 
     public static LeadConnection connect(Level level, LeadAnchor from, LeadAnchor to) {
@@ -193,7 +164,7 @@ public final class SuperLeadNetwork {
         if (!level.isClientSide() && level instanceof ServerLevel serverLevel) {
             return SuperLeadSavedData.get(serverLevel).connections();
         }
-        return CONNECTIONS.getOrDefault(NetworkKey.of(level), List.of());
+        return LeadClientConnectionCache.connections(level);
     }
 
     private static List<LeadConnection> connectionsOfKind(Level level, LeadKind kind) {
@@ -210,109 +181,28 @@ public final class SuperLeadNetwork {
     }
 
     public static void replaceConnections(Level level, List<LeadConnection> connections) {
-        NetworkKey key = NetworkKey.of(level);
-        CONNECTIONS.put(key, new ArrayList<>(connections));
-        Map<UUID, LeadConnection> byId = new LinkedHashMap<>();
-        for (LeadConnection connection : connections) {
-            byId.put(connection.id(), connection);
-        }
-        CLIENT_CONNECTIONS_BY_ID.put(key, byId);
-        CLIENT_CHUNK_CONNECTIONS.remove(key);
-        CLIENT_CONNECTION_REFCOUNTS.remove(key);
+        LeadClientConnectionCache.replaceAll(level, connections);
     }
 
+    /**
+     * Applies a delta payload to the client-side mirror. Server data is stored in
+     * SavedData.
+     */
     public static void applyConnectionChanges(Level level, List<UUID> removed, List<LeadConnection> upserts) {
-        NetworkKey key = NetworkKey.of(level);
-        Map<UUID, LeadConnection> byId = CLIENT_CONNECTIONS_BY_ID.computeIfAbsent(key, ignored -> {
-            Map<UUID, LeadConnection> out = new LinkedHashMap<>();
-            for (LeadConnection connection : CONNECTIONS.getOrDefault(key, List.of())) {
-                out.put(connection.id(), connection);
-            }
-            return out;
-        });
-        if (!removed.isEmpty()) {
-            for (UUID id : removed) {
-                byId.remove(id);
-            }
-        }
-
-        for (LeadConnection upsert : upserts) {
-            byId.put(upsert.id(), upsert);
-        }
-        rebuildClientConnectionList(key);
+        LeadClientConnectionCache.applyChanges(level, removed, upserts);
     }
 
+    /** Replaces the client-side rope snapshot for one watched chunk. */
     public static void replaceChunkConnections(Level level, ChunkPos chunk, List<LeadConnection> connections) {
-        NetworkKey key = NetworkKey.of(level);
-        long chunkKey = SuperLeadSavedData.chunkKey(chunk);
-        Map<Long, Set<UUID>> byChunk = CLIENT_CHUNK_CONNECTIONS.computeIfAbsent(key, ignored -> new HashMap<>());
-        Map<UUID, Integer> refCounts = CLIENT_CONNECTION_REFCOUNTS.computeIfAbsent(key, ignored -> new HashMap<>());
-        Map<UUID, LeadConnection> byId = CLIENT_CONNECTIONS_BY_ID.computeIfAbsent(key,
-                ignored -> new LinkedHashMap<>());
-
-        Set<UUID> oldIds = byChunk.remove(chunkKey);
-        if (oldIds != null) {
-            for (UUID id : oldIds) {
-                decrementClientRef(byId, refCounts, id);
-            }
-        }
-
-        LinkedHashSet<UUID> newIds = new LinkedHashSet<>();
-        for (LeadConnection connection : connections) {
-            if (!newIds.add(connection.id()))
-                continue;
-            byId.put(connection.id(), connection);
-            refCounts.put(connection.id(), refCounts.getOrDefault(connection.id(), 0) + 1);
-        }
-        if (!newIds.isEmpty()) {
-            byChunk.put(chunkKey, newIds);
-        }
-        pruneUnreferencedClientConnections(key);
-        rebuildClientConnectionList(key);
+        LeadClientConnectionCache.replaceChunk(level, chunk, connections);
     }
 
+    /**
+     * Drops one watched chunk from the client mirror, preserving ropes referenced
+     * by other watched chunks.
+     */
     public static void unloadChunkConnections(Level level, ChunkPos chunk) {
-        NetworkKey key = NetworkKey.of(level);
-        Map<Long, Set<UUID>> byChunk = CLIENT_CHUNK_CONNECTIONS.get(key);
-        if (byChunk == null) {
-            return;
-        }
-        Set<UUID> oldIds = byChunk.remove(SuperLeadSavedData.chunkKey(chunk));
-        if (oldIds == null || oldIds.isEmpty()) {
-            return;
-        }
-        Map<UUID, Integer> refCounts = CLIENT_CONNECTION_REFCOUNTS.computeIfAbsent(key, ignored -> new HashMap<>());
-        Map<UUID, LeadConnection> byId = CLIENT_CONNECTIONS_BY_ID.computeIfAbsent(key,
-                ignored -> new LinkedHashMap<>());
-        for (UUID id : oldIds) {
-            decrementClientRef(byId, refCounts, id);
-        }
-        pruneUnreferencedClientConnections(key);
-        rebuildClientConnectionList(key);
-    }
-
-    private static void decrementClientRef(Map<UUID, LeadConnection> byId, Map<UUID, Integer> refCounts, UUID id) {
-        int next = refCounts.getOrDefault(id, 0) - 1;
-        if (next <= 0) {
-            refCounts.remove(id);
-            byId.remove(id);
-        } else {
-            refCounts.put(id, next);
-        }
-    }
-
-    private static void pruneUnreferencedClientConnections(NetworkKey key) {
-        Map<UUID, LeadConnection> byId = CLIENT_CONNECTIONS_BY_ID.get(key);
-        Map<UUID, Integer> refCounts = CLIENT_CONNECTION_REFCOUNTS.get(key);
-        if (byId == null || refCounts == null) {
-            return;
-        }
-        byId.keySet().removeIf(id -> refCounts.getOrDefault(id, 0) <= 0);
-    }
-
-    private static void rebuildClientConnectionList(NetworkKey key) {
-        Map<UUID, LeadConnection> byId = CLIENT_CONNECTIONS_BY_ID.get(key);
-        CONNECTIONS.put(key, byId == null ? new ArrayList<>() : new ArrayList<>(byId.values()));
+        LeadClientConnectionCache.unloadChunk(level, chunk);
     }
 
     public static void pruneInvalid(Level level) {
@@ -620,11 +510,7 @@ public final class SuperLeadNetwork {
         if (!level.isClientSide() && level instanceof ServerLevel serverLevel) {
             return SuperLeadSavedData.get(serverLevel).find(id);
         }
-        Map<UUID, LeadConnection> byId = CLIENT_CONNECTIONS_BY_ID.get(NetworkKey.of(level));
-        if (byId != null) {
-            return Optional.ofNullable(byId.get(id));
-        }
-        return Optional.empty();
+        return LeadClientConnectionCache.find(level, id);
     }
 
     /**
@@ -1277,807 +1163,35 @@ public final class SuperLeadNetwork {
     }
 
     public static void tickRedstone(ServerLevel level) {
-        SuperLeadSavedData data = SuperLeadSavedData.get(level);
-        List<LeadConnection> redstoneConnections = data.connectionsOfKind(LeadKind.REDSTONE);
-        if (redstoneConnections.isEmpty()) {
-            return;
-        }
-
-        boolean changed = false;
-        boolean[] visited = new boolean[redstoneConnections.size()];
-        Map<LeadAnchor, List<Integer>> connectionsByAnchor = indexConnectionsByAnchor(redstoneConnections);
-        RedstoneTraversalCache redstoneCache = new RedstoneTraversalCache(level);
-        for (int i = 0; i < redstoneConnections.size(); i++) {
-            if (visited[i]) {
-                continue;
-            }
-
-            List<Integer> component = new ArrayList<>();
-            component.add(i);
-            visited[i] = true;
-            int power = 0;
-
-            for (int cursor = 0; cursor < component.size(); cursor++) {
-                LeadConnection current = redstoneConnections.get(component.get(cursor));
-                power = Math.max(power, redstoneCache.externalSignalAt(current.from()));
-                power = Math.max(power, redstoneCache.externalSignalAt(current.to()));
-
-                addUnvisitedNeighborsBridge(redstoneCache, current.from(), connectionsByAnchor, visited, component);
-                addUnvisitedNeighborsBridge(redstoneCache, current.to(), connectionsByAnchor, visited, component);
-            }
-
-            final int componentPower = power;
-            for (int index : component) {
-                LeadConnection connection = redstoneConnections.get(index);
-                if (connection.power() == componentPower) {
-                    continue;
-                }
-
-                changed |= data.update(connection.id(), oldConnection -> oldConnection.withPower(componentPower),
-                        false);
-                notifyRedstoneChange(level, connection.withPower(componentPower));
-            }
-        }
-
-        if (changed) {
-            SuperLeadPayloads.sendToDimension(level);
-        }
+        LeadSignalService.tickRedstone(level);
     }
 
     public static void tickEnergy(ServerLevel level) {
-        SuperLeadSavedData data = SuperLeadSavedData.get(level);
-        List<LeadConnection> energyConnections = data.connectionsOfKind(LeadKind.ENERGY);
-        if (energyConnections.isEmpty()) {
-            return;
-        }
-
-        long now = level.getGameTime();
-        EnergyHandlerCache energyHandlers = new EnergyHandlerCache();
-        Set<UUID> transferredIds = new HashSet<>();
-        boolean[] visited = new boolean[energyConnections.size()];
-        Map<LeadAnchor, List<Integer>> connectionsByAnchor = indexConnectionsByAnchor(energyConnections);
-        RedstoneTraversalCache bridgeCache = new RedstoneTraversalCache(level);
-        for (int i = 0; i < energyConnections.size(); i++) {
-            if (visited[i]) {
-                continue;
-            }
-
-            List<Integer> component = new ArrayList<>();
-            component.add(i);
-            visited[i] = true;
-
-            for (int cursor = 0; cursor < component.size(); cursor++) {
-                LeadConnection current = energyConnections.get(component.get(cursor));
-                addUnvisitedNeighborsBridge(bridgeCache, current.from(), connectionsByAnchor, visited, component);
-                addUnvisitedNeighborsBridge(bridgeCache, current.to(), connectionsByAnchor, visited, component);
-            }
-
-            transferEnergyComponent(level, component, energyConnections, transferredIds, energyHandlers);
-        }
-
-        // Refresh sticky deadlines for connections that actually moved energy this
-        // tick.
-        for (UUID id : transferredIds) {
-            ENERGY_ACTIVE_UNTIL.put(id, now + ENERGY_STICKY_TICKS);
-        }
-
-        boolean changed = false;
-        Set<UUID> currentIds = new HashSet<>();
-        for (LeadConnection connection : energyConnections) {
-            currentIds.add(connection.id());
-            Long until = ENERGY_ACTIVE_UNTIL.get(connection.id());
-            int newPower = (until != null && until >= now) ? 1 : 0;
-            if (connection.power() != newPower) {
-                changed |= data.update(connection.id(), c -> c.withPower(newPower), false);
-            }
-        }
-        // Drop deadlines for connections that no longer exist.
-        ENERGY_ACTIVE_UNTIL.keySet().retainAll(currentIds);
-        if (changed) {
-            SuperLeadPayloads.sendToDimension(level);
-        }
-    }
-
-    private static void transferEnergyComponent(ServerLevel level, List<Integer> component,
-            List<LeadConnection> energyConnections, Set<UUID> transferredIds, EnergyHandlerCache energyHandlers) {
-        List<EnergyEndpoint> endpoints = new ArrayList<>();
-        Set<LeadAnchor> seenAnchors = new HashSet<>();
-        int componentRate = 0;
-        long base = Config.energyBaseTransfer();
-        for (int index : component) {
-            LeadConnection connection = energyConnections.get(index);
-            int tier = Math.min(30, connection.tier());
-            long rate = base << tier;
-            componentRate = (int) Math.min(Integer.MAX_VALUE, (long) componentRate + rate);
-            addEnergyEndpoint(level, connection.from(), endpoints, seenAnchors, energyHandlers);
-            addEnergyEndpoint(level, connection.to(), endpoints, seenAnchors, energyHandlers);
-        }
-
-        boolean componentMoved = false;
-        for (int i = 0; i < endpoints.size(); i++) {
-            for (int j = i + 1; j < endpoints.size(); j++) {
-                EnergyEndpoint a = endpoints.get(i);
-                EnergyEndpoint b = endpoints.get(j);
-                double fillA = energyFillRatio(a.handler());
-                double fillB = energyFillRatio(b.handler());
-                int moved;
-                if (fillA > fillB + 1.0e-6D) {
-                    moved = transferEnergy(a.handler(), b.handler(), componentRate);
-                } else if (fillB > fillA + 1.0e-6D) {
-                    moved = transferEnergy(b.handler(), a.handler(), componentRate);
-                } else {
-                    moved = 0;
-                }
-                if (moved > 0) {
-                    componentMoved = true;
-                }
-            }
-        }
-        if (componentMoved) {
-            for (int index : component) {
-                transferredIds.add(energyConnections.get(index).id());
-            }
-        }
-    }
-
-    private static void addEnergyEndpoint(ServerLevel level, LeadAnchor anchor, List<EnergyEndpoint> endpoints,
-            Set<LeadAnchor> seenAnchors, EnergyHandlerCache energyHandlers) {
-        if (!seenAnchors.add(anchor)) {
-            return;
-        }
-
-        EnergyHandler handler = energyHandlers.get(level, anchor);
-        if (handler != null && handler.getCapacityAsLong() > 0L) {
-            endpoints.add(new EnergyEndpoint(anchor, handler));
-        }
-    }
-
-    private static double energyFillRatio(EnergyHandler handler) {
-        long capacity = handler.getCapacityAsLong();
-        if (capacity <= 0L) {
-            return 0.0D;
-        }
-        return handler.getAmountAsLong() / (double) capacity;
-    }
-
-    private static int transferEnergy(EnergyHandler source, EnergyHandler target, int maxAmount) {
-        int transferable;
-        try (Transaction transaction = Transaction.openRoot()) {
-            int extracted = source.extract(maxAmount, transaction);
-            if (extracted <= 0) {
-                return 0;
-            }
-            transferable = target.insert(extracted, transaction);
-        }
-
-        if (transferable <= 0) {
-            return 0;
-        }
-
-        try (Transaction transaction = Transaction.openRoot()) {
-            int extracted = source.extract(transferable, transaction);
-            if (extracted <= 0) {
-                return 0;
-            }
-            int inserted = target.insert(extracted, transaction);
-            if (inserted != extracted) {
-                return 0;
-            }
-
-            transaction.commit();
-            return inserted;
-        }
+        LeadSignalService.tickEnergy(level);
     }
 
     public static void tickItem(ServerLevel level) {
-        if (level.getGameTime() % Config.itemTransferIntervalTicks() != 0L) {
-            return;
-        }
-        tickTransfer(level, LeadKind.ITEM, Capabilities.Item.BLOCK, ITEM_RR_CURSOR,
-                rope -> Math.min(64, 1 << Math.min(Config.itemTierMax(), rope.tier())));
+        LeadTransferService.tickItem(level);
     }
 
     public static void tickFluid(ServerLevel level) {
-        if (level.getGameTime() % Config.itemTransferIntervalTicks() != 0L) {
-            return;
-        }
-        tickTransfer(level, LeadKind.FLUID, Capabilities.Fluid.BLOCK, FLUID_RR_CURSOR,
-                rope -> Config.fluidBucketAmount() * (1 << Math.min(Config.fluidTierMax(), rope.tier())));
+        LeadTransferService.tickFluid(level);
     }
 
     public static void tickPressurized(ServerLevel level) {
-        if (level.getGameTime() % Config.itemTransferIntervalTicks() != 0L || !isMekanismLoaded()) {
-            return;
-        }
-        tickPressurizedTransfer(level);
+        LeadTransferService.tickPressurized(level);
     }
 
     public static void tickThermal(ServerLevel level) {
-        if (!isMekanismLoaded()) {
-            return;
-        }
-
-        List<LeadConnection> thermalConnections = SuperLeadSavedData.get(level).connectionsOfKind(LeadKind.THERMAL);
-        if (thermalConnections.isEmpty()) {
-            return;
-        }
-
-        MekanismHeatBridge.HandlerCache heatHandlers = new MekanismHeatBridge.HandlerCache();
-        boolean[] visited = new boolean[thermalConnections.size()];
-        Map<BlockPos, List<Integer>> connectionsByPos = indexConnectionsByBlockPos(thermalConnections);
-        for (int i = 0; i < thermalConnections.size(); i++) {
-            if (visited[i]) {
-                continue;
-            }
-
-            List<Integer> component = new ArrayList<>();
-            component.add(i);
-            visited[i] = true;
-
-            for (int cursor = 0; cursor < component.size(); cursor++) {
-                LeadConnection current = thermalConnections.get(component.get(cursor));
-                addUnvisitedNeighborsByPos(current.from().pos(), connectionsByPos, visited, component);
-                addUnvisitedNeighborsByPos(current.to().pos(), connectionsByPos, visited, component);
-            }
-
-            balanceThermalComponent(level, component, thermalConnections, heatHandlers);
-        }
+        LeadTransferService.tickThermal(level);
     }
 
     public static void tickAeNetwork(ServerLevel level) {
-        if (!isAe2Loaded()) {
-            return;
-        }
-        List<LeadConnection> aeConnections = SuperLeadSavedData.get(level).connectionsOfKind(LeadKind.AE_NETWORK);
-        AE2NetworkBridge.reconcile(level, aeConnections);
-    }
-
-    private static void tickPressurizedTransfer(ServerLevel level) {
-        SuperLeadSavedData data = SuperLeadSavedData.get(level);
-
-        List<LeadConnection> pressurizedConnections = data.connectionsOfKind(LeadKind.PRESSURIZED);
-        if (pressurizedConnections.isEmpty()) {
-            return;
-        }
-
-        MekanismChemicalBridge.HandlerCache chemicalHandlers = new MekanismChemicalBridge.HandlerCache();
-        Map<BlockPos, List<LeadConnection>> ropesAt = new HashMap<>();
-        Map<BlockPos, List<LeadConnection>> startsBySource = new HashMap<>();
-        for (LeadConnection c : pressurizedConnections) {
-            BlockPos a = c.from().pos().immutable();
-            BlockPos b = c.to().pos().immutable();
-            ropesAt.computeIfAbsent(a, k -> new ArrayList<>()).add(c);
-            if (!a.equals(b)) {
-                ropesAt.computeIfAbsent(b, k -> new ArrayList<>()).add(c);
-            }
-
-            LeadAnchor src = c.extractSource();
-            if (src != null) {
-                startsBySource.computeIfAbsent(src.pos().immutable(), k -> new ArrayList<>()).add(c);
-            }
-        }
-
-        for (Map.Entry<BlockPos, List<LeadConnection>> entry : startsBySource.entrySet()) {
-            BlockPos sourcePos = entry.getKey();
-            List<LeadConnection> ropes = entry.getValue();
-            if (ropes.isEmpty()) {
-                continue;
-            }
-
-            int n = ropes.size();
-            int start = PRESSURIZED_RR_CURSOR.getOrDefault(sourcePos, 0) % n;
-
-            for (int step = 0; step < n; step++) {
-                int idx = (start + step) % n;
-                LeadConnection rope = ropes.get(idx);
-                LeadAnchor sourceAnchor = rope.extractSource();
-                LeadAnchor firstFar = rope.extractTarget();
-                if (sourceAnchor == null || firstFar == null
-                        || !chemicalHandlers.has(level, sourceAnchor)) {
-                    continue;
-                }
-
-                long batch = pressurizedBatch(rope);
-                List<PathStep> path = new ArrayList<>();
-                List<RrChoice> rrChoices = new ArrayList<>();
-                Set<UUID> visited = new HashSet<>();
-                visited.add(rope.id());
-                path.add(new PathStep(rope, rope.extractAnchor() == 2));
-
-                if (walkAndTransferPressurized(level, sourceAnchor, batch, firstFar, ropesAt,
-                        PRESSURIZED_RR_CURSOR, chemicalHandlers, visited, path, rrChoices, 1)) {
-                    long now = level.getGameTime();
-                    for (int i = 0; i < path.size(); i++) {
-                        PathStep s = path.get(i);
-                        long startTick = now + (long) i * ITEM_PULSE_DURATION_TICKS;
-                        SuperLeadPayloads.sendItemPulse(level,
-                                new ItemPulse(s.rope.id(), s.reverse, startTick, ITEM_PULSE_DURATION_TICKS));
-                    }
-                    PRESSURIZED_RR_CURSOR.put(sourcePos, (idx + 1) % n);
-                    for (RrChoice rc : rrChoices) {
-                        PRESSURIZED_RR_CURSOR.put(rc.knot, (rc.idx + 1) % rc.n);
-                    }
-                    break;
-                }
-            }
-        }
-    }
-
-    private static long pressurizedBatch(LeadConnection rope) {
-        int tier = Math.min(Config.pressurizedTierMax(), rope.tier());
-        long multiplier = 1L << Math.min(30, tier);
-        return Math.max(1L, Math.min(Integer.MAX_VALUE, (long) Config.pressurizedBatchAmount() * multiplier));
-    }
-
-    private static void balanceThermalComponent(ServerLevel level, List<Integer> component,
-            List<LeadConnection> thermalConnections, MekanismHeatBridge.HandlerCache heatHandlers) {
-        List<LeadAnchor> endpoints = new ArrayList<>();
-        Set<LeadAnchor> seenAnchors = new HashSet<>();
-        double componentRate = 0.0D;
-        for (int index : component) {
-            LeadConnection connection = thermalConnections.get(index);
-            componentRate = Math.min(1.0e12D,
-                    componentRate + Config.thermalBaseTransfer() * connection.speedMultiplier());
-            addThermalEndpoint(level, connection.from(), endpoints, seenAnchors, heatHandlers);
-            addThermalEndpoint(level, connection.to(), endpoints, seenAnchors, heatHandlers);
-        }
-        if (endpoints.size() < 2 || componentRate <= 0.0D) {
-            return;
-        }
-
-        for (int i = 0; i < endpoints.size(); i++) {
-            for (int j = i + 1; j < endpoints.size(); j++) {
-                heatHandlers.balance(level, endpoints.get(i), endpoints.get(j), componentRate);
-            }
-        }
-    }
-
-    private static void addThermalEndpoint(ServerLevel level, LeadAnchor anchor, List<LeadAnchor> endpoints,
-            Set<LeadAnchor> seenAnchors, MekanismHeatBridge.HandlerCache heatHandlers) {
-        if (seenAnchors.add(anchor) && heatHandlers.has(level, anchor)) {
-            endpoints.add(anchor);
-        }
-    }
-
-    private static boolean isMekanismLoaded() {
-        return net.neoforged.fml.ModList.get().isLoaded("mekanism");
-    }
-
-    private static boolean isAe2Loaded() {
-        return net.neoforged.fml.ModList.get().isLoaded("ae2");
-    }
-
-    private static <R extends Resource> void tickTransfer(
-            ServerLevel level,
-            LeadKind kind,
-            BlockCapability<ResourceHandler<R>, Direction> cap,
-            Map<BlockPos, Integer> rrCursor,
-            java.util.function.ToIntFunction<LeadConnection> batchOf) {
-        SuperLeadSavedData data = SuperLeadSavedData.get(level);
-        List<LeadConnection> transferConnections = data.connectionsOfKind(kind);
-        if (transferConnections.isEmpty()) {
-            return;
-        }
-
-        // Index every rope of this kind by both endpoint positions so we can walk
-        // through
-        // fence-knot junctions where multiple ropes share a BlockPos.
-        ResourceHandlerCache<R> handlers = new ResourceHandlerCache<>();
-        Map<BlockPos, List<LeadConnection>> ropesAt = new HashMap<>();
-        Map<BlockPos, List<LeadConnection>> startsBySource = new HashMap<>();
-        for (LeadConnection c : transferConnections) {
-            BlockPos a = c.from().pos().immutable();
-            BlockPos b = c.to().pos().immutable();
-            ropesAt.computeIfAbsent(a, k -> new ArrayList<>()).add(c);
-            if (!a.equals(b)) {
-                ropesAt.computeIfAbsent(b, k -> new ArrayList<>()).add(c);
-            }
-
-            if (c.extractAnchor() == 0) {
-                continue;
-            }
-            LeadAnchor src = c.extractSource();
-            if (src == null)
-                continue;
-            startsBySource.computeIfAbsent(src.pos().immutable(), k -> new ArrayList<>()).add(c);
-        }
-
-        for (Map.Entry<BlockPos, List<LeadConnection>> entry : startsBySource.entrySet()) {
-            BlockPos sourcePos = entry.getKey();
-            List<LeadConnection> ropes = entry.getValue();
-            if (ropes.isEmpty())
-                continue;
-
-            int n = ropes.size();
-            int start = rrCursor.getOrDefault(sourcePos, 0) % n;
-
-            for (int step = 0; step < n; step++) {
-                int idx = (start + step) % n;
-                LeadConnection rope = ropes.get(idx);
-                LeadAnchor sourceAnchor = rope.extractSource();
-                LeadAnchor firstFar = rope.extractTarget();
-                if (sourceAnchor == null || firstFar == null)
-                    continue;
-
-                ResourceHandler<R> sourceHandler = handlers.get(level, sourceAnchor, cap);
-                if (sourceHandler == null)
-                    continue;
-
-                int batch = Math.max(1, batchOf.applyAsInt(rope));
-
-                List<PathStep> path = new ArrayList<>();
-                List<RrChoice> rrChoices = new ArrayList<>();
-                Set<UUID> visited = new HashSet<>();
-                visited.add(rope.id());
-                path.add(new PathStep(rope, rope.extractAnchor() == 2));
-
-                if (walkAndTransfer(level, cap, handlers, sourceHandler, batch, firstFar, ropesAt, rrCursor, visited,
-                        path, rrChoices, 1)) {
-                    long now = level.getGameTime();
-                    for (int i = 0; i < path.size(); i++) {
-                        PathStep s = path.get(i);
-                        long startTick = now + (long) i * ITEM_PULSE_DURATION_TICKS;
-                        SuperLeadPayloads.sendItemPulse(level,
-                                new ItemPulse(s.rope.id(), s.reverse, startTick, ITEM_PULSE_DURATION_TICKS));
-                    }
-                    rrCursor.put(sourcePos, (idx + 1) % n);
-                    for (RrChoice rc : rrChoices) {
-                        rrCursor.put(rc.knot, (rc.idx + 1) % rc.n);
-                    }
-                    break;
-                }
-            }
-        }
-    }
-
-    private record PathStep(LeadConnection rope, boolean reverse) {
-    }
-
-    private record RrChoice(BlockPos knot, int idx, int n) {
-    }
-
-    /**
-     * DFS through the rope graph starting at {@code current}. If {@code current}
-     * hosts a handler,
-     * attempt a single transfer from {@code sourceHandler}. Otherwise treat
-     * {@code current.pos()}
-     * as a knot and round-robin through its unvisited ropes. Returns true only when
-     * a transfer
-     * was actually committed.
-     */
-    private static <R extends Resource> boolean walkAndTransfer(
-            ServerLevel level,
-            BlockCapability<ResourceHandler<R>, Direction> cap,
-            ResourceHandlerCache<R> handlers,
-            ResourceHandler<R> sourceHandler,
-            int batch,
-            LeadAnchor current,
-            Map<BlockPos, List<LeadConnection>> ropesAt,
-            Map<BlockPos, Integer> rrCursor,
-            Set<UUID> visited,
-            List<PathStep> path,
-            List<RrChoice> rrChoices,
-            int depth) {
-        if (depth > MAX_TRANSFER_SEARCH_DEPTH) {
-            return false;
-        }
-        ResourceHandler<R> h = handlers.get(level, current, cap);
-        if (h != null) {
-            return transferOne(sourceHandler, h, batch, resource -> pathAllowsResource(path, resource));
-        }
-
-        BlockPos knot = current.pos().immutable();
-        List<LeadConnection> all = ropesAt.getOrDefault(knot, List.of());
-        List<LeadConnection> branches = new ArrayList<>();
-        for (LeadConnection b : all) {
-            if (!visited.contains(b.id())) {
-                branches.add(b);
-            }
-        }
-        if (branches.isEmpty()) {
-            return false;
-        }
-
-        int n = branches.size();
-        int rrStart = rrCursor.getOrDefault(knot, 0) % n;
-        for (int step = 0; step < n; step++) {
-            int idx = (rrStart + step) % n;
-            LeadConnection branch = branches.get(idx);
-            boolean enteredFromSide = branch.from().pos().equals(knot);
-            LeadAnchor far = enteredFromSide ? branch.to() : branch.from();
-            boolean reverse = !enteredFromSide;
-
-            visited.add(branch.id());
-            path.add(new PathStep(branch, reverse));
-            rrChoices.add(new RrChoice(knot, idx, n));
-
-            if (walkAndTransfer(level, cap, handlers, sourceHandler, batch, far, ropesAt, rrCursor, visited, path,
-                    rrChoices, depth + 1)) {
-                return true;
-            }
-
-            path.remove(path.size() - 1);
-            rrChoices.remove(rrChoices.size() - 1);
-            visited.remove(branch.id());
-        }
-        return false;
-    }
-
-    private static boolean walkAndTransferPressurized(
-            ServerLevel level,
-            LeadAnchor sourceAnchor,
-            long batch,
-            LeadAnchor current,
-            Map<BlockPos, List<LeadConnection>> ropesAt,
-            Map<BlockPos, Integer> rrCursor,
-            MekanismChemicalBridge.HandlerCache chemicalHandlers,
-            Set<UUID> visited,
-            List<PathStep> path,
-            List<RrChoice> rrChoices,
-            int depth) {
-        if (depth > MAX_TRANSFER_SEARCH_DEPTH) {
-            return false;
-        }
-        if (chemicalHandlers.has(level, current)) {
-            return chemicalHandlers.transferOne(level, sourceAnchor, current, batch,
-                    MekanismChemicalBridge.ChemicalFilter.ANY, pathConnections(path)) > 0L;
-        }
-
-        BlockPos knot = current.pos().immutable();
-        List<LeadConnection> all = ropesAt.getOrDefault(knot, List.of());
-        List<LeadConnection> branches = new ArrayList<>();
-        for (LeadConnection b : all) {
-            if (!visited.contains(b.id())) {
-                branches.add(b);
-            }
-        }
-        if (branches.isEmpty()) {
-            return false;
-        }
-
-        int n = branches.size();
-        int rrStart = rrCursor.getOrDefault(knot, 0) % n;
-        for (int step = 0; step < n; step++) {
-            int idx = (rrStart + step) % n;
-            LeadConnection branch = branches.get(idx);
-            boolean enteredFromSide = branch.from().pos().equals(knot);
-            LeadAnchor far = enteredFromSide ? branch.to() : branch.from();
-            boolean reverse = !enteredFromSide;
-
-            visited.add(branch.id());
-            path.add(new PathStep(branch, reverse));
-            rrChoices.add(new RrChoice(knot, idx, n));
-
-            if (walkAndTransferPressurized(level, sourceAnchor, batch, far, ropesAt, rrCursor,
-                    chemicalHandlers, visited, path, rrChoices, depth + 1)) {
-                return true;
-            }
-
-            path.remove(path.size() - 1);
-            rrChoices.remove(rrChoices.size() - 1);
-            visited.remove(branch.id());
-        }
-        return false;
-    }
-
-    private static <R extends Resource> ResourceHandler<R> handler(
-            ServerLevel level, LeadAnchor anchor, BlockCapability<ResourceHandler<R>, Direction> cap) {
-        ResourceHandler<R> h = level.getCapability(cap, anchor.pos(), anchor.face());
-        if (h == null) {
-            h = level.getCapability(cap, anchor.pos(), null);
-        }
-        return h;
-    }
-
-    private static EnergyHandler energyHandler(ServerLevel level, LeadAnchor anchor) {
-        EnergyHandler handler = level.getCapability(Capabilities.Energy.BLOCK, anchor.pos(), anchor.face());
-        if (handler == null) {
-            handler = level.getCapability(Capabilities.Energy.BLOCK, anchor.pos(), null);
-        }
-        return handler;
-    }
-
-    private static LeadAnchor cacheKey(LeadAnchor anchor) {
-        return new LeadAnchor(anchor.pos().immutable(), anchor.face());
-    }
-
-    private static List<LeadConnection> pathConnections(List<PathStep> path) {
-        List<LeadConnection> connections = new ArrayList<>(path.size());
-        for (PathStep step : path) {
-            connections.add(step.rope());
-        }
-        return connections;
-    }
-
-    private static <R extends Resource> boolean pathAllowsResource(List<PathStep> path, R resource) {
-        for (PathStep step : path) {
-            if (!connectionAllowsResource(step.rope(), resource)) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    private static <R extends Resource> boolean connectionAllowsResource(LeadConnection connection, R resource) {
-        if (connection == null || resource == null || resource.isEmpty() || connection.attachments().isEmpty()) {
-            return true;
-        }
-        if (resource instanceof ItemResource itemResource) {
-            return connectionAllowsItemResource(connection, itemResource);
-        }
-        if (resource instanceof FluidResource fluidResource) {
-            return connectionAllowsFluidResource(connection, fluidResource);
-        }
-        return true;
-    }
-
-    private static boolean connectionAllowsItemResource(LeadConnection connection, ItemResource resource) {
-        boolean hasItemFilter = false;
-        ItemStack candidate = null;
-        for (RopeAttachment attachment : connection.attachments()) {
-            ItemStack sample = attachment.stack();
-            if (sample.isEmpty()) {
-                continue;
-            }
-            if (CargoManifestData.isManifestStack(sample)) {
-                hasItemFilter = true;
-                if (candidate == null) {
-                    candidate = resource.toStack(1);
-                }
-                if (CargoManifestData.matches(sample, candidate)) {
-                    return true;
-                }
-                continue;
-            }
-            hasItemFilter = true;
-            if (resource.matches(sample)) {
-                return true;
-            }
-        }
-        return !hasItemFilter;
-    }
-
-    private static boolean connectionAllowsFluidResource(LeadConnection connection, FluidResource resource) {
-        boolean hasFluidFilter = false;
-        for (RopeAttachment attachment : connection.attachments()) {
-            var sample = FluidUtil.getFirstStackContained(attachment.stack());
-            if (sample.isEmpty()) {
-                continue;
-            }
-            hasFluidFilter = true;
-            if (resource.matches(sample)) {
-                return true;
-            }
-        }
-        return !hasFluidFilter;
-    }
-
-    /**
-     * Try to extract up to {@code batch} units from any source slot whose contents
-     * the target
-     * accepts entirely. Returns true if anything was moved.
-     */
-    private static <R extends Resource> boolean transferOne(ResourceHandler<R> source, ResourceHandler<R> target,
-            int batch, Predicate<R> filter) {
-        int slots = source.size();
-        for (int slot = 0; slot < slots; slot++) {
-            R res = source.getResource(slot);
-            if (res == null || res.isEmpty())
-                continue;
-            if (filter != null && !filter.test(res))
-                continue;
-            long avail = source.getAmountAsLong(slot);
-            if (avail <= 0L)
-                continue;
-
-            int requested = (int) Math.min(batch, avail);
-            try (Transaction tx = Transaction.openRoot()) {
-                int extracted = source.extract(slot, res, requested, tx);
-                if (extracted <= 0)
-                    continue;
-                int inserted = target.insert(res, extracted, tx);
-                if (inserted != extracted)
-                    continue;
-                tx.commit();
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private static Map<LeadAnchor, List<Integer>> indexConnectionsByAnchor(List<LeadConnection> connections) {
-        Map<LeadAnchor, List<Integer>> byAnchor = new HashMap<>();
-        for (int i = 0; i < connections.size(); i++) {
-            LeadConnection connection = connections.get(i);
-            addAnchorIndex(byAnchor, connection.from(), i);
-            if (!connection.to().equals(connection.from())) {
-                addAnchorIndex(byAnchor, connection.to(), i);
-            }
-        }
-        return byAnchor;
-    }
-
-    private static Map<BlockPos, List<Integer>> indexConnectionsByBlockPos(List<LeadConnection> connections) {
-        Map<BlockPos, List<Integer>> byPos = new HashMap<>();
-        for (int i = 0; i < connections.size(); i++) {
-            LeadConnection connection = connections.get(i);
-            addBlockPosIndex(byPos, connection.from().pos(), i);
-            if (!connection.to().pos().equals(connection.from().pos())) {
-                addBlockPosIndex(byPos, connection.to().pos(), i);
-            }
-        }
-        return byPos;
-    }
-
-    private static void addAnchorIndex(Map<LeadAnchor, List<Integer>> byAnchor, LeadAnchor anchor, int index) {
-        byAnchor.computeIfAbsent(anchor, key -> new ArrayList<>()).add(index);
-    }
-
-    private static void addBlockPosIndex(Map<BlockPos, List<Integer>> byPos, BlockPos pos, int index) {
-        byPos.computeIfAbsent(pos.immutable(), key -> new ArrayList<>()).add(index);
-    }
-
-    private static void addUnvisitedNeighbors(LeadAnchor anchor, Map<LeadAnchor, List<Integer>> byAnchor,
-            boolean[] visited, List<Integer> component) {
-        List<Integer> neighbors = byAnchor.get(anchor);
-        if (neighbors != null) {
-            for (int index : neighbors) {
-                if (!visited[index]) {
-                    visited[index] = true;
-                    component.add(index);
-                }
-            }
-        }
-    }
-
-    private static void addUnvisitedNeighborsByPos(BlockPos pos, Map<BlockPos, List<Integer>> byPos,
-            boolean[] visited, List<Integer> component) {
-        List<Integer> neighbors = byPos.get(pos);
-        if (neighbors != null) {
-            for (int index : neighbors) {
-                if (!visited[index]) {
-                    visited[index] = true;
-                    component.add(index);
-                }
-            }
-        }
-    }
-
-    private static void addUnvisitedNeighborsBridge(RedstoneTraversalCache cache, LeadAnchor anchor,
-            Map<LeadAnchor, List<Integer>> byAnchor, boolean[] visited, List<Integer> component) {
-        addUnvisitedNeighbors(anchor, byAnchor, visited, component);
-        if (!cache.signalBridgeEnabled(anchor.pos())) {
-            return;
-        }
-        for (Direction face : Direction.values()) {
-            if (face == anchor.face())
-                continue;
-            LeadAnchor otherFace = new LeadAnchor(anchor.pos(), face);
-            addUnvisitedNeighbors(otherFace, byAnchor, visited, component);
-        }
+        LeadTransferService.tickAeNetwork(level);
     }
 
     public static int leadSignal(SignalGetter getter, BlockPos pos, Direction direction) {
-        if (SUPPRESS_LEAD_SIGNALS.get() || !(getter instanceof Level level)) {
-            return 0;
-        }
-
-        int signal = 0;
-        List<LeadConnection> redstoneConnections = level instanceof ServerLevel serverLevel
-                ? SuperLeadSavedData.get(serverLevel).connectionsOfKind(LeadKind.REDSTONE)
-                : connections(level);
-        for (LeadConnection connection : redstoneConnections) {
-            if (connection.kind() != LeadKind.REDSTONE || connection.power() <= 0) {
-                continue;
-            }
-            if (isRedstoneOutputPosition(connection.from(), pos) || isRedstoneOutputPosition(connection.to(), pos)) {
-                signal = Math.max(signal, connection.power());
-                if (signal >= 15) {
-                    return 15;
-                }
-            }
-        }
-        return signal;
+        return LeadSignalService.leadSignal(getter, pos, direction);
     }
 
     private static Optional<LeadConnection> nearestConnection(Level level, Vec3 point, double maxDistance,
@@ -2206,43 +1320,8 @@ public final class SuperLeadNetwork {
         return value < 0.0D ? 0.0D : (value > 1.0D ? 1.0D : value);
     }
 
-    private static int externalSignalAt(ServerLevel level, LeadAnchor anchor) {
-        return withoutLeadSignals(() -> {
-            int power = 0;
-            power = Math.max(power, level.getSignal(anchor.pos(), anchor.face()));
-            power = Math.max(power, level.getSignal(anchor.pos(), anchor.face().getOpposite()));
-            power = Math.max(power, level.getBestNeighborSignal(anchor.pos()));
-            power = Math.max(power, level.getBestNeighborSignal(anchor.pos().relative(anchor.face())));
-            return Math.min(power, 15);
-        });
-    }
-
-    private static int withoutLeadSignals(IntSupplier supplier) {
-        boolean old = SUPPRESS_LEAD_SIGNALS.get();
-        SUPPRESS_LEAD_SIGNALS.set(true);
-        try {
-            return supplier.getAsInt();
-        } finally {
-            SUPPRESS_LEAD_SIGNALS.set(old);
-        }
-    }
-
-    private static boolean isRedstoneOutputPosition(LeadAnchor anchor, BlockPos pos) {
-        return anchor.pos().equals(pos) || anchor.pos().relative(anchor.face()).equals(pos);
-    }
-
     private static void notifyRedstoneChange(ServerLevel level, LeadConnection connection) {
-        if (connection.kind() != LeadKind.REDSTONE) {
-            return;
-        }
-        notifyRedstoneAnchor(level, connection.from());
-        notifyRedstoneAnchor(level, connection.to());
-    }
-
-    private static void notifyRedstoneAnchor(ServerLevel level, LeadAnchor anchor) {
-        BlockPos pos = anchor.pos();
-        level.updateNeighborsAt(pos, level.getBlockState(pos).getBlock());
-        level.updateNeighborsAt(pos.relative(anchor.face()), Blocks.AIR);
+        LeadSignalService.notifyRedstoneChange(level, connection);
     }
 
     public static boolean cutNearest(Level level, Vec3 point, Player player) {
@@ -2500,104 +1579,7 @@ public final class SuperLeadNetwork {
         return LeadEndpointLayout.endpoints(level, connection, connections(level));
     }
 
-    private record NetworkKey(ResourceKey<Level> dimension, boolean clientSide) {
-        static NetworkKey of(Level level) {
-            return new NetworkKey(level.dimension(), level.isClientSide());
-        }
-    }
-
-    private record PlayerKey(UUID playerId, boolean clientSide) {
-        static PlayerKey of(Player player) {
-            return new PlayerKey(player.getUUID(), player.level().isClientSide());
-        }
-    }
-
     private record ConnectionPick(LeadConnection connection, Vec3 point, double distanceSqr, double along) {
     }
 
-    private static final class ResourceHandlerCache<R extends Resource> {
-        private final Map<LeadAnchor, ResourceHandler<R>> hits = new HashMap<>();
-        private final Set<LeadAnchor> misses = new HashSet<>();
-
-        private ResourceHandler<R> get(ServerLevel level, LeadAnchor anchor,
-                BlockCapability<ResourceHandler<R>, Direction> cap) {
-            if (anchor == null) {
-                return null;
-            }
-            LeadAnchor key = cacheKey(anchor);
-            ResourceHandler<R> cached = hits.get(key);
-            if (cached != null || misses.contains(key)) {
-                return cached;
-            }
-            ResourceHandler<R> found = handler(level, key, cap);
-            if (found == null) {
-                misses.add(key);
-            } else {
-                hits.put(key, found);
-            }
-            return found;
-        }
-    }
-
-    private static final class EnergyHandlerCache {
-        private final Map<LeadAnchor, EnergyHandler> hits = new HashMap<>();
-        private final Set<LeadAnchor> misses = new HashSet<>();
-
-        private EnergyHandler get(ServerLevel level, LeadAnchor anchor) {
-            if (anchor == null) {
-                return null;
-            }
-            LeadAnchor key = cacheKey(anchor);
-            EnergyHandler cached = hits.get(key);
-            if (cached != null || misses.contains(key)) {
-                return cached;
-            }
-            EnergyHandler found = energyHandler(level, key);
-            if (found == null) {
-                misses.add(key);
-            } else {
-                hits.put(key, found);
-            }
-            return found;
-        }
-    }
-
-    private static final class RedstoneTraversalCache {
-        private final ServerLevel level;
-        private final Map<LeadAnchor, Integer> externalSignals = new HashMap<>();
-        private final Map<BlockPos, Boolean> signalBridgeEnabled = new HashMap<>();
-
-        private RedstoneTraversalCache(ServerLevel level) {
-            this.level = level;
-        }
-
-        private int externalSignalAt(LeadAnchor anchor) {
-            LeadAnchor key = cacheKey(anchor);
-            Integer cached = externalSignals.get(key);
-            if (cached != null) {
-                return cached.intValue();
-            }
-            int signal = SuperLeadNetwork.externalSignalAt(level, key);
-            externalSignals.put(key, signal);
-            return signal;
-        }
-
-        private boolean signalBridgeEnabled(BlockPos pos) {
-            BlockPos key = pos.immutable();
-            Boolean cached = signalBridgeEnabled.get(key);
-            if (cached != null) {
-                return cached.booleanValue();
-            }
-            boolean enabled = com.zhongbai233.super_lead.data.BlockPropertyRegistry.signalBridgeEnabled(
-                    level.getBlockState(key).getBlock());
-            signalBridgeEnabled.put(key, enabled);
-            return enabled;
-        }
-    }
-
-    private record EnergyEndpoint(LeadAnchor anchor, EnergyHandler handler) {
-    }
-
-    private record PendingLead(LeadAnchor anchor, LeadKind kind) {
-    }
 }

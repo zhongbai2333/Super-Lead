@@ -3,6 +3,13 @@ package com.zhongbai233.super_lead.lead.client.sim;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 
+/**
+ * Cached render-space rope samples derived from simulation particles.
+ *
+ * <p>
+ * The cache smooths visual positions and exposes compact arrays to renderers
+ * so they do not have to traverse or allocate simulation objects every frame.
+ */
 abstract class RopeSimulationRenderCache extends RopeSimulationCore {
     protected RopeSimulationRenderCache(Vec3 a, Vec3 b, long seed, RopeTuning tuning) {
         super(a, b, seed, tuning);

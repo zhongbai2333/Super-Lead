@@ -5,6 +5,14 @@ import java.util.List;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.Vec3;
 
+/**
+ * Verlet-style integration and constraint stepping for dynamic rope particles.
+ *
+ * <p>
+ * This layer owns time-step order: integrate, apply length/endpoint locks,
+ * resolve terrain/entity contacts, then refresh render caches. Keep gameplay
+ * side effects outside this class; it should only mutate simulation state.
+ */
 abstract class RopeSimulationStepper extends RopeSimulationContactConstraints {
     protected RopeSimulationStepper(Vec3 a, Vec3 b, long seed, RopeTuning tuning) {
         super(a, b, seed, tuning);

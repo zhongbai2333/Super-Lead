@@ -24,16 +24,16 @@ public record PresetListResponse(List<String> names) implements CustomPacketPayl
     }
 
     private void write(RegistryFriendlyByteBuf buf) {
-        buf.writeVarInt(names.size());
+        PresetPayloadCodecs.writeCount(buf, names.size(), PresetPayloadCodecs.LIST_MAX_ENTRIES, "preset list");
         for (String s : names)
-            buf.writeUtf(s);
+            buf.writeUtf(s, PresetPayloadCodecs.NAME_MAX_LENGTH);
     }
 
     private static PresetListResponse read(RegistryFriendlyByteBuf buf) {
-        int n = buf.readVarInt();
+        int n = PresetPayloadCodecs.readCount(buf, PresetPayloadCodecs.LIST_MAX_ENTRIES, "preset list");
         List<String> out = new ArrayList<>(n);
         for (int i = 0; i < n; i++)
-            out.add(buf.readUtf());
+            out.add(buf.readUtf(PresetPayloadCodecs.NAME_MAX_LENGTH));
         return new PresetListResponse(out);
     }
 }

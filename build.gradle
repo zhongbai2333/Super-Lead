@@ -160,11 +160,6 @@ dependencies {
     compileOnly "mezz.jei:jei-${jei_minecraft_version}-common-api:${jei_version}"
     compileOnly "mezz.jei:jei-${jei_minecraft_version}-neoforge-api:${jei_version}"
 
-    // Local dev/runtime test flow. These are intentionally not published as required runtime dependencies.
-    localRuntimeOnly "org.appliedenergistics:appliedenergistics2:${ae2_version}"
-    localRuntimeOnly "com.github.QiuYe-123:Mekanism:${mekanism_version}"
-    localRuntimeOnly "mezz.jei:jei-${jei_minecraft_version}-neoforge:${jei_version}"
-
     // Drop a Mekanism: MoreMachine 26.1 jar into ./libs to test against that branch before it is published.
     localRuntimeOnly fileTree(dir: 'libs', include: ['Mekanism-MoreMachine-*.jar', 'mekmm-*.jar'])
 

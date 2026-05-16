@@ -18,11 +18,11 @@ public record PresetPromptResponse(String presetName, boolean accepted) implemen
     }
 
     private void write(RegistryFriendlyByteBuf buf) {
-        buf.writeUtf(presetName);
+        buf.writeUtf(presetName, PresetPayloadCodecs.NAME_MAX_LENGTH);
         buf.writeBoolean(accepted);
     }
 
     private static PresetPromptResponse read(RegistryFriendlyByteBuf buf) {
-        return new PresetPromptResponse(buf.readUtf(), buf.readBoolean());
+        return new PresetPromptResponse(buf.readUtf(PresetPayloadCodecs.NAME_MAX_LENGTH), buf.readBoolean());
     }
 }

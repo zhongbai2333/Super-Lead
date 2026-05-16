@@ -5,6 +5,16 @@ import java.util.List;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 
+/**
+ * Applies entity-contact constraints and contact reporting to simulated ropes.
+ *
+ * <p>
+ * This layer resolves soft collisions against nearby entities and records
+ * contact candidates for gameplay pulses. It sits above terrain constraints so
+ * block collision has already stabilized particle positions before entity
+ * pushes
+ * are applied.
+ */
 abstract class RopeSimulationContactConstraints extends RopeSimulationTerrainConstraints {
     private static final double ENTITY_FOOT_SUPPORT_HEIGHT = 0.18D;
     private static final double ENTITY_FOOT_SUPPORT_MARGIN = 0.08D;

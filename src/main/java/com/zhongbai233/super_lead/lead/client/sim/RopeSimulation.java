@@ -3,6 +3,16 @@ package com.zhongbai233.super_lead.lead.client.sim;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 
+/**
+ * Public entry point for the client rope particle simulation pipeline.
+ *
+ * <p>
+ * The implementation is split through a small inheritance stack so hot loops
+ * can share array-backed state without allocating per segment. Callers should
+ * treat this class as the facade and avoid reaching into lower constraint
+ * layers
+ * directly.
+ */
 public final class RopeSimulation extends RopeSimulationStepper {
     private static final double TOP_SUPPORT_SNAP = 0.025D;
 
@@ -177,13 +187,13 @@ public final class RopeSimulation extends RopeSimulationStepper {
             double horizontalDz = cz - qz;
             double horizontalSeparation = Math.sqrt(horizontalDx * horizontalDx + horizontalDz * horizontalDz);
             double footDeltaY = box.minY - qy;
-                double topVerticalReach = radius + TOP_SUPPORT_SNAP;
-                double topHorizontalReach = radius + Math.min(topPadding * 0.25D, 0.045D);
+            double topVerticalReach = radius + TOP_SUPPORT_SNAP;
+            double topHorizontalReach = radius + Math.min(topPadding * 0.25D, 0.045D);
             boolean topSupportCandidate = topPadding > 0.0D
                     && footDeltaY >= -radius
                     && footDeltaY <= topVerticalReach
                     && horizontalSeparation <= topHorizontalReach;
-                double effectiveRadius = topSupportCandidate ? Math.max(radius, separation + 1.0e-6D) : radius;
+            double effectiveRadius = topSupportCandidate ? Math.max(radius, separation + 1.0e-6D) : radius;
             if (separation >= effectiveRadius) {
                 walked += segLen;
                 continue;

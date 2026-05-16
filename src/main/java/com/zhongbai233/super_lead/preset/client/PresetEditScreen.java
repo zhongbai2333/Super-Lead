@@ -25,6 +25,15 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.util.Mth;
 import net.neoforged.neoforge.client.network.ClientPacketDistributor;
 
+/**
+ * Client editor for dimension presets and physics zones.
+ *
+ * <p>
+ * The screen mirrors server-provided preset details, validates text fields
+ * locally, then emits compact packet requests for create/update/delete actions.
+ * Rendering helpers should remain UI-only; server authority lives in the preset
+ * server manager.
+ */
 public final class PresetEditScreen extends Screen {
     private static final int WIDGET_H = 16;
     private static final int PADDING = 8;

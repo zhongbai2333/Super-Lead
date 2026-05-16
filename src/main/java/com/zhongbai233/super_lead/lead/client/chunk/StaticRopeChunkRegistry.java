@@ -19,6 +19,17 @@ import net.minecraft.core.SectionPos;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.chunk.status.ChunkStatus;
 
+/**
+ * Client registry for chunk-section static rope meshes.
+ *
+ * <p>
+ * Dynamic ropes are rendered every frame, but settled ropes can be baked into
+ * section-scoped geometry. This registry decides when a rope is eligible,
+ * tracks
+ * which sections own the baked result, and marks vanilla sections dirty when
+ * the
+ * static mesh view changes.
+ */
 public final class StaticRopeChunkRegistry {
 
     private static final StaticRopeChunkRegistry INSTANCE = new StaticRopeChunkRegistry();

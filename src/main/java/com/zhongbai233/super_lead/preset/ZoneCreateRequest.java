@@ -21,14 +21,15 @@ public record ZoneCreateRequest(String name, String presetName, BlockPos from, B
     }
 
     private void write(RegistryFriendlyByteBuf buffer) {
-        buffer.writeUtf(name);
-        buffer.writeUtf(presetName);
+        buffer.writeUtf(name, PresetPayloadCodecs.NAME_MAX_LENGTH);
+        buffer.writeUtf(presetName, PresetPayloadCodecs.NAME_MAX_LENGTH);
         buffer.writeBlockPos(from);
         buffer.writeBlockPos(to);
     }
 
     private static ZoneCreateRequest read(RegistryFriendlyByteBuf buffer) {
-        return new ZoneCreateRequest(buffer.readUtf(64), buffer.readUtf(64),
+        return new ZoneCreateRequest(buffer.readUtf(PresetPayloadCodecs.NAME_MAX_LENGTH),
+                buffer.readUtf(PresetPayloadCodecs.NAME_MAX_LENGTH),
                 buffer.readBlockPos(), buffer.readBlockPos());
     }
 }

@@ -19,6 +19,9 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.component.CustomData;
 import net.minecraft.world.item.component.ItemContainerContents;
 
+/**
+ * Data-component accessors and validation for cargo manifest filter items/tags.
+ */
 public final class CargoManifestData {
     public static final int FILTER_SLOT_COUNT = 18;
     public static final int TAG_LIMIT = 32;
@@ -131,7 +134,8 @@ public final class CargoManifestData {
             if (filter.isEmpty()) {
                 continue;
             }
-            if (matchNbt ? ItemStack.isSameItemSameComponents(filter, candidate) : ItemStack.isSameItem(filter, candidate)) {
+            if (matchNbt ? ItemStack.isSameItemSameComponents(filter, candidate)
+                    : ItemStack.isSameItem(filter, candidate)) {
                 matched = true;
                 break;
             }
