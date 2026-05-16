@@ -597,6 +597,7 @@ public final class PresetEditScreen extends Screen {
             case "physics.sag" -> "Sag Model";
             case "physics.step" -> "Step Control";
             case "physics.contact" -> "Contact";
+            case "physics.wind" -> "Wind";
             case "physics.zipline" -> "Zipline";
             case "render.mode" -> "Mode";
             case "render.geom" -> "Geometry";

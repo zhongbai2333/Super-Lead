@@ -61,6 +61,7 @@ abstract class RopeSimulationCore {
     // ============================================================================================
     protected final int segments;
     protected final int nodes;
+    protected final long simulationSeed;
     protected RopeTuning tuning;
     protected final Vec3 stableSeparation;
 
@@ -274,6 +275,7 @@ abstract class RopeSimulationCore {
     protected long lastBlockHashCheckTick = UNINIT;
     protected boolean blockHashInit;
     protected boolean terrainNearbyLast;
+    protected boolean windPhysicsEnabled = true;
     protected int settledTicks;
     protected int quietTicks;
 
@@ -285,6 +287,7 @@ abstract class RopeSimulationCore {
 
     protected RopeSimulationCore(Vec3 a, Vec3 b, long seed, RopeTuning tuning) {
         this.tuning = tuning != null ? tuning : RopeTuning.localDefaults();
+        this.simulationSeed = seed;
 
         // Resolve all physics constants from tuning
         this.ropeRadius = this.tuning.ropeRadius();
@@ -404,6 +407,10 @@ abstract class RopeSimulationCore {
 
     public boolean physicsEnabled() {
         return tuning.modePhysics();
+    }
+
+    public void setWindPhysicsEnabled(boolean enabled) {
+        this.windPhysicsEnabled = enabled;
     }
 
     public boolean setTuning(RopeTuning tuning) {

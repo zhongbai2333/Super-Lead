@@ -2,6 +2,8 @@ package com.zhongbai233.super_lead.lead;
 
 import com.zhongbai233.super_lead.Super_lead;
 import com.zhongbai233.super_lead.lead.cargo.CargoManifestItem;
+import com.zhongbai233.super_lead.lead.cargo.SuperLeadDataComponents;
+import com.zhongbai233.super_lead.preset.PresetBinderData;
 import com.zhongbai233.super_lead.preset.PresetBinderItem;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.resources.Identifier;
@@ -48,6 +50,13 @@ public final class SuperLeadItems {
 
     public static boolean isPresetBinder(ItemStack stack) {
         return stack.is(PRESET_BINDER.asItem());
+    }
+
+    public static boolean isBoundPresetBinder(ItemStack stack) {
+        if (!isPresetBinder(stack))
+            return false;
+        PresetBinderData data = stack.get(SuperLeadDataComponents.PRESET_BINDER.get());
+        return data != null && data.isBound();
     }
 
     public static ItemStack stack(LeadKind kind) {

@@ -135,7 +135,7 @@ public final class SuperLeadEvents {
             return false;
         if (!event.getItemStack().is(Items.SHEARS))
             return false;
-        if (!com.zhongbai233.super_lead.preset.client.ZoneSelectionClient.tryHandleBlockClick(
+        if (!ClientInteractionBridge.tryHandleZoneBlockClick(
                 event.getEntity(), event.getHand(), event.getPos())) {
             return false;
         }
@@ -148,8 +148,7 @@ public final class SuperLeadEvents {
         if (!ZiplineController.isChain(event.getItemStack()))
             return false;
         if (event.getLevel().isClientSide()) {
-            if (!com.zhongbai233.super_lead.lead.client.SuperLeadClientEvents
-                    .trySendStartZipline(event.getHand())) {
+            if (!ClientInteractionBridge.trySendStartZipline(event.getHand())) {
                 return false;
             }
             event.setCanceled(true);
@@ -169,15 +168,13 @@ public final class SuperLeadEvents {
     private static boolean tryStartZiplineItem(PlayerInteractEvent.RightClickItem event) {
         if (!event.getLevel().isClientSide())
             return false;
-        return com.zhongbai233.super_lead.lead.client.SuperLeadClientEvents
-                .trySendStartZipline(event.getHand());
+        return ClientInteractionBridge.trySendStartZipline(event.getHand());
     }
 
     private static void tryStartZiplineEmpty(PlayerInteractEvent.RightClickEmpty event) {
         if (!event.getLevel().isClientSide())
             return;
-        com.zhongbai233.super_lead.lead.client.SuperLeadClientEvents
-                .trySendStartZipline(event.getHand());
+        ClientInteractionBridge.trySendStartZipline(event.getHand());
     }
 
     private static boolean tryToggleItemExtract(PlayerInteractEvent.RightClickBlock event) {
@@ -270,8 +267,7 @@ public final class SuperLeadEvents {
      * the interaction event so the vanilla use packet is suppressed).
      */
     private static boolean sendClientUseAction(Player player, InteractionHand hand, LeadConnectionAction action) {
-        return com.zhongbai233.super_lead.lead.client.SuperLeadClientEvents
-                .trySendUseConnectionAction(hand, action);
+        return ClientInteractionBridge.trySendUseConnectionAction(hand, action);
     }
 
     @SubscribeEvent
@@ -384,13 +380,13 @@ public final class SuperLeadEvents {
             return;
         ItemStack stack = event.getItemStack();
         if (event.getEntity().isShiftKeyDown() && stack.is(Items.SHEARS)) {
-            // Shears + Shift + Left-click → remove rope attachment.
-            com.zhongbai233.super_lead.lead.client.SuperLeadClientEvents.trySendRemoveRopeAttachment();
+            // Shears + Shift + Left-click 鈫?remove rope attachment.
+            ClientInteractionBridge.trySendRemoveRopeAttachment();
             return;
         }
         // Plain left-click on a rope attachment with both block- and item-display forms
-        // toggles between the two. trySend… filters on BlockItem so harmless on misses.
-        com.zhongbai233.super_lead.lead.client.SuperLeadClientEvents.trySendToggleRopeAttachmentForm();
+        // toggles between the two. trySend鈥?filters on BlockItem so harmless on misses.
+        ClientInteractionBridge.trySendToggleRopeAttachmentForm();
     }
 
     @SubscribeEvent
@@ -401,8 +397,8 @@ public final class SuperLeadEvents {
             return;
         ItemStack stack = event.getItemStack();
         if (event.getEntity().isShiftKeyDown() && stack.is(Items.SHEARS)) {
-            // Shears + Shift + Left-click on block → remove rope attachment.
-            if (com.zhongbai233.super_lead.lead.client.SuperLeadClientEvents.trySendRemoveRopeAttachment()) {
+            // Shears + Shift + Left-click on block 鈫?remove rope attachment.
+            if (ClientInteractionBridge.trySendRemoveRopeAttachment()) {
                 event.setCanceled(true);
             }
         }
@@ -421,12 +417,11 @@ public final class SuperLeadEvents {
             return false;
         if (!level.isClientSide()) {
             // Server side: don't actually attach, but still cancel the block interaction so
-            // the held block isn't placed while the client→server attachment packet is in
+            // the held block isn't placed while the client鈫抯erver attachment packet is in
             // flight.
             return canAimAtRopeForAttachment(player, hand, level);
         }
-        return com.zhongbai233.super_lead.lead.client.SuperLeadClientEvents
-                .trySendAddRopeAttachment(hand);
+        return ClientInteractionBridge.trySendAddRopeAttachment(hand);
     }
 
     private static boolean tryUsePresetBinder(Player player, InteractionHand hand, Level level, boolean shift) {
@@ -435,9 +430,9 @@ public final class SuperLeadEvents {
             return false;
         if (level.isClientSide()) {
             if (shift) {
-                com.zhongbai233.super_lead.preset.client.PresetBinderClient.sendToggleRope(hand);
+                ClientInteractionBridge.sendPresetBinderToggleRope(hand);
             } else {
-                com.zhongbai233.super_lead.preset.client.PresetBinderClient.openOrEdit(stack, hand);
+                ClientInteractionBridge.openOrEditPresetBinder(stack, hand);
             }
         }
         return true;
@@ -480,8 +475,7 @@ public final class SuperLeadEvents {
             return false;
         if (heldStack.is(Items.GLOW_INK_SAC))
             return false;
-        return com.zhongbai233.super_lead.lead.client.SuperLeadClientEvents
-                .tryOpenRopeAttachmentSignEditor();
+        return ClientInteractionBridge.tryOpenRopeAttachmentSignEditor();
     }
 
     /** Attempt to open an AE2 terminal attachment. Client-only. */
@@ -490,8 +484,7 @@ public final class SuperLeadEvents {
             return false;
         // AE terminal panels are interactive UI surfaces. If the crosshair is on one,
         // opening the panel should win over vanilla item use such as block placement.
-        return com.zhongbai233.super_lead.lead.client.SuperLeadClientEvents
-                .tryOpenRopeAttachmentAeTerminal();
+        return ClientInteractionBridge.tryOpenRopeAttachmentAeTerminal();
     }
 
     /** Attempt to dye a sign attachment. Client-only. */
@@ -503,8 +496,7 @@ public final class SuperLeadEvents {
         net.minecraft.world.item.DyeColor color = net.minecraft.world.item.DyeColor.getColor(heldStack);
         if (color == null)
             return false;
-        return com.zhongbai233.super_lead.lead.client.SuperLeadClientEvents
-                .trySendSignAttachmentDye(color);
+        return ClientInteractionBridge.trySendSignAttachmentDye(color);
     }
 
     /** Attempt to apply glow ink to a sign attachment. Client-only. */
@@ -515,8 +507,7 @@ public final class SuperLeadEvents {
             return false;
         if (!heldStack.is(Items.GLOW_INK_SAC))
             return false;
-        return com.zhongbai233.super_lead.lead.client.SuperLeadClientEvents
-                .trySendSignAttachmentGlow();
+        return ClientInteractionBridge.trySendSignAttachmentGlow();
     }
 
     @SubscribeEvent
@@ -785,3 +776,5 @@ public final class SuperLeadEvents {
         return true;
     }
 }
+
+

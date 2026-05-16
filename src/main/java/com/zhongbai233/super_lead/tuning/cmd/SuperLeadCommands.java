@@ -6,6 +6,7 @@ import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.suggestion.SuggestionProvider;
 import com.zhongbai233.super_lead.Super_lead;
+import com.zhongbai233.super_lead.lead.client.debug.RopeDebugLabels;
 import com.zhongbai233.super_lead.tuning.ClientTuning;
 import com.zhongbai233.super_lead.tuning.TuningKey;
 import com.zhongbai233.super_lead.tuning.gui.SuperLeadConfigScreen;
@@ -49,6 +50,11 @@ public final class SuperLeadCommands {
                                 .then(Commands.argument("key", StringArgumentType.greedyString())
                                         .suggests(SUGGEST_KEY_OR_ALL)
                                         .executes(SuperLeadCommands::reset))))
+                .then(Commands.literal("debug")
+                        .then(Commands.literal("rope_labels")
+                                .executes(SuperLeadCommands::toggleRopeLabels)
+                                .then(Commands.literal("on").executes(ctx -> setRopeLabels(ctx, true)))
+                                .then(Commands.literal("off").executes(ctx -> setRopeLabels(ctx, false)))))
                 .then(Commands.literal("status").executes(SuperLeadCommands::status))
                 .then(Commands.literal("gui").executes(SuperLeadCommands::openGui));
         dispatcher.register(root);
@@ -185,6 +191,23 @@ public final class SuperLeadCommands {
 
     private static int openGui(CommandContext<CommandSourceStack> ctx) {
         net.minecraft.client.Minecraft.getInstance().execute(SuperLeadConfigScreen::open);
+        return 1;
+    }
+
+    private static int toggleRopeLabels(CommandContext<CommandSourceStack> ctx) {
+        return reportRopeLabels(ctx, RopeDebugLabels.toggle());
+    }
+
+    private static int setRopeLabels(CommandContext<CommandSourceStack> ctx, boolean enabled) {
+        RopeDebugLabels.setEnabled(enabled);
+        return reportRopeLabels(ctx, enabled);
+    }
+
+    private static int reportRopeLabels(CommandContext<CommandSourceStack> ctx, boolean enabled) {
+        ctx.getSource().sendSuccess(
+                () -> Component.literal("Rope debug labels: " + (enabled ? "on" : "off"))
+                        .withStyle(enabled ? ChatFormatting.GREEN : ChatFormatting.GRAY),
+                false);
         return 1;
     }
 

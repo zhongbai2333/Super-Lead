@@ -266,6 +266,46 @@ public final class ClientTuning {
             "initialVelocityKick", "physics.solverExt", 0.06D, 0.0D, 0.50D,
             "Initial lateral velocity kick to avoid perfectly straight ropes.");
 
+    public static final TuningKey<Boolean> WIND_ENABLED = registerB(
+            "wind.enabled", "physics.wind", Boolean.FALSE,
+            "Enable rhythmic spatial gusts for ropes using this preset.");
+    public static final TuningKey<Double> WIND_PHYSICS_DISTANCE = registerD(
+            "wind.physicsDistance", "physics.wind", 32.0D, 0.0D, 96.0D,
+            "Maximum nearest-rope distance where wind applies real rope physics. Beyond this, wind is skipped.");
+    public static final TuningKey<Double> WIND_STRENGTH = registerD(
+            "wind.strength", "physics.wind", 0.035D, 0.0D, 0.45D,
+            "Horizontal wind acceleration in blocks per tick squared.");
+    public static final TuningKey<Double> WIND_STRENGTH_JITTER = registerD(
+            "wind.strengthJitter", "physics.wind", 0.65D, 0.0D, 1.0D,
+            "Per-gust strength variation. 0 is steady, 1 allows very soft and strong gusts.");
+    public static final TuningKey<Double> WIND_DIRECTION_DEG = registerD(
+            "wind.directionDeg", "physics.wind", 35.0D, -360.0D, 360.0D,
+            "Dominant wind direction in degrees on the X/Z plane.");
+    public static final TuningKey<Double> WIND_DIRECTION_JITTER_DEG = registerD(
+            "wind.directionJitterDeg", "physics.wind", 14.0D, 0.0D, 90.0D,
+            "Maximum per-gust direction drift around wind.directionDeg.");
+    public static final TuningKey<Double> WIND_WAVELENGTH = registerD(
+            "wind.waveLength", "physics.wind", 34.0D, 4.0D, 256.0D,
+            "World-space distance between gust fronts.");
+    public static final TuningKey<Double> WIND_SPEED = registerD(
+            "wind.speed", "physics.wind", 0.34D, 0.0D, 4.0D,
+            "Gust-front travel speed in blocks per tick.");
+    public static final TuningKey<Double> WIND_DUTY = registerD(
+            "wind.duty", "physics.wind", 0.42D, 0.05D, 0.95D,
+            "Fraction of each wind wave that is active; lower values create longer pauses.");
+    public static final TuningKey<Double> WIND_DURATION_JITTER = registerD(
+            "wind.durationJitter", "physics.wind", 0.35D, 0.0D, 1.0D,
+            "Per-gust active-duration variation around wind.duty.");
+    public static final TuningKey<Double> WIND_PAUSE_JITTER = registerD(
+            "wind.pauseJitter", "physics.wind", 0.40D, 0.0D, 1.0D,
+            "Per-gust pause-duration variation around wind.duty.");
+    public static final TuningKey<Double> WIND_RAMP_BIAS = registerD(
+            "wind.rampBias", "physics.wind", 0.35D, 0.0D, 1.0D,
+            "How often gusts build from small wind to stronger wind before fading.");
+    public static final TuningKey<Double> WIND_VERTICAL_LIFT = registerD(
+            "wind.verticalLift", "physics.wind", 0.12D, -1.0D, 1.0D,
+            "Vertical lift as a fraction of horizontal wind strength.");
+
     // ====================================================================================
     // Physics settle (physics.settle)
     // ====================================================================================

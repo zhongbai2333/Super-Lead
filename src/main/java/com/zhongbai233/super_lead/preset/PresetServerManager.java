@@ -47,6 +47,7 @@ import org.slf4j.Logger;
 public final class PresetServerManager {
     private static final Logger LOG = LogUtils.getLogger();
     private static final Permission.HasCommandLevel OP = new Permission.HasCommandLevel(PermissionLevel.GAMEMASTERS);
+    private static final Permission.HasCommandLevel OP4 = new Permission.HasCommandLevel(PermissionLevel.OWNERS);
     private static final Pattern PLAYER_PRESET_BASE = Pattern.compile("^[A-Za-z0-9_\\-]{1,23}$");
     private static final double BINDER_PICK_RADIUS = 0.95D;
 
@@ -61,6 +62,12 @@ public final class PresetServerManager {
         return player != null
                 && Config.allowOpVisualPresets()
                 && player.permissions().hasPermission(OP);
+    }
+
+    public static boolean canManageGlobalPresets(ServerPlayer player) {
+        return player != null
+                && Config.allowOpVisualPresets()
+                && player.permissions().hasPermission(OP4);
     }
 
     public static boolean canEditPreset(ServerPlayer player, String presetName) {
@@ -565,7 +572,7 @@ public final class PresetServerManager {
     }
 
     public static void exportPresets(ServerPlayer player) {
-        if (!canManage(player))
+        if (!canManageGlobalPresets(player))
             return;
         MinecraftServer server = player.level().getServer();
         if (server == null)
@@ -582,7 +589,7 @@ public final class PresetServerManager {
     }
 
     public static void importPresets(ServerPlayer player) {
-        if (!canManage(player))
+        if (!canManageGlobalPresets(player))
             return;
         MinecraftServer server = player.level().getServer();
         if (server == null)

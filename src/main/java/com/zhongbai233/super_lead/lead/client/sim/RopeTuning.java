@@ -69,7 +69,20 @@ public record RopeTuning(
         double fullSlackHorizontalRatio,
         double steepAngleDeg,
         int maxTickDelta,
-        double tunnelThresholdSqr) {
+        double tunnelThresholdSqr,
+        boolean windEnabled,
+        double windPhysicsDistance,
+        double windStrength,
+        double windStrengthJitter,
+        double windDirectionDeg,
+        double windDirectionJitterDeg,
+        double windWaveLength,
+        double windSpeed,
+        double windDuty,
+        double windDurationJitter,
+        double windPauseJitter,
+        double windRampBias,
+        double windVerticalLift) {
 
     public static RopeTuning forMidpoint(Vec3 a, Vec3 b) {
         ClientTuning.loadOnce();
@@ -146,7 +159,20 @@ public record RopeTuning(
                 resolve(overrides, ClientTuning.FULL_SLACK_HORIZONTAL_RATIO),
                 resolve(overrides, ClientTuning.STEEP_ANGLE_DEG),
                 resolve(overrides, ClientTuning.MAX_TICK_DELTA),
-                resolve(overrides, ClientTuning.TUNNEL_THRESHOLD_SQR));
+                resolve(overrides, ClientTuning.TUNNEL_THRESHOLD_SQR),
+                resolve(overrides, ClientTuning.WIND_ENABLED),
+                resolve(overrides, ClientTuning.WIND_PHYSICS_DISTANCE),
+                resolve(overrides, ClientTuning.WIND_STRENGTH),
+                resolve(overrides, ClientTuning.WIND_STRENGTH_JITTER),
+                resolve(overrides, ClientTuning.WIND_DIRECTION_DEG),
+                resolve(overrides, ClientTuning.WIND_DIRECTION_JITTER_DEG),
+                resolve(overrides, ClientTuning.WIND_WAVELENGTH),
+                resolve(overrides, ClientTuning.WIND_SPEED),
+                resolve(overrides, ClientTuning.WIND_DUTY),
+                resolve(overrides, ClientTuning.WIND_DURATION_JITTER),
+                resolve(overrides, ClientTuning.WIND_PAUSE_JITTER),
+                resolve(overrides, ClientTuning.WIND_RAMP_BIAS),
+                resolve(overrides, ClientTuning.WIND_VERTICAL_LIFT));
     }
 
     public int baseColor(LeadKind kind) {

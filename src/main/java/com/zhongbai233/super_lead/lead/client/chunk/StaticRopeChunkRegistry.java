@@ -52,6 +52,7 @@ public final class StaticRopeChunkRegistry {
     private final Map<UUID, Set<Long>> connectionSections = new HashMap<>();
     private final Set<Long> pendingDirtySections = new HashSet<>();
     private final Map<UUID, Long> dynamicHoldUntil = new HashMap<>();
+    private boolean connectionSyncDirty;
     /**
      * Connections whose latest static bake was produced while at least one anchor
      * chunk was
@@ -67,18 +68,6 @@ public final class StaticRopeChunkRegistry {
 
     private List<LeadConnection> realSources = List.of();
     private List<StressSource> stressSources = List.of();
-    /**
-     * Optional accessor injected by client startup so that connection-sync paths
-     * (which only
-     * carry the connection list) can still rebuild the chunk-mesh cache using
-     * actual rope
-     * simulation state. Without this, sync events would re-bake every rope from its
-     * anchors
-     * via {@code RopeStaticGeometry.build}, briefly snapping the world's ropes back
-     * to their
-     * no-physics catenary shape.
-     */
-    private volatile Function<UUID, RopeSimulation> simLookup = null;
 
     private volatile int debugEligible;
     private volatile int debugIneligible;
@@ -201,7 +190,8 @@ public final class StaticRopeChunkRegistry {
 
     public synchronized void clear() {
         if (bySection.isEmpty() && byConnection.isEmpty() && bakedAttachments.isEmpty()
-                && claimed.isEmpty() && stressSources.isEmpty() && dynamicHoldUntil.isEmpty())
+                && claimed.isEmpty() && stressSources.isEmpty() && dynamicHoldUntil.isEmpty()
+                && !connectionSyncDirty)
             return;
         Set<Long> toDirty = new HashSet<>(bySection.keySet());
         bySection = Map.of();
@@ -213,6 +203,7 @@ public final class StaticRopeChunkRegistry {
         connectionSections.clear();
         bakedWithMissingAnchors.clear();
         dynamicHoldUntil.clear();
+        connectionSyncDirty = false;
         stressSources = List.of();
         clearDebugCounts();
         markSectionsDirty(toDirty);
@@ -237,22 +228,10 @@ public final class StaticRopeChunkRegistry {
         if (level == null || !level.isClientSide())
             return;
         realSources = List.copyOf(connections);
-        // Use the injected sim lookup when available so existing ropes keep their
-        // physics
-        // shape across connection-sync events (otherwise everything baked through
-        // RopeStaticGeometry.build would briefly flash to its no-physics catenary
-        // form).
-        rebuildInternal(level, simLookup);
-    }
-
-    /**
-     * Inject a sim lookup so connection-sync paths can rebuild the chunk-mesh cache
-     * against
-     * live {@link RopeSimulation} state. Call once at client startup with
-     * {@code SIMS::get}.
-     */
-    public synchronized void setSimLookup(Function<UUID, RopeSimulation> lookup) {
-        this.simLookup = lookup;
+        connectionSyncDirty = true;
+        if (connections.isEmpty()) {
+            rebuildInternal(level, null);
+        }
     }
 
     public synchronized void publishStressSources(Level level, List<StressSource> sources) {
@@ -402,7 +381,8 @@ public final class StaticRopeChunkRegistry {
         debugWaitingQuiet = waitingQuiet;
         debugReadyFromSim = readyFromSim;
         debugReadyAnchorBake = readyAnchorBake;
-        if (!forceRebakeForMissingAnchors
+        if (!connectionSyncDirty
+                && !forceRebakeForMissingAnchors
                 && desired.equals(claimed) && desiredFromSim.equals(claimedFromSim))
             return;
         rebuildInternal(level, simLookup);
@@ -415,7 +395,7 @@ public final class StaticRopeChunkRegistry {
     private void rebuildInternal(Level level, Function<UUID, RopeSimulation> simLookup) {
         if (level == null) {
             if (bySection.isEmpty() && byConnection.isEmpty() && bakedAttachments.isEmpty()
-                    && dynamicHoldUntil.isEmpty())
+                    && dynamicHoldUntil.isEmpty() && !connectionSyncDirty)
                 return;
             Set<Long> toDirty = new HashSet<>(bySection.keySet());
             bySection = Map.of();
@@ -426,6 +406,7 @@ public final class StaticRopeChunkRegistry {
             claimedFromSim = Set.of();
             connectionSections.clear();
             dynamicHoldUntil.clear();
+            connectionSyncDirty = false;
             markSectionsDirty(toDirty);
             return;
         }
@@ -507,6 +488,7 @@ public final class StaticRopeChunkRegistry {
         connectionSections.clear();
         connectionSections.putAll(nextConnSections);
         bakedWithMissingAnchors.retainAll(nextClaimed);
+        connectionSyncDirty = false;
 
         markSectionsDirty(toDirty);
     }

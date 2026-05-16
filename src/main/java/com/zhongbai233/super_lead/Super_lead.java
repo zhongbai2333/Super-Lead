@@ -24,8 +24,7 @@ public class Super_lead {
         modEventBus.addListener(Config::onLoad);
         modEventBus.addListener(Config::onReload);
         if (net.neoforged.fml.loading.FMLEnvironment.getDist().isClient()) {
-            com.zhongbai233.super_lead.lead.client.debug.RopeDebugOverlay.register(modEventBus);
-            com.zhongbai233.super_lead.lead.client.cargo.SuperLeadClientMenus.register(modEventBus);
+            ClientModBridge.register(modEventBus);
         }
         modContainer.registerConfig(ModConfig.Type.COMMON, Config.SPEC);
     }

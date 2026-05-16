@@ -67,6 +67,7 @@ public final class SuperLeadConfigScreen extends Screen {
         if (groups == null) {
             groups = new ArrayList<>(ClientTuning.groups());
             groups.remove("physics.contact");
+            groups.remove("physics.wind");
         }
         if (activeTab >= groups.size()) {
             activeTab = 0;

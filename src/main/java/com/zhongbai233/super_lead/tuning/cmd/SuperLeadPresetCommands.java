@@ -34,6 +34,7 @@ public final class SuperLeadPresetCommands {
     }
 
     private static final Permission.HasCommandLevel OP = new Permission.HasCommandLevel(PermissionLevel.GAMEMASTERS);
+    private static final Permission.HasCommandLevel OP4 = new Permission.HasCommandLevel(PermissionLevel.OWNERS);
 
     @SubscribeEvent
     public static void onRegister(RegisterCommandsEvent event) {
@@ -42,8 +43,12 @@ public final class SuperLeadPresetCommands {
                 .requires(src -> src.permissions().hasPermission(OP))
                 .then(Commands.literal("preset")
                         .then(Commands.literal("list").executes(SuperLeadPresetCommands::list))
-                        .then(Commands.literal("export").executes(SuperLeadPresetCommands::exportAll))
-                        .then(Commands.literal("import").executes(SuperLeadPresetCommands::importAll))
+                        .then(Commands.literal("export")
+                                .requires(src -> src.permissions().hasPermission(OP4))
+                                .executes(SuperLeadPresetCommands::exportAll))
+                        .then(Commands.literal("import")
+                                .requires(src -> src.permissions().hasPermission(OP4))
+                                .executes(SuperLeadPresetCommands::importAll))
                         .then(Commands.literal("show")
                                 .then(Commands.argument("name", StringArgumentType.word())
                                         .suggests(SUGGEST_PRESET)
@@ -54,6 +59,7 @@ public final class SuperLeadPresetCommands {
                                                 .then(Commands.argument("pairs", StringArgumentType.greedyString())
                                                         .executes(SuperLeadPresetCommands::saveFromKeys)))))
                         .then(Commands.literal("delete")
+                                .requires(src -> src.permissions().hasPermission(OP4))
                                 .then(Commands.argument("name", StringArgumentType.word())
                                         .suggests(SUGGEST_PRESET)
                                         .executes(SuperLeadPresetCommands::delete)))

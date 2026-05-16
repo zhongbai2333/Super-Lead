@@ -128,11 +128,13 @@ abstract class RopeSimulationStepper extends RopeSimulationContactConstraints {
         // slack=0 instead of waking a few trapped joints every tick.
         boolean entityPushActive = visualPushEnabled() && !entityContacts.isEmpty();
         boolean forceActive = !forceFields.isEmpty();
+        boolean windActive = windActive(a, b, currentTick);
         boolean awake = endpointMoved || blockChanged || neighborAwake || entityPushActive || forceActive
+                || windActive
                 || !isSettled()
                 || hasExternalContact(currentTick);
         if (endpointMoved || blockChanged || neighborAwake || entityPushActive || hasExternalContact(currentTick)
-                || forceActive) {
+                || forceActive || windActive) {
             settledTicks = 0;
         }
 
@@ -220,6 +222,7 @@ abstract class RopeSimulationStepper extends RopeSimulationContactConstraints {
             vy[i] *= dampingPerSubstep;
             vz[i] *= dampingPerSubstep;
             vy[i] += tuning.gravity() * h * gravityScale;
+            applyWind(i, tick, h, gravityScale);
             if (!forceFields.isEmpty()) {
                 forceScratch[0] = forceScratch[1] = forceScratch[2] = 0.0D;
                 for (int k = 0; k < forceFields.size(); k++) {
@@ -310,6 +313,176 @@ abstract class RopeSimulationStepper extends RopeSimulationContactConstraints {
         if (s2 < substepSpeedTier3 * substepSpeedTier3)
             return 3;
         return maxSubsteps;
+    }
+
+    private void applyWind(int nodeIndex, long tick, double h, double gravityScale) {
+        if (!windEnabled()) {
+            return;
+        }
+        WindSample wind = windAt(x[nodeIndex], z[nodeIndex], tick);
+        if (wind.envelope() <= 1.0e-5D) {
+            return;
+        }
+        double t = nodeIndex / (double) segments;
+        double nodeWeight = Math.sin(Math.PI * t);
+        if (nodeWeight <= 1.0e-5D) {
+            return;
+        }
+        double force = tuning.windStrength() * wind.strengthScale() * wind.envelope() * nodeWeight * gravityScale;
+        vx[nodeIndex] += wind.dirX() * force * h;
+        vz[nodeIndex] += wind.dirZ() * force * h;
+        vy[nodeIndex] += force * tuning.windVerticalLift() * h;
+    }
+
+    private boolean windActive(Vec3 a, Vec3 b, long tick) {
+        if (!windEnabled() || RopeSagModel.tautProjectionWeight(tuning.slack()) >= 0.98D) {
+            return false;
+        }
+        double mx = (a.x + b.x) * 0.5D;
+        double mz = (a.z + b.z) * 0.5D;
+        return windAt(mx, mz, tick).envelope() > 0.025D;
+    }
+
+    private boolean windEnabled() {
+        return windPhysicsEnabled
+                && tuning.windEnabled()
+                && tuning.windStrength() > 0.0D
+                && tuning.windWaveLength() > 1.0e-5D
+                && tuning.windSpeed() > 0.0D;
+    }
+
+    private WindSample windAt(double wx, double wz, long tick) {
+        long windSeed = windRegionSeed(wx, wz);
+        double baseDirRad = Math.toRadians(tuning.windDirectionDeg());
+        double baseDirX = Math.cos(baseDirRad);
+        double baseDirZ = Math.sin(baseDirRad);
+        double speed = Math.max(1.0e-5D, tuning.windSpeed());
+        double baseCycleTicks = Math.max(8.0D, tuning.windWaveLength() / speed);
+        double windClock = tick - (wx * baseDirX + wz * baseDirZ) / speed + windSeedPhase(windSeed) * baseCycleTicks;
+        long eventIndex = (long) Math.floor(windClock / baseCycleTicks);
+        WindSample current = windEventAt(eventIndex, windClock, baseCycleTicks, windSeed);
+        if (current.envelope() > 0.0D) {
+            return current;
+        }
+        return windEventAt(eventIndex - 1L, windClock, baseCycleTicks, windSeed);
+    }
+
+    private WindSample windEventAt(long eventIndex, double windClock, double baseCycleTicks, long windSeed) {
+        double duty = Math.max(0.05D, Math.min(0.95D, tuning.windDuty()));
+        double pauseRoom = baseCycleTicks * (1.0D - duty);
+        double startOffset = randomSigned(windSeed, eventIndex, 0x632BE59BD9B4E019L)
+                * pauseRoom * Math.max(0.0D, Math.min(1.0D, tuning.windPauseJitter())) * 0.55D;
+        double eventStart = eventIndex * baseCycleTicks + startOffset;
+
+        double activeScale = jitterScale(windSeed, eventIndex, 0x41C64E6DL, tuning.windDurationJitter());
+        double activeTicks = Math.max(2.0D, baseCycleTicks * duty * activeScale);
+        double cyclePos = windClock - eventStart;
+        if (cyclePos < 0.0D || cyclePos >= activeTicks) {
+            return WindSample.NONE;
+        }
+
+        double local = cyclePos / activeTicks;
+        boolean rampingGust = random01(windSeed, eventIndex, 0xD1B54A32D192ED03L) < tuning.windRampBias();
+        boolean doubleSwell = random01(windSeed, eventIndex, 0xA24BAED4963EE407L) < 0.58D;
+        double envelope = doubleSwell
+                ? doubleSwellEnvelope(local, eventIndex, rampingGust, windSeed)
+                : linearTriangleEnvelope(local, rampingGust);
+        if (envelope <= 1.0e-5D) {
+            return WindSample.NONE;
+        }
+
+        double strengthJitter = Math.max(0.0D, Math.min(1.0D, tuning.windStrengthJitter()));
+        double strengthNoise = randomSigned(windSeed, eventIndex, 0x94D049BB133111EBL);
+        double strengthScale = 1.0D + strengthNoise * strengthJitter * (strengthNoise >= 0.0D ? 1.30D : 0.75D);
+        strengthScale = Math.max(0.22D, strengthScale);
+
+        double directionJitter = tuning.windDirectionJitterDeg();
+        double directionOffset = randomSigned(windSeed, eventIndex, 0xBF58476D1CE4E5B9L) * directionJitter;
+        double dirRad = Math.toRadians(tuning.windDirectionDeg() + directionOffset);
+        return new WindSample(envelope, Math.cos(dirRad), Math.sin(dirRad), strengthScale);
+    }
+
+    private double windSeedPhase(long seed) {
+        long mixed = seed ^ (seed >>> 33) ^ 0x9E3779B97F4A7C15L;
+        mixed ^= (mixed << 13);
+        mixed ^= (mixed >>> 7);
+        mixed ^= (mixed << 17);
+        return (mixed & 0xFFFFL) / 65536.0D;
+    }
+
+    private long windRegionSeed(double wx, double wz) {
+        int cellX = (int) Math.floor(wx / 24.0D);
+        int cellZ = (int) Math.floor(wz / 24.0D);
+        long mixed = 0x6A09E667F3BCC909L;
+        mixed ^= (long) cellX * 0xBF58476D1CE4E5B9L;
+        mixed ^= (long) cellZ * 0x94D049BB133111EBL;
+        mixed ^= ((long) Math.floor(tuning.windDirectionDeg() * 8.0D)) * 0x9E3779B97F4A7C15L;
+        return mixed;
+    }
+
+    private double jitterScale(long seed, long eventIndex, long salt, double amount) {
+        double clamped = Math.max(0.0D, Math.min(1.0D, amount));
+        return Math.max(0.2D, 1.0D + randomSigned(seed, eventIndex, salt) * clamped);
+    }
+
+    private double randomSigned(long seed, long index, long salt) {
+        return random01(seed, index, salt) * 2.0D - 1.0D;
+    }
+
+    private double random01(long seed, long index, long salt) {
+        long mixed = seed ^ salt ^ (index * 0x9E3779B97F4A7C15L);
+        mixed ^= (mixed >>> 30);
+        mixed *= 0xBF58476D1CE4E5B9L;
+        mixed ^= (mixed >>> 27);
+        mixed *= 0x94D049BB133111EBL;
+        mixed ^= (mixed >>> 31);
+        return ((mixed >>> 11) & ((1L << 53) - 1)) * 0x1.0p-53D;
+    }
+
+    private double linearTriangleEnvelope(double local, boolean rampingGust) {
+        double triangle = local < 0.5D ? local * 2.0D : (1.0D - local) * 2.0D;
+        if (!rampingGust) {
+            return Math.max(0.0D, triangle);
+        }
+        double ramp = 0.45D + 0.55D * local;
+        return Math.max(0.0D, triangle * ramp);
+    }
+
+    private double doubleSwellEnvelope(double local, long eventIndex, boolean rampingGust, long windSeed) {
+        double firstPeakT = 0.24D + randomSigned(windSeed, eventIndex, 0xC6A4A7935BD1E995L) * 0.08D;
+        double dipT = 0.50D + randomSigned(windSeed, eventIndex, 0x165667B19E3779F9L) * 0.08D;
+        double secondPeakT = 0.73D + randomSigned(windSeed, eventIndex, 0x85EBCA77C2B2AE63L) * 0.08D;
+        firstPeakT = clamp(firstPeakT, 0.14D, 0.36D);
+        dipT = clamp(dipT, firstPeakT + 0.10D, 0.68D);
+        secondPeakT = clamp(secondPeakT, dipT + 0.08D, 0.90D);
+
+        double firstPeak = rampingGust ? 0.42D : 0.66D;
+        firstPeak += random01(windSeed, eventIndex, 0x27D4EB2F165667C5L) * 0.18D;
+        double dip = 0.18D + random01(windSeed, eventIndex, 0x9E3779B185EBCA87L) * 0.26D;
+        double secondPeak = 0.82D + random01(windSeed, eventIndex, 0xD1B54A32D192ED03L) * 0.38D;
+
+        if (local < firstPeakT) {
+            return lerp(0.0D, firstPeak, local / firstPeakT);
+        }
+        if (local < dipT) {
+            return lerp(firstPeak, dip, (local - firstPeakT) / (dipT - firstPeakT));
+        }
+        if (local < secondPeakT) {
+            return lerp(dip, secondPeak, (local - dipT) / (secondPeakT - dipT));
+        }
+        return lerp(secondPeak, 0.0D, (local - secondPeakT) / (1.0D - secondPeakT));
+    }
+
+    private static double lerp(double a, double b, double t) {
+        return a + (b - a) * clamp(t, 0.0D, 1.0D);
+    }
+
+    private static double clamp(double value, double min, double max) {
+        return Math.max(min, Math.min(max, value));
+    }
+
+    private record WindSample(double envelope, double dirX, double dirZ, double strengthScale) {
+        static final WindSample NONE = new WindSample(0.0D, 0.0D, 0.0D, 0.0D);
     }
 
     private double maxInteriorSpeedSqr() {

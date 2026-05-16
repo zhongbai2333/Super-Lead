@@ -15,14 +15,11 @@ import com.zhongbai233.super_lead.preset.PresetPromptOpen;
 import com.zhongbai233.super_lead.preset.PresetPromptResponse;
 import com.zhongbai233.super_lead.preset.PresetServerManager;
 import com.zhongbai233.super_lead.preset.ServerQuery;
-import com.zhongbai233.super_lead.preset.OpenZoneCreateScreen;
 import com.zhongbai233.super_lead.preset.PhysicsZoneSelectionManager;
 import com.zhongbai233.super_lead.preset.SyncDimensionPresets;
 import com.zhongbai233.super_lead.preset.SyncPhysicsZones;
 import com.zhongbai233.super_lead.preset.ZoneCreateRequest;
 import com.zhongbai233.super_lead.preset.ZoneSelectionClick;
-import com.zhongbai233.super_lead.preset.ZoneSelectionState;
-import com.zhongbai233.super_lead.preset.client.PhysicsZonesClient;
 import com.zhongbai233.super_lead.serverconfig.ServerConfigManager;
 import com.zhongbai233.super_lead.serverconfig.ServerConfigSet;
 import com.zhongbai233.super_lead.serverconfig.ServerConfigSnapshot;
@@ -32,6 +29,7 @@ import net.minecraft.world.level.ChunkPos;
 import net.neoforged.neoforge.network.PacketDistributor;
 import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
 import net.neoforged.neoforge.network.handling.IPayloadContext;
+import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 
 /**
  * Central registration point for Super Lead custom payloads.
@@ -48,34 +46,8 @@ public final class SuperLeadPayloads {
     }
 
     public static void register(RegisterPayloadHandlersEvent event) {
-        event.registrar("1")
-                .playToClient(SyncRopeChunk.TYPE, SyncRopeChunk.STREAM_CODEC, SuperLeadPayloads::handleSyncRopeChunk)
-                .playToClient(UnloadRopeChunk.TYPE, UnloadRopeChunk.STREAM_CODEC,
-                        SuperLeadPayloads::handleUnloadRopeChunk)
-                .playToClient(ClearRopeCache.TYPE, ClearRopeCache.STREAM_CODEC,
-                        SuperLeadPayloads::handleClearRopeCache)
-                .playToClient(ItemPulse.TYPE, ItemPulse.STREAM_CODEC, SuperLeadPayloads::handleItemPulse)
-                .playToClient(RopeContactPulse.TYPE, RopeContactPulse.STREAM_CODEC,
-                        SuperLeadPayloads::handleRopeContactPulse)
-                .playToClient(SyncZiplines.TYPE, SyncZiplines.STREAM_CODEC, SuperLeadPayloads::handleSyncZiplines)
-                .playToClient(PresetPromptOpen.TYPE, PresetPromptOpen.STREAM_CODEC,
-                        SuperLeadPayloads::handlePresetPromptOpen)
-                .playToClient(PresetApplyOverrides.TYPE, PresetApplyOverrides.STREAM_CODEC,
-                        SuperLeadPayloads::handlePresetApply)
-                .playToClient(PresetListResponse.TYPE, PresetListResponse.STREAM_CODEC,
-                        SuperLeadPayloads::handlePresetListResponse)
-                .playToClient(PresetDetailsResponse.TYPE, PresetDetailsResponse.STREAM_CODEC,
-                        SuperLeadPayloads::handlePresetDetailsResponse)
-                .playToClient(SyncDimensionPresets.TYPE, SyncDimensionPresets.STREAM_CODEC,
-                        SuperLeadPayloads::handleSyncDimensionPresets)
-                .playToClient(SyncPhysicsZones.TYPE, SyncPhysicsZones.STREAM_CODEC,
-                        SuperLeadPayloads::handleSyncPhysicsZones)
-                .playToClient(ZoneSelectionState.TYPE, ZoneSelectionState.STREAM_CODEC,
-                        SuperLeadPayloads::handleZoneSelectionState)
-                .playToClient(OpenZoneCreateScreen.TYPE, OpenZoneCreateScreen.STREAM_CODEC,
-                        SuperLeadPayloads::handleOpenZoneCreateScreen)
-                .playToClient(ServerConfigSnapshot.TYPE, ServerConfigSnapshot.STREAM_CODEC,
-                        SuperLeadPayloads::handleServerConfigSnapshot)
+        var registrar = event.registrar("1");
+        registrar
                 .playToServer(UseConnectionAction.TYPE, UseConnectionAction.STREAM_CODEC,
                         SuperLeadPayloads::handleUseConnectionAction)
                 .playToServer(StartZipline.TYPE, StartZipline.STREAM_CODEC,
@@ -117,6 +89,43 @@ public final class SuperLeadPayloads {
                         SuperLeadPayloads::handleServerQuery)
                 .playToServer(ServerConfigSet.TYPE, ServerConfigSet.STREAM_CODEC,
                         SuperLeadPayloads::handleServerConfigSet);
+
+        if (net.neoforged.fml.loading.FMLEnvironment.getDist().isClient()) {
+            return;
+        }
+
+        registrar
+                .playToClient(SyncRopeChunk.TYPE, SyncRopeChunk.STREAM_CODEC, SuperLeadPayloads::ignoreClientPayload)
+                .playToClient(UnloadRopeChunk.TYPE, UnloadRopeChunk.STREAM_CODEC,
+                        SuperLeadPayloads::ignoreClientPayload)
+                .playToClient(ClearRopeCache.TYPE, ClearRopeCache.STREAM_CODEC, SuperLeadPayloads::ignoreClientPayload)
+                .playToClient(ItemPulse.TYPE, ItemPulse.STREAM_CODEC, SuperLeadPayloads::ignoreClientPayload)
+                .playToClient(RopeContactPulse.TYPE, RopeContactPulse.STREAM_CODEC,
+                        SuperLeadPayloads::ignoreClientPayload)
+                .playToClient(SyncZiplines.TYPE, SyncZiplines.STREAM_CODEC, SuperLeadPayloads::ignoreClientPayload)
+                .playToClient(PresetPromptOpen.TYPE, PresetPromptOpen.STREAM_CODEC,
+                        SuperLeadPayloads::ignoreClientPayload)
+                .playToClient(PresetApplyOverrides.TYPE, PresetApplyOverrides.STREAM_CODEC,
+                        SuperLeadPayloads::ignoreClientPayload)
+                .playToClient(PresetListResponse.TYPE, PresetListResponse.STREAM_CODEC,
+                        SuperLeadPayloads::ignoreClientPayload)
+                .playToClient(PresetDetailsResponse.TYPE, PresetDetailsResponse.STREAM_CODEC,
+                        SuperLeadPayloads::ignoreClientPayload)
+                .playToClient(SyncDimensionPresets.TYPE, SyncDimensionPresets.STREAM_CODEC,
+                        SuperLeadPayloads::ignoreClientPayload)
+                .playToClient(SyncPhysicsZones.TYPE, SyncPhysicsZones.STREAM_CODEC,
+                        SuperLeadPayloads::ignoreClientPayload)
+                .playToClient(ServerConfigSnapshot.TYPE, ServerConfigSnapshot.STREAM_CODEC,
+                        SuperLeadPayloads::ignoreClientPayload)
+                .playToClient(com.zhongbai233.super_lead.preset.ZoneSelectionState.TYPE,
+                        com.zhongbai233.super_lead.preset.ZoneSelectionState.STREAM_CODEC,
+                        SuperLeadPayloads::ignoreClientPayload)
+                .playToClient(com.zhongbai233.super_lead.preset.OpenZoneCreateScreen.TYPE,
+                        com.zhongbai233.super_lead.preset.OpenZoneCreateScreen.STREAM_CODEC,
+                        SuperLeadPayloads::ignoreClientPayload);
+    }
+
+    private static <T extends CustomPacketPayload> void ignoreClientPayload(T payload, IPayloadContext context) {
     }
 
     public static void sendToPlayer(ServerPlayer player) {
@@ -180,68 +189,12 @@ public final class SuperLeadPayloads {
         return player.containerMenu == menu && menu.containerId == containerId && menu.stillValid(player);
     }
 
-    private static void handleSyncRopeChunk(SyncRopeChunk payload, IPayloadContext context) {
-        var level = context.player().level();
-        SuperLeadNetwork.replaceChunkConnections(level, payload.chunk(), payload.connections());
-        if (level.isClientSide()) {
-            com.zhongbai233.super_lead.lead.client.chunk.StaticRopeChunkRegistry.get()
-                    .onConnectionsReplaced(level, SuperLeadNetwork.connections(level));
-        }
-    }
-
-    private static void handleUnloadRopeChunk(UnloadRopeChunk payload, IPayloadContext context) {
-        var level = context.player().level();
-        SuperLeadNetwork.unloadChunkConnections(level, payload.chunk());
-        if (level.isClientSide()) {
-            com.zhongbai233.super_lead.lead.client.chunk.StaticRopeChunkRegistry.get()
-                    .onConnectionsReplaced(level, SuperLeadNetwork.connections(level));
-        }
-    }
-
-    private static void handleClearRopeCache(ClearRopeCache payload, IPayloadContext context) {
-        var level = context.player().level();
-        SuperLeadNetwork.replaceConnections(level, java.util.List.of());
-        if (level.isClientSide()) {
-            com.zhongbai233.super_lead.lead.client.chunk.StaticRopeChunkRegistry.get()
-                    .onConnectionsReplaced(level, java.util.List.of());
-        }
-    }
-
     public static void sendItemPulse(ServerLevel level, ItemPulse pulse) {
         SuperLeadSavedData.get(level).find(pulse.connectionId()).ifPresent(connection -> {
             for (long chunkKey : SuperLeadSavedData.get(level).chunksForConnection(connection.id())) {
                 PacketDistributor.sendToPlayersTrackingChunk(level, SuperLeadSavedData.chunkFromKey(chunkKey), pulse);
             }
         });
-    }
-
-    private static void handleItemPulse(ItemPulse payload, IPayloadContext context) {
-        com.zhongbai233.super_lead.lead.client.render.ItemFlowAnimator.queue(payload);
-        var level = context.player().level();
-        if (level.isClientSide()) {
-            long now = level.getGameTime();
-            long pulseEndTick = Math.max(now, payload.startTick()) + payload.durationTicks() + 2L;
-            com.zhongbai233.super_lead.lead.client.chunk.StaticRopeChunkRegistry.get()
-                    .holdDynamic(level, payload.connectionId(), pulseEndTick);
-        }
-    }
-
-    private static void handleRopeContactPulse(RopeContactPulse payload, IPayloadContext context) {
-        com.zhongbai233.super_lead.lead.client.render.RopeContactsClient.apply(payload);
-        var minecraft = net.minecraft.client.Minecraft.getInstance();
-        var level = minecraft.level;
-        if (level == null)
-            return;
-        var staticRopes = com.zhongbai233.super_lead.lead.client.chunk.StaticRopeChunkRegistry.get();
-        for (RopeContactPulse.Entry entry : payload.contacts()) {
-            staticRopes.invalidateConnection(level, entry.ropeId());
-        }
-    }
-
-    private static void handleSyncZiplines(SyncZiplines payload, IPayloadContext context) {
-        if (context.player().level().isClientSide()) {
-            com.zhongbai233.super_lead.lead.client.render.ZiplineClientState.apply(payload);
-        }
     }
 
     private static void handleClientRopeContactReport(ClientRopeContactReport payload, IPayloadContext context) {
@@ -258,27 +211,6 @@ public final class SuperLeadPayloads {
                 return;
             ZiplineController.start(level, player, opt.get(), payload.hitPoint(), payload.hitT());
         });
-    }
-
-    private static void handleSyncPhysicsZones(SyncPhysicsZones payload, IPayloadContext context) {
-        PhysicsZonesClient.apply(payload);
-    }
-
-    private static void handleSyncDimensionPresets(SyncDimensionPresets payload, IPayloadContext context) {
-        PhysicsZonesClient.apply(payload);
-        var level = context.player().level();
-        if (level.isClientSide()) {
-            com.zhongbai233.super_lead.lead.client.chunk.StaticRopeChunkRegistry.get()
-                    .invalidateAll(level, SuperLeadNetwork.connections(level));
-        }
-    }
-
-    private static void handleZoneSelectionState(ZoneSelectionState payload, IPayloadContext context) {
-        com.zhongbai233.super_lead.preset.client.ZoneSelectionClient.apply(payload);
-    }
-
-    private static void handleOpenZoneCreateScreen(OpenZoneCreateScreen payload, IPayloadContext context) {
-        com.zhongbai233.super_lead.preset.client.ZoneSelectionClient.openCreate(payload);
     }
 
     private static void handleAddRopeAttachment(AddRopeAttachment payload, IPayloadContext context) {
@@ -490,18 +422,6 @@ public final class SuperLeadPayloads {
         });
     }
 
-    private static void handlePresetPromptOpen(PresetPromptOpen payload, IPayloadContext context) {
-        com.zhongbai233.super_lead.preset.client.PresetClientHandler.onPromptOpen(payload);
-    }
-
-    private static void handlePresetApply(PresetApplyOverrides payload, IPayloadContext context) {
-        com.zhongbai233.super_lead.preset.client.PresetClientHandler.onApply(payload);
-    }
-
-    private static void handlePresetListResponse(PresetListResponse payload, IPayloadContext context) {
-        com.zhongbai233.super_lead.preset.client.PresetClientHandler.onListResponse(payload);
-    }
-
     private static void handlePresetPromptResponse(PresetPromptResponse payload, IPayloadContext context) {
         runOnServerPlayer(context, player -> PresetServerManager.handleResponse(player, payload));
     }
@@ -563,15 +483,8 @@ public final class SuperLeadPayloads {
         });
     }
 
-    private static void handlePresetDetailsResponse(PresetDetailsResponse payload, IPayloadContext context) {
-        com.zhongbai233.super_lead.preset.client.PresetClientHandler.onDetailsResponse(payload);
-    }
-
     private static void handleServerConfigSet(ServerConfigSet payload, IPayloadContext context) {
         runOnServerPlayer(context, player -> ServerConfigManager.handleSet(player, payload));
     }
 
-    private static void handleServerConfigSnapshot(ServerConfigSnapshot payload, IPayloadContext context) {
-        com.zhongbai233.super_lead.serverconfig.client.ServerConfigClient.onSnapshot(payload);
-    }
 }

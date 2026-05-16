@@ -34,7 +34,8 @@ public final class ServerConfigManager {
             "network.thermal_transfer_per_tick",
             "network.item_transfer_interval_ticks",
             "network.fluid_bucket_amount",
-            "network.max_ropes_per_block_face");
+            "network.max_ropes_per_block_face",
+            "presets.allow_op_visual_presets");
 
     public static boolean isOp(ServerPlayer player) {
         return player != null && player.permissions().hasPermission(OP);
