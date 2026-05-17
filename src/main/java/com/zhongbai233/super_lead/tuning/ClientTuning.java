@@ -117,9 +117,6 @@ public final class ClientTuning {
     public static final TuningKey<Boolean> MODE_CHUNK_MESH_STATIC_ROPES = registerB(
             "mode.chunkMeshStaticRopes", "render.mode", Boolean.TRUE,
             "Bake static ropes into chunk meshes when physics is disabled.");
-    public static final TuningKey<Boolean> MODE_EXPERIMENTAL_GPU_DYNAMIC_ROPES = registerB(
-            "mode.experimentalGpuDynamicRopes", "render.mode", Boolean.FALSE,
-            "Experimental: render dynamic ropes through a mapped GPU ring buffer instead of VertexConsumer. Disabled by default for compatibility.");
 
     public static final TuningKey<Double> THICKNESS_HALF = registerD(
             "thickness.half", "render.geom", 1.0D / 32.0D, 0.005D, 0.10D,

@@ -539,8 +539,7 @@ public final class SuperLeadStressTest {
         if (forceChunkMeshMode) {
             return localSectionMode ? "force_chunk_mesh_local_section" : "force_chunk_mesh";
         }
-        return ClientTuning.MODE_EXPERIMENTAL_GPU_DYNAMIC_ROPES.get() ? "gpu_dynamic_instanced_mixin"
-                : "vertex_consumer";
+        return "vertex_consumer";
     }
 
     private static String modeLabel() {
@@ -838,14 +837,14 @@ public final class SuperLeadStressTest {
             double length = 8.0;
             double spacing = 0.35;
             List<PipelineStep> steps = new ArrayList<>();
-            steps.add(new PipelineStep("static (GPU off)",
+            steps.add(new PipelineStep("static (chunk mesh off)",
                     false, false, false, count, frames, warmup, length, spacing,
-                    () -> ClientTuning.MODE_EXPERIMENTAL_GPU_DYNAMIC_ROPES.setLocalFromString("false"),
-                    () -> {}));
-            steps.add(new PipelineStep("static (GPU on)",
+                    () -> ClientTuning.MODE_CHUNK_MESH_STATIC_ROPES.setLocalFromString("false"),
+                    () -> ClientTuning.MODE_CHUNK_MESH_STATIC_ROPES.setLocalFromString("true")));
+            steps.add(new PipelineStep("static (chunk mesh on)",
                     false, false, false, count, frames, warmup, length, spacing,
-                    () -> ClientTuning.MODE_EXPERIMENTAL_GPU_DYNAMIC_ROPES.setLocalFromString("true"),
-                    () -> ClientTuning.MODE_EXPERIMENTAL_GPU_DYNAMIC_ROPES.setLocalFromString("false")));
+                    () -> ClientTuning.MODE_CHUNK_MESH_STATIC_ROPES.setLocalFromString("true"),
+                    () -> ClientTuning.MODE_CHUNK_MESH_STATIC_ROPES.setLocalFromString("false")));
             return new BenchPipeline(steps, iterations);
         }
     }

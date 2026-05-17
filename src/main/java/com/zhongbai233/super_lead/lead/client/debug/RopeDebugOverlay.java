@@ -72,8 +72,7 @@ public final class RopeDebugOverlay implements DebugScreenEntry {
                         RopeDebugStats.pushContacts),
                 "[SuperLead] mode phys=" + bool(ClientTuning.MODE_PHYSICS.get())
                         + " 3d=" + bool(ClientTuning.MODE_RENDER3D.get())
-                        + " chunkMesh=" + bool(ClientTuning.MODE_CHUNK_MESH_STATIC_ROPES.get())
-                        + " gpuDyn=" + bool(ClientTuning.MODE_EXPERIMENTAL_GPU_DYNAMIC_ROPES.get())));
+                        + " chunkMesh=" + bool(ClientTuning.MODE_CHUNK_MESH_STATIC_ROPES.get())));
     }
 
     @Override
