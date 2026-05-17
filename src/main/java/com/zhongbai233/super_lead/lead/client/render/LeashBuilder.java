@@ -534,10 +534,10 @@ public final class LeashBuilder {
         int lightA = LightCoordsUtil.pack(blockA, skyA);
         int lightB = LightCoordsUtil.pack(blockB, skyB);
         renderEndCap(buffer, pose, cameraPos, sim, 0, lightA, highlightColor, kind, powered, tier,
-                sideX[0], sideY[0], sideZ[0], upX[0], upY[0], upZ[0]);
+                sideX[0], sideY[0], sideZ[0], upX[0], upY[0], upZ[0], false);
         renderEndCap(buffer, pose, cameraPos, sim, nodeCount - 1, lightB, highlightColor, kind, powered, tier,
                 sideX[nodeCount - 1], sideY[nodeCount - 1], sideZ[nodeCount - 1],
-                upX[nodeCount - 1], upY[nodeCount - 1], upZ[nodeCount - 1]);
+                upX[nodeCount - 1], upY[nodeCount - 1], upZ[nodeCount - 1], true);
     }
 
     /**
@@ -549,17 +549,25 @@ public final class LeashBuilder {
             RopeSimulation sim, int node, int light,
             int highlightColor, LeadKind kind, boolean powered, int tier,
             double sideX, double sideY, double sideZ,
-            double upX, double upY, double upZ) {
+            double upX, double upY, double upZ,
+            boolean flipWinding) {
         double px = sim.renderX(node) - cameraPos.x;
         double py = sim.renderY(node) - cameraPos.y;
         double pz = sim.renderZ(node) - cameraPos.z;
         int color = highlightColor != NO_HIGHLIGHT
                 ? highlightOverlayColor(4, highlightColor)
                 : ropeColor(0, 4, kind, powered, tier, activeColorTuning);
-        vertex(buffer, pose, px - sideX + upX, py - sideY + upY, pz - sideZ + upZ, color, light); // S
-        vertex(buffer, pose, px - sideX - upX, py - sideY - upY, pz - sideZ - upZ, color, light); // R
-        vertex(buffer, pose, px + sideX - upX, py + sideY - upY, pz + sideZ - upZ, color, light); // Q
-        vertex(buffer, pose, px + sideX + upX, py + sideY + upY, pz + sideZ + upZ, color, light); // P
+        if (flipWinding) {
+            vertex(buffer, pose, px + sideX + upX, py + sideY + upY, pz + sideZ + upZ, color, light); // P
+            vertex(buffer, pose, px + sideX - upX, py + sideY - upY, pz + sideZ - upZ, color, light); // Q
+            vertex(buffer, pose, px - sideX - upX, py - sideY - upY, pz - sideZ - upZ, color, light); // R
+            vertex(buffer, pose, px - sideX + upX, py - sideY + upY, pz - sideZ + upZ, color, light); // S
+        } else {
+            vertex(buffer, pose, px - sideX + upX, py - sideY + upY, pz - sideZ + upZ, color, light); // S
+            vertex(buffer, pose, px - sideX - upX, py - sideY - upY, pz - sideZ - upZ, color, light); // R
+            vertex(buffer, pose, px + sideX - upX, py + sideY - upY, pz + sideZ - upZ, color, light); // Q
+            vertex(buffer, pose, px + sideX + upX, py + sideY + upY, pz + sideZ + upZ, color, light); // P
+        }
     }
 
     private static void emitBoxStripSubSegment(
