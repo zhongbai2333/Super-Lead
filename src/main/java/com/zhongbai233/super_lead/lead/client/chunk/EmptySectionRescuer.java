@@ -5,6 +5,7 @@ import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.renderer.LevelRenderer;
+import net.minecraft.core.SectionPos;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
@@ -22,6 +23,8 @@ public final class EmptySectionRescuer {
         reg.flushPendingDirtySections();
         if (!reg.isActive())
             return;
+        if (net.neoforged.fml.ModList.get().isLoaded("sodium"))
+            return;
 
         Minecraft mc = Minecraft.getInstance();
         ClientLevel level = mc.level;
@@ -30,13 +33,14 @@ public final class EmptySectionRescuer {
             return;
 
         LongOpenHashSet emptySet = level.getChunkSource().getLoadedEmptySections();
-        if (emptySet.isEmpty())
-            return;
-
         for (long key : reg.publishedSectionKeys()) {
             if (emptySet.remove(key)) {
                 levelRenderer.onSectionBecomingNonEmpty(key);
             }
+        }
+        for (long key : reg.unmeshedPublishedSectionKeys()) {
+            levelRenderer.onSectionBecomingNonEmpty(key);
+            levelRenderer.setSectionDirty(SectionPos.x(key), SectionPos.y(key), SectionPos.z(key));
         }
     }
 }

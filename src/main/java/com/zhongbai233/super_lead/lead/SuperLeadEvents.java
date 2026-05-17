@@ -74,15 +74,6 @@ public final class SuperLeadEvents {
                 consumeBlockInteraction(event, InteractionResult.SUCCESS);
                 return;
             }
-            if (stack.is(Items.HOPPER) && tryToggleItemExtract(event)) {
-                return;
-            }
-            if (stack.is(Items.CAULDRON) && tryToggleFluidExtract(event)) {
-                return;
-            }
-            if (MekanismLeadMaterials.isSteelBlock(stack) && tryTogglePressurizedExtract(event)) {
-                return;
-            }
             if (tryUseConnectionAction(event)) {
                 return;
             }
@@ -175,54 +166,6 @@ public final class SuperLeadEvents {
         if (!event.getLevel().isClientSide())
             return;
         ClientInteractionBridge.trySendStartZipline(event.getHand());
-    }
-
-    private static boolean tryToggleItemExtract(PlayerInteractEvent.RightClickBlock event) {
-        if (!SuperLeadNetwork.canModifyRopes(event.getEntity())) {
-            return false;
-        }
-        Level level = event.getLevel();
-        if (!SuperLeadNetwork.hasItemConnectionAt(level, event.getPos())) {
-            return false;
-        }
-        if (!level.isClientSide()) {
-            SuperLeadNetwork.toggleItemExtractAt(level, event.getPos());
-        }
-        event.setCanceled(true);
-        event.setCancellationResult(InteractionResult.SUCCESS);
-        return true;
-    }
-
-    private static boolean tryToggleFluidExtract(PlayerInteractEvent.RightClickBlock event) {
-        if (!SuperLeadNetwork.canModifyRopes(event.getEntity())) {
-            return false;
-        }
-        Level level = event.getLevel();
-        if (!SuperLeadNetwork.hasFluidConnectionAt(level, event.getPos())) {
-            return false;
-        }
-        if (!level.isClientSide()) {
-            SuperLeadNetwork.toggleFluidExtractAt(level, event.getPos());
-        }
-        event.setCanceled(true);
-        event.setCancellationResult(InteractionResult.SUCCESS);
-        return true;
-    }
-
-    private static boolean tryTogglePressurizedExtract(PlayerInteractEvent.RightClickBlock event) {
-        if (!SuperLeadNetwork.canModifyRopes(event.getEntity())) {
-            return false;
-        }
-        Level level = event.getLevel();
-        if (!SuperLeadNetwork.hasPressurizedConnectionAt(level, event.getPos())) {
-            return false;
-        }
-        if (!level.isClientSide()) {
-            SuperLeadNetwork.togglePressurizedExtractAt(level, event.getPos());
-        }
-        event.setCanceled(true);
-        event.setCancellationResult(InteractionResult.SUCCESS);
-        return true;
     }
 
     private static boolean tryUseConnectionAction(PlayerInteractEvent.RightClickBlock event) {

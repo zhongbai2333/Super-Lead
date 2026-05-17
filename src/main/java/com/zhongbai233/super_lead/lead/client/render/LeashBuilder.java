@@ -1,15 +1,45 @@
 package com.zhongbai233.super_lead.lead.client.render;
 
+import com.mojang.blaze3d.buffers.GpuBufferSlice;
+import com.mojang.blaze3d.pipeline.RenderPipeline;
+import com.mojang.blaze3d.systems.RenderPass;
+import com.mojang.blaze3d.systems.RenderSystem;
+import com.mojang.blaze3d.vertex.DefaultVertexFormat;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
+import com.mojang.blaze3d.vertex.VertexFormat;
+import com.mojang.logging.LogUtils;
+import com.zhongbai233.super_lead.Super_lead;
 import com.zhongbai233.super_lead.lead.LeadKind;
 import com.zhongbai233.super_lead.lead.client.sim.RopeSimulation;
 import com.zhongbai233.super_lead.lead.client.sim.RopeTuning;
+import com.zhongbai233.super_lead.mixin.GlBufferAccessor;
 import com.zhongbai233.super_lead.tuning.ClientTuning;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.util.Map;
+import com.mojang.blaze3d.opengl.GlTexture;
+import net.minecraft.client.renderer.RenderPipelines;
 import net.minecraft.client.renderer.SubmitNodeCollector;
+import net.minecraft.client.renderer.feature.ParticleFeatureRenderer;
 import net.minecraft.client.renderer.rendertype.RenderTypes;
+import net.minecraft.client.renderer.state.level.QuadParticleRenderState;
+import net.minecraft.client.renderer.texture.TextureManager;
+import net.minecraft.client.Minecraft;
+import net.minecraft.resources.Identifier;
 import net.minecraft.util.LightCoordsUtil;
 import net.minecraft.world.phys.Vec3;
+import org.joml.Matrix4f;
+import org.joml.Vector3f;
+import org.joml.Vector4f;
+import org.lwjgl.opengl.GL11;
+import org.lwjgl.opengl.GL15;
+import org.lwjgl.opengl.GL13;
+import org.lwjgl.opengl.GL20;
+import org.lwjgl.opengl.GL30;
+import org.lwjgl.opengl.GL31;
+import org.lwjgl.opengl.GL33;
+import org.slf4j.Logger;
 
 /**
  * Render-thread rope mesh builder and batching queue.
@@ -21,6 +51,7 @@ import net.minecraft.world.phys.Vec3;
  * objects.
  */
 public final class LeashBuilder {
+    private static final Logger LOG = LogUtils.getLogger();
     public static final int NO_HIGHLIGHT = 0;
     public static final int DEFAULT_HIGHLIGHT = 0x66FFEE84;
 
@@ -174,6 +205,7 @@ public final class LeashBuilder {
      * are baked because cameraPos is forced to origin during bake.
      */
     private static RopeSimulation activeBakeSim = null;
+    private static ExperimentalGpuRopeBatch activeGpuSink = null;
     private static RopeTuning activeColorTuning = null;
     private static double bakeCamOffsetX, bakeCamOffsetY, bakeCamOffsetZ;
 
@@ -207,6 +239,14 @@ public final class LeashBuilder {
         double[] totalLengths = new double[jobs.size()];
         for (int i = 0; i < jobs.size(); i++) {
             totalLengths[i] = Math.max(1.0e-6D, jobs.get(i).sim.prepareRender(partialTick));
+        }
+        if (ClientTuning.MODE_EXPERIMENTAL_GPU_DYNAMIC_ROPES.get()) {
+            try {
+                collector.submitParticleGroup(new ExperimentalInstancedRopeBatch(cameraPos, jobs, totalLengths));
+                return;
+            } catch (RuntimeException e) {
+                LOG.warn("GPU rope render failed, falling back to vertex consumer", e);
+            }
         }
         collector.submitCustomGeometry(BATCH_POSE, RenderTypes.textBackground(), (poseState, buffer) -> {
             for (int i = 0; i < jobs.size(); i++) {
@@ -268,6 +308,24 @@ public final class LeashBuilder {
         // normal walking while drift stays visually negligible.
         boolean hasHighlight = job.highlightColor != NO_HIGHLIGHT;
         boolean skipBasePass = hasHighlight && job.chunkMeshActive;
+        if (activeGpuSink != null) {
+            if (!skipBasePass) {
+                if (ribbonLod) {
+                    renderRibbon(buffer, poseState, cameraPos, sim, nodeCount, totalLength,
+                            effectiveBlockA, effectiveBlockB, job.skyA, job.skyB,
+                            NO_HIGHLIGHT, job.kind, job.powered, job.tier,
+                            job.pulsePositions, job.extractEnd);
+                } else {
+                    renderSquare(buffer, poseState, cameraPos, sim, nodeCount, totalLength,
+                            effectiveBlockA, effectiveBlockB, job.skyA, job.skyB,
+                            NO_HIGHLIGHT, job.kind, job.powered, job.tier,
+                            job.pulsePositions, job.extractEnd, stride);
+                }
+            }
+            renderHighlightPass(buffer, poseState, cameraPos, job, sim, nodeCount, totalLength,
+                    effectiveBlockA, effectiveBlockB, ribbonLod, cheapHighlight, stride);
+            return;
+        }
         boolean canBake = !skipBasePass;
         if (canBake) {
             int pulsesHash = pulsesHash(job.pulsePositions, job.extractEnd);
@@ -529,6 +587,60 @@ public final class LeashBuilder {
                         i, j, a, b, blockA, blockB, skyA, skyB,
                         currentStripe, highlightColor, kind, powered, tier, bakeSim);
             }
+        }
+        // End cap faces at both rope endpoints.
+        // During baking these are baked into the vertex arrays as world-space coords;
+        // during live rendering they go directly to the VertexConsumer.
+        {
+            int lightA = LightCoordsUtil.pack(blockA, skyA);
+            int lightB = LightCoordsUtil.pack(blockB, skyB);
+            renderEndCap(buffer, pose, cameraPos, sim, 0, lightA, highlightColor, kind, powered, tier,
+                    sideX[0], sideY[0], sideZ[0], upX[0], upY[0], upZ[0], 1.0D, false);
+            renderEndCap(buffer, pose, cameraPos, sim, nodeCount - 1, lightB, highlightColor, kind, powered, tier,
+                    sideX[nodeCount - 1], sideY[nodeCount - 1], sideZ[nodeCount - 1],
+                    upX[nodeCount - 1], upY[nodeCount - 1], upZ[nodeCount - 1], 1.0D, true);
+        }
+    }
+
+    /**
+     * Renders a single end-cap quad at a rope endpoint node.
+     * The quad faces outward (toward the anchor), giving the rope a solid end.
+     */
+    private static void renderEndCap(
+            VertexConsumer buffer, PoseStack.Pose pose, Vec3 cameraPos,
+            RopeSimulation sim, int node, int light,
+            int highlightColor, LeadKind kind, boolean powered, int tier,
+            double sideX, double sideY, double sideZ,
+            double upX, double upY, double upZ,
+            double scale,
+            boolean flipWinding) {
+        double sx = sideX * scale;
+        double sy = sideY * scale;
+        double sz = sideZ * scale;
+        double ux = upX * scale;
+        double uy = upY * scale;
+        double uz = upZ * scale;
+        double px = sim.renderX(node) - cameraPos.x;
+        double py = sim.renderY(node) - cameraPos.y;
+        double pz = sim.renderZ(node) - cameraPos.z;
+        // End cap face 4 — a fifth "face index" for end caps, slightly darkened.
+        int color = highlightColor != NO_HIGHLIGHT
+                ? highlightOverlayColor(4, highlightColor)
+                : ropeColor(0, 4, kind, powered, tier, activeColorTuning);
+        ExperimentalGpuRopeBatch gpuSink = activeGpuSink;
+        if (gpuSink != null) {
+            gpuSink.beginPrimitive();
+        }
+        if (flipWinding) {
+            vertex(buffer, pose, px + sx + ux, py + sy + uy, pz + sz + uz, color, light); // P
+            vertex(buffer, pose, px + sx - ux, py + sy - uy, pz + sz - uz, color, light); // Q
+            vertex(buffer, pose, px - sx - ux, py - sy - uy, pz - sz - uz, color, light); // R
+            vertex(buffer, pose, px - sx + ux, py - sy + uy, pz - sz + uz, color, light); // S
+        } else {
+            vertex(buffer, pose, px - sx + ux, py - sy + uy, pz - sz + uz, color, light); // S
+            vertex(buffer, pose, px - sx - ux, py - sy - uy, pz - sz - uz, color, light); // R
+            vertex(buffer, pose, px + sx - ux, py + sy - uy, pz + sz - uz, color, light); // Q
+            vertex(buffer, pose, px + sx + ux, py + sy + uy, pz + sz + uz, color, light); // P
         }
     }
 
@@ -1009,6 +1121,10 @@ public final class LeashBuilder {
             LeadKind kind,
             boolean powered,
             int tier) {
+        ExperimentalGpuRopeBatch gpuSink = activeGpuSink;
+        if (gpuSink != null) {
+            gpuSink.beginPrimitive();
+        }
         int color = highlightColor != NO_HIGHLIGHT ? highlightOverlayColor(face, highlightColor)
                 : ropeColor(stripe, face, kind, powered, tier);
         vertex(buffer, pose, p3x, p3y, p3z, color, light0);
@@ -1106,6 +1222,12 @@ public final class LeashBuilder {
             bakeSim.appendBakedVertex(x + bakeCamOffsetX, y + bakeCamOffsetY, z + bakeCamOffsetZ, color, light);
             return;
         }
+        ExperimentalGpuRopeBatch gpuSink = activeGpuSink;
+        if (gpuSink != null) {
+            gpuSink.vertex((float) x, (float) y, (float) z, color, light);
+            verticesEmitted++;
+            return;
+        }
         // allocates a Vector3f and runs a 4x4 matmul per vertex. We already feed
         // world-space
         // (cam-relative) coords, so the matrix is pure waste.
@@ -1113,5 +1235,552 @@ public final class LeashBuilder {
                 .setColor(color)
                 .setLight(light);
         verticesEmitted++;
+    }
+
+    private static final class ExperimentalInstancedRopeBatch implements SubmitNodeCollector.ParticleGroupRenderer {
+        private static final int INSTANCE_SIZE = 96;
+        private static final int INITIAL_BYTES = 64 * 1024;
+
+        private final Vec3 cameraPos;
+        private final java.util.List<RopeJob> jobs;
+        private final double[] totalLengths;
+        private ByteBuffer instances;
+        private int instanceCount;
+        private ExperimentalGpuRopeBatch fallbackBatch;
+        private QuadParticleRenderState.PreparedBuffers fallbackPrepared;
+
+        ExperimentalInstancedRopeBatch(Vec3 cameraPos, java.util.List<RopeJob> jobs, double[] totalLengths) {
+            this.cameraPos = cameraPos;
+            this.jobs = java.util.List.copyOf(jobs);
+            this.totalLengths = totalLengths.clone();
+        }
+
+        @Override
+        public boolean isEmpty() {
+            return jobs.isEmpty();
+        }
+
+        @Override
+        public QuadParticleRenderState.PreparedBuffers prepare(ParticleFeatureRenderer.ParticleBufferCache buffer,
+                boolean translucent) {
+            if (translucent) {
+                return null;
+            }
+            this.instances = ByteBuffer.allocateDirect(INITIAL_BYTES).order(ByteOrder.nativeOrder());
+            this.instanceCount = 0;
+            java.util.List<RopeJob> fallbackJobs = new java.util.ArrayList<>();
+            java.util.List<Double> fallbackLengths = new java.util.ArrayList<>();
+            int count = Math.min(this.jobs.size(), this.totalLengths.length);
+            for (int i = 0; i < count; i++) {
+                if (!appendJob(this.jobs.get(i), this.totalLengths[i])) {
+                    fallbackJobs.add(this.jobs.get(i));
+                    fallbackLengths.add(this.totalLengths[i]);
+                }
+            }
+            if (!fallbackJobs.isEmpty()) {
+                double[] fallbackTotalLengths = new double[fallbackLengths.size()];
+                for (int i = 0; i < fallbackLengths.size(); i++) {
+                    fallbackTotalLengths[i] = fallbackLengths.get(i);
+                }
+                this.fallbackBatch = new ExperimentalGpuRopeBatch(this.cameraPos, fallbackJobs, fallbackTotalLengths);
+                this.fallbackPrepared = this.fallbackBatch.prepare(buffer, translucent);
+            }
+            // Always prepare a full fallback so renderFullFallback never calls
+            // prepare() inside the active render pass.
+            if (this.fallbackBatch == null) {
+                this.fallbackBatch = new ExperimentalGpuRopeBatch(this.cameraPos, this.jobs, this.totalLengths);
+                this.fallbackPrepared = this.fallbackBatch.prepare(buffer, translucent);
+            }
+            if (this.instanceCount == 0) {
+                this.instances = null;
+                return this.fallbackPrepared;
+            }
+            this.instances.flip();
+            var dynamicTransforms = RenderSystem.getDynamicUniforms()
+                    .writeTransform(RenderSystem.getModelViewMatrix(),
+                            new Vector4f(1.0F, 1.0F, 1.0F, 1.0F), new Vector3f(), new Matrix4f());
+            return new QuadParticleRenderState.PreparedBuffers(this.instanceCount, dynamicTransforms, Map.of());
+        }
+
+        private boolean appendJob(RopeJob job, double totalLength) {
+            RopeSimulation sim = job.sim;
+            RopeTuning previousTuning = activeColorTuning;
+            RopeTuning tuning = sim.tuning();
+            activeColorTuning = tuning;
+            try {
+                int nodeCount = sim.nodeCount();
+                if (nodeCount < 2)
+                    return false;
+                int mid = nodeCount / 2;
+                double midDx = sim.renderX(mid) - cameraPos.x;
+                double midDy = sim.renderY(mid) - cameraPos.y;
+                double midDz = sim.renderZ(mid) - cameraPos.z;
+                double midDistSqr = midDx * midDx + midDy * midDy + midDz * midDz;
+                if (!ClientTuning.MODE_RENDER3D.get() || midDistSqr > ribbonLodDistanceSqr())
+                    return false;
+                int stride = midDistSqr > stride4DistanceSqr() ? 4
+                        : midDistSqr > stride2DistanceSqr() ? 2
+                                : 1;
+                if (stride > 1) {
+                    int maxStride = Math.max(1, (nodeCount - 1) / 4);
+                    if (stride > maxStride)
+                        stride = maxStride;
+                }
+
+                double[] sideX = new double[nodeCount];
+                double[] sideY = new double[nodeCount];
+                double[] sideZ = new double[nodeCount];
+                double[] upX = new double[nodeCount];
+                double[] upY = new double[nodeCount];
+                double[] upZ = new double[nodeCount];
+                buildNodeFrames(sim, nodeCount, totalLength, halfThickness(tuning),
+                        job.pulsePositions, job.extractEnd, sideX, sideY, sideZ, upX, upY, upZ);
+
+                boolean glow = job.powered && (job.kind == LeadKind.REDSTONE || job.kind == LeadKind.ENERGY);
+                int blockA = glow ? 15 : job.blockA;
+                int blockB = glow ? 15 : job.blockB;
+                int last = nodeCount - 1;
+                int stripeIdx = 0;
+                for (int i = 0; i < last; i += stride) {
+                    int j = Math.min(last, i + stride);
+                    int sub = Math.max(1, j - i);
+                    for (int k = 0; k < sub; k++) {
+                        int currentStripe = stripeIdx++;
+                        double a = k / (double) sub;
+                        double b = (k + 1) / (double) sub;
+                        double sxw = sim.renderX(i) + (sim.renderX(j) - sim.renderX(i)) * a;
+                        double syw = sim.renderY(i) + (sim.renderY(j) - sim.renderY(i)) * a;
+                        double szw = sim.renderZ(i) + (sim.renderZ(j) - sim.renderZ(i)) * a;
+                        double exw = sim.renderX(i) + (sim.renderX(j) - sim.renderX(i)) * b;
+                        double eyw = sim.renderY(i) + (sim.renderY(j) - sim.renderY(i)) * b;
+                        double ezw = sim.renderZ(i) + (sim.renderZ(j) - sim.renderZ(i)) * b;
+                        double sSideX = sideX[i] + (sideX[j] - sideX[i]) * a;
+                        double sSideY = sideY[i] + (sideY[j] - sideY[i]) * a;
+                        double sSideZ = sideZ[i] + (sideZ[j] - sideZ[i]) * a;
+                        double sUpX = upX[i] + (upX[j] - upX[i]) * a;
+                        double sUpY = upY[i] + (upY[j] - upY[i]) * a;
+                        double sUpZ = upZ[i] + (upZ[j] - upZ[i]) * a;
+                        double eSideX = sideX[i] + (sideX[j] - sideX[i]) * b;
+                        double eSideY = sideY[i] + (sideY[j] - sideY[i]) * b;
+                        double eSideZ = sideZ[i] + (sideZ[j] - sideZ[i]) * b;
+                        double eUpX = upX[i] + (upX[j] - upX[i]) * b;
+                        double eUpY = upY[i] + (upY[j] - upY[i]) * b;
+                        double eUpZ = upZ[i] + (upZ[j] - upZ[i]) * b;
+                        float t0 = (float) ((i + a * (j - i)) / (double) last);
+                        float t1 = (float) ((i + b * (j - i)) / (double) last);
+                        int light0 = LightCoordsUtil.pack((int) lerp(t0, blockA, blockB),
+                                (int) lerp(t0, job.skyA, job.skyB));
+                        int light1 = LightCoordsUtil.pack((int) lerp(t1, blockA, blockB),
+                                (int) lerp(t1, job.skyA, job.skyB));
+                        appendInstance(
+                                (float) (sxw - cameraPos.x),
+                                (float) (syw - cameraPos.y),
+                                (float) (szw - cameraPos.z),
+                                (float) (exw - cameraPos.x),
+                                (float) (eyw - cameraPos.y),
+                                (float) (ezw - cameraPos.z),
+                                (float) sSideX, (float) sSideY, (float) sSideZ,
+                                (float) sUpX, (float) sUpY, (float) sUpZ,
+                                (float) eSideX, (float) eSideY, (float) eSideZ,
+                                (float) eUpX, (float) eUpY, (float) eUpZ,
+                                ropeColor(currentStripe, 0, job.kind, job.powered, job.tier, tuning),
+                                ropeColor(currentStripe, 1, job.kind, job.powered, job.tier, tuning),
+                                ropeColor(currentStripe, 2, job.kind, job.powered, job.tier, tuning),
+                                ropeColor(currentStripe, 3, job.kind, job.powered, job.tier, tuning),
+                                light0, light1);
+                    }
+                }
+                return true;
+            } finally {
+                activeColorTuning = previousTuning;
+            }
+        }
+
+        @Override
+        public void render(QuadParticleRenderState.PreparedBuffers prepared,
+                ParticleFeatureRenderer.ParticleBufferCache bufferCache,
+                RenderPass renderPass,
+                TextureManager textureManager) {
+            if (this.instanceCount > 0 && this.instances != null && RawInstancedRopeGl.isAvailable()) {
+                try {
+                    RawInstancedRopeGl.render(this.instances, this.instanceCount, prepared.dynamicTransforms(), renderPass);
+                } catch (RuntimeException ex) {
+                    RawInstancedRopeGl.disableAfterFailure(ex);
+                    renderFullFallback(bufferCache, renderPass, textureManager);
+                }
+                this.instances = null;
+            } else if (this.instanceCount > 0) {
+                renderFullFallback(bufferCache, renderPass, textureManager);
+            }
+            if (this.fallbackBatch != null && this.fallbackPrepared != null) {
+                this.fallbackBatch.render(this.fallbackPrepared, bufferCache, renderPass, textureManager);
+            }
+        }
+
+        private void renderFullFallback(ParticleFeatureRenderer.ParticleBufferCache bufferCache,
+                RenderPass renderPass, TextureManager textureManager) {
+            // fallbackBatch must have been prepared during prepare() — never call
+            // prepare() here because render() runs inside an active render pass.
+            if (this.fallbackBatch == null || this.fallbackPrepared == null) {
+                return;
+            }
+            this.fallbackBatch.render(this.fallbackPrepared, bufferCache, renderPass, textureManager);
+        }
+
+        private void appendInstance(
+                float sx, float sy, float sz,
+                float ex, float ey, float ez,
+                float ssx, float ssy, float ssz,
+                float sux, float suy, float suz,
+                float esx, float esy, float esz,
+                float eux, float euy, float euz,
+                int color0, int color1, int color2, int color3,
+                int light0, int light1) {
+            ensureCapacity(INSTANCE_SIZE);
+            instances.putFloat(sx).putFloat(sy).putFloat(sz);
+            instances.putFloat(ex).putFloat(ey).putFloat(ez);
+            instances.putFloat(ssx).putFloat(ssy).putFloat(ssz);
+            instances.putFloat(sux).putFloat(suy).putFloat(suz);
+            instances.putFloat(esx).putFloat(esy).putFloat(esz);
+            instances.putFloat(eux).putFloat(euy).putFloat(euz);
+            instances.putInt(argbToRgba(color0));
+            instances.putInt(argbToRgba(color1));
+            instances.putInt(argbToRgba(color2));
+            instances.putInt(argbToRgba(color3));
+            instances.putInt(light0);
+            instances.putInt(light1);
+            instanceCount++;
+            verticesEmitted += 24;
+        }
+
+        private void ensureCapacity(int bytes) {
+            if (this.instances.remaining() >= bytes)
+                return;
+            int nextCapacity = Math.max(this.instances.capacity() * 2, this.instances.capacity() + bytes);
+            ByteBuffer next = ByteBuffer.allocateDirect(nextCapacity).order(ByteOrder.nativeOrder());
+            this.instances.flip();
+            next.put(this.instances);
+            this.instances = next;
+        }
+
+        private static int argbToRgba(int argb) {
+            return ((argb << 8) & 0xFFFFFF00) | ((argb >>> 24) & 0xFF);
+        }
+    }
+
+    private static final class RawInstancedRopeGl {
+        private static final int INSTANCE_SIZE = ExperimentalInstancedRopeBatch.INSTANCE_SIZE;
+        private static final String VERTEX_SHADER = "#version 330\n" + String.join("\n",
+                "layout(std140) uniform DynamicTransforms {",
+                "    mat4 ModelViewMat;",
+                "    vec4 ColorModulator;",
+                "    vec3 ModelOffset;",
+                "    mat4 TextureMat;",
+                "};",
+                "layout(std140) uniform Projection {",
+                "    mat4 ProjMat;",
+                "};",
+                "layout(location = 0) in vec3 iStart;",
+                "layout(location = 1) in vec3 iEnd;",
+                "layout(location = 2) in vec3 iStartSide;",
+                "layout(location = 3) in vec3 iStartUp;",
+                "layout(location = 4) in vec3 iEndSide;",
+                "layout(location = 5) in vec3 iEndUp;",
+                "layout(location = 6) in uvec4 iColor;",
+                "layout(location = 7) in ivec2 iLight;",
+                "uniform sampler2D Sampler2;",
+                "out vec4 vColor;",
+                "",
+                "vec4 sampleLightmap(ivec2 uv) {",
+                "    return texture(Sampler2, clamp((vec2(uv) / 256.0) + 0.5 / 16.0, vec2(0.5 / 16.0), vec2(15.5 / 16.0)));",
+                "}",
+                "",
+                "ivec2 unpackLight(int packed) {",
+                "    int block = (packed >> 4) & 15;",
+                "    int sky = (packed >> 20) & 15;",
+                "    return ivec2(block << 4, sky << 4);",
+                "}",
+                "",
+                "vec4 unpackColor(uint rgba) {",
+                "    return vec4(",
+                "        float((rgba >> 24u) & 255u),",
+                "        float((rgba >> 16u) & 255u),",
+                "        float((rgba >> 8u) & 255u),",
+                "        float(rgba & 255u)) / 255.0;",
+                "}",
+                "",
+                "vec3 corner(int idx) {",
+                "    vec3 sp = iStart + (idx == 0 || idx == 1 ? iStartSide : -iStartSide)",
+                "                    + (idx == 0 || idx == 3 ? iStartUp : -iStartUp);",
+                "    vec3 ep = iEnd + (idx == 4 || idx == 5 ? iEndSide : -iEndSide)",
+                "                  + (idx == 4 || idx == 7 ? iEndUp : -iEndUp);",
+                "    if (idx < 4) return sp;",
+                "    return ep;",
+                "}",
+                "",
+                "void main() {",
+                "    int face = gl_VertexID / 6;",
+                "    int local = gl_VertexID - face * 6;",
+                "    int c0;",
+                "    int c1;",
+                "    int c2;",
+                "    int c3;",
+                "    if (face == 0) {",
+                "        c0 = 0; c1 = 4; c2 = 5; c3 = 1;",
+                "    } else if (face == 1) {",
+                "        c0 = 1; c1 = 5; c2 = 6; c3 = 2;",
+                "    } else if (face == 2) {",
+                "        c0 = 2; c1 = 6; c2 = 7; c3 = 3;",
+                "    } else {",
+                "        c0 = 3; c1 = 7; c2 = 4; c3 = 0;",
+                "    }",
+                "    int idx = local == 0 ? c0 : local == 1 ? c1 : local == 2 ? c2 : local == 3 ? c0 : local == 4 ? c2 : c3;",
+                "    vec3 pos = corner(idx);",
+                "    gl_Position = ProjMat * ModelViewMat * vec4(pos, 1.0);",
+                "    vec4 light = sampleLightmap(unpackLight(idx < 4 ? iLight.x : iLight.y));",
+                "    vColor = unpackColor(iColor[face]) * ColorModulator * light;",
+                "}",
+                "\n" // trailing newline
+        );
+        private static final String FRAGMENT_SHADER = "#version 330\n" + String.join("\n",
+                "in vec4 vColor;",
+                "out vec4 fragColor;",
+                "void main() {",
+                "    fragColor = vColor;",
+                "}",
+                "\n"
+        );
+        private static int vao;
+        private static int vbo;
+        private static int program;
+        private static boolean failed;
+
+        static boolean isAvailable() {
+            if (failed)
+                return false;
+            ensure();
+            return program != 0;
+        }
+
+        static void disableAfterFailure(RuntimeException ex) {
+            if (!failed) {
+                LOG.warn("Super Lead instanced rope renderer failed; falling back to vertex GPU path.", ex);
+            }
+            failed = true;
+        }
+
+        static void render(ByteBuffer instances, int instanceCount, GpuBufferSlice dynamicTransforms,
+                RenderPass renderPass) {
+            ensure();
+            if (program == 0)
+                return;
+            GL20.glUseProgram(program);
+            bindLightmap();
+            bindUbo("DynamicTransforms", 1, dynamicTransforms);
+            bindUbo("Projection", 0, RenderSystem.getProjectionMatrixBuffer());
+            GL30.glBindVertexArray(vao);
+            GL15.glBindBuffer(GL15.GL_ARRAY_BUFFER, vbo);
+            GL15.glBufferData(GL15.GL_ARRAY_BUFFER, instances, GL15.GL_STREAM_DRAW);
+            GL11.glDisable(GL11.GL_CULL_FACE);
+            GL11.glEnable(GL11.GL_DEPTH_TEST);
+            GL31.glDrawArraysInstanced(GL11.GL_TRIANGLES, 0, 24, instanceCount);
+            GL15.glBindBuffer(GL15.GL_ARRAY_BUFFER, 0);
+            GL30.glBindVertexArray(0);
+            GL20.glUseProgram(0);
+            if (renderPass instanceof SuperLeadGlRenderPassBridge bridge) {
+                bridge.superLead$invalidateEncoderState();
+            }
+        }
+
+        private static void ensure() {
+            if (program != 0 || failed)
+                return;
+            try {
+                program = link(VERTEX_SHADER, FRAGMENT_SHADER);
+                vao = GL30.glGenVertexArrays();
+                vbo = GL15.glGenBuffers();
+                GL30.glBindVertexArray(vao);
+                GL15.glBindBuffer(GL15.GL_ARRAY_BUFFER, vbo);
+                vertexAttrib(0, 3, 0);
+                vertexAttrib(1, 3, 12);
+                vertexAttrib(2, 3, 24);
+                vertexAttrib(3, 3, 36);
+                vertexAttrib(4, 3, 48);
+                vertexAttrib(5, 3, 60);
+                GL30.glVertexAttribIPointer(6, 4, GL11.GL_UNSIGNED_INT, INSTANCE_SIZE, 72L);
+                GL20.glEnableVertexAttribArray(6);
+                GL33.glVertexAttribDivisor(6, 1);
+                GL30.glVertexAttribIPointer(7, 2, GL11.GL_INT, INSTANCE_SIZE, 88L);
+                GL20.glEnableVertexAttribArray(7);
+                GL33.glVertexAttribDivisor(7, 1);
+                GL15.glBindBuffer(GL15.GL_ARRAY_BUFFER, 0);
+                GL30.glBindVertexArray(0);
+            } catch (RuntimeException ex) {
+                LOG.warn("Super Lead instanced rope renderer is unavailable; falling back to vertex GPU path.", ex);
+                failed = true;
+                program = 0;
+            }
+        }
+
+        private static void vertexAttrib(int index, int size, long offset) {
+            GL20.glVertexAttribPointer(index, size, GL11.GL_FLOAT, false, INSTANCE_SIZE, offset);
+            GL20.glEnableVertexAttribArray(index);
+            GL33.glVertexAttribDivisor(index, 1);
+        }
+
+        private static void bindLightmap() {
+            int loc = GL20.glGetUniformLocation(program, "Sampler2");
+            if (loc < 0)
+                return;
+            GL20.glUniform1i(loc, 0);
+            GL13.glActiveTexture(GL13.GL_TEXTURE0);
+            int textureId = ((GlTexture) Minecraft.getInstance().gameRenderer.levelLightmap().texture()).glId();
+            GL11.glBindTexture(GL11.GL_TEXTURE_2D, textureId);
+        }
+
+        private static void bindUbo(String name, int binding, GpuBufferSlice slice) {
+            int idx = GL31.glGetUniformBlockIndex(program, name);
+            if (idx < 0)
+                return;
+            GL31.glUniformBlockBinding(program, idx, binding);
+            GL30.glBindBufferRange(GL31.GL_UNIFORM_BUFFER, binding,
+                    ((GlBufferAccessor) slice.buffer()).superLead$getHandle(),
+                    slice.offset(), slice.length());
+        }
+
+        private static int link(String vertexSource, String fragmentSource) {
+            int vertex = compile(GL20.GL_VERTEX_SHADER, vertexSource);
+            int fragment = compile(GL20.GL_FRAGMENT_SHADER, fragmentSource);
+            int linked = GL20.glCreateProgram();
+            GL20.glAttachShader(linked, vertex);
+            GL20.glAttachShader(linked, fragment);
+            GL20.glLinkProgram(linked);
+            GL20.glDeleteShader(vertex);
+            GL20.glDeleteShader(fragment);
+            if (GL20.glGetProgrami(linked, GL20.GL_LINK_STATUS) == 0) {
+                String log = GL20.glGetProgramInfoLog(linked);
+                GL20.glDeleteProgram(linked);
+                throw new IllegalStateException("Super Lead instanced rope shader link failed: " + log);
+            }
+            return linked;
+        }
+
+        private static int compile(int type, String source) {
+            int shader = GL20.glCreateShader(type);
+            GL20.glShaderSource(shader, source);
+            GL20.glCompileShader(shader);
+            if (GL20.glGetShaderi(shader, GL20.GL_COMPILE_STATUS) == 0) {
+                String log = GL20.glGetShaderInfoLog(shader);
+                GL20.glDeleteShader(shader);
+                throw new IllegalStateException("Super Lead instanced rope shader compile failed: " + log);
+            }
+            return shader;
+        }
+    }
+
+    private static final class ExperimentalGpuRopeBatch implements SubmitNodeCollector.ParticleGroupRenderer {
+        private static final int VERTEX_SIZE = 20;
+        private static final int INITIAL_BYTES = 64 * 1024;
+        private static final RenderPipeline PIPELINE = RenderPipelines.LEASH.toBuilder()
+                .withLocation(Identifier.fromNamespaceAndPath(Super_lead.MODID, "pipeline/experimental_gpu_dynamic_rope"))
+                .withVertexFormat(DefaultVertexFormat.POSITION_COLOR_LIGHTMAP, VertexFormat.Mode.TRIANGLES)
+                .build();
+
+        private final Vec3 cameraPos;
+        private final java.util.List<RopeJob> jobs;
+        private final double[] totalLengths;
+        private ByteBuffer vertices;
+        private int vertexCount;
+
+        ExperimentalGpuRopeBatch(Vec3 cameraPos, java.util.List<RopeJob> jobs, double[] totalLengths) {
+            this.cameraPos = cameraPos;
+            this.jobs = java.util.List.copyOf(jobs);
+            this.totalLengths = totalLengths.clone();
+        }
+
+        @Override
+        public boolean isEmpty() {
+            return jobs.isEmpty();
+        }
+
+        @Override
+        public QuadParticleRenderState.PreparedBuffers prepare(ParticleFeatureRenderer.ParticleBufferCache buffer,
+                boolean translucent) {
+            if (translucent) {
+                return null;
+            }
+            this.vertices = ByteBuffer.allocateDirect(INITIAL_BYTES).order(ByteOrder.nativeOrder());
+            this.vertexCount = 0;
+            ExperimentalGpuRopeBatch previous = activeGpuSink;
+            activeGpuSink = this;
+            try {
+                int count = Math.min(this.jobs.size(), this.totalLengths.length);
+                for (int i = 0; i < count; i++) {
+                    renderJob(null, null, this.cameraPos, this.jobs.get(i), this.totalLengths[i]);
+                }
+            } finally {
+                activeGpuSink = previous;
+            }
+            if (this.vertexCount < 4) {
+                this.vertices = null;
+                return null;
+            }
+            int indexCount = VertexFormat.Mode.QUADS.indexCount(this.vertexCount);
+            this.vertices.flip();
+            buffer.write(this.vertices);
+            this.vertices = null;
+            var dynamicTransforms = RenderSystem.getDynamicUniforms()
+                    .writeTransform(RenderSystem.getModelViewMatrix(),
+                            new Vector4f(1.0F, 1.0F, 1.0F, 1.0F), new Vector3f(), new Matrix4f());
+            return new QuadParticleRenderState.PreparedBuffers(indexCount, dynamicTransforms, Map.of());
+        }
+
+        @Override
+        public void render(QuadParticleRenderState.PreparedBuffers prepared,
+                ParticleFeatureRenderer.ParticleBufferCache bufferCache,
+                RenderPass renderPass,
+                TextureManager textureManager) {
+            RenderSystem.AutoStorageIndexBuffer indexBuffer = RenderSystem.getSequentialBuffer(VertexFormat.Mode.QUADS);
+            renderPass.setPipeline(PIPELINE);
+            renderPass.setUniform("DynamicTransforms", prepared.dynamicTransforms());
+            renderPass.setVertexBuffer(0, bufferCache.get());
+            renderPass.setIndexBuffer(indexBuffer.getBuffer(prepared.indexCount()), indexBuffer.type());
+            renderPass.drawIndexed(0, 0, prepared.indexCount(), 1);
+        }
+
+        void beginPrimitive() {
+        }
+
+        void vertex(float x, float y, float z, int color, int light) {
+            append(x, y, z, color, light);
+        }
+
+        private void append(float x, float y, float z, int color, int light) {
+            ensureCapacity(VERTEX_SIZE);
+            this.vertices.putFloat(x);
+            this.vertices.putFloat(y);
+            this.vertices.putFloat(z);
+            this.vertices.putInt(argbToNativeAbgr(color));
+            this.vertices.putInt(light);
+            this.vertexCount++;
+        }
+
+        private void ensureCapacity(int bytes) {
+            if (this.vertices.remaining() >= bytes) {
+                return;
+            }
+            int nextCapacity = Math.max(this.vertices.capacity() * 2, this.vertices.capacity() + bytes);
+            ByteBuffer next = ByteBuffer.allocateDirect(nextCapacity).order(ByteOrder.nativeOrder());
+            this.vertices.flip();
+            next.put(this.vertices);
+            this.vertices = next;
+        }
+
+        private static int argbToNativeAbgr(int argb) {
+            int abgr = (argb & 0xFF00FF00)
+                    | ((argb & 0x00FF0000) >> 16)
+                    | ((argb & 0x000000FF) << 16);
+            return ByteOrder.nativeOrder() == ByteOrder.LITTLE_ENDIAN ? abgr : Integer.reverseBytes(abgr);
+        }
     }
 }

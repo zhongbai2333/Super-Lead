@@ -29,13 +29,14 @@ public final class RopeSectionMeshDriver {
     public static void onAddSectionGeometry(AddSectionGeometryEvent event) {
         if (!ClientTuning.MODE_CHUNK_MESH_STATIC_ROPES.get())
             return;
+        if (net.neoforged.fml.ModList.get().isLoaded("sodium"))
+            return;
 
         BlockPos origin = event.getSectionOrigin();
         long key = SectionPos.asLong(origin);
         List<RopeSectionSnapshot> snaps = StaticRopeChunkRegistry.get().snapshotsFor(key);
         if (snaps.isEmpty())
             return;
-
         TextureAtlasSprite sprite = whiteSprite();
         if (sprite == null)
             return;
@@ -53,6 +54,7 @@ public final class RopeSectionMeshDriver {
                 emit(vc, s, ox, oy, oz, u, v);
             }
         });
+        StaticRopeChunkRegistry.get().markSectionMeshAccepted(key);
     }
 
     private static TextureAtlasSprite whiteSprite() {
@@ -104,6 +106,47 @@ public final class RopeSectionMeshDriver {
             // face 3 (+up)
             quad(vc, aSx, aSy, aSz, lightA, bSx, bSy, bSz, lightB, bPx, bPy, bPz, lightB, aPx, aPy, aPz, lightA,
                     s.segmentColorARGB[colorBase + 3], u, v, NX, NY, NZ);
+        }
+
+        // End cap at the first node (only if this section contains it).
+        if (s.segmentStart == 0 && last >= 0) {
+            int idx = 0;
+            emitEndCap(vc, s, idx, ox, oy, oz, u, v, 1.0f, false);
+        }
+        // End cap at the last node (only if this section contains it).
+        if (s.segmentEndExclusive >= last && last >= 0) {
+            int idx = last;
+            emitEndCap(vc, s, idx, ox, oy, oz, u, v, 1.0f, true);
+        }
+    }
+
+    private static void emitEndCap(VertexConsumer vc, RopeSectionSnapshot s, int idx,
+            int ox, int oy, int oz, float u, float v, float scale, boolean flipWinding) {
+        float px = s.x[idx] - ox;
+        float py = s.y[idx] - oy;
+        float pz = s.z[idx] - oz;
+        float ssx = s.sx[idx] * scale;
+        float ssy = s.sy[idx] * scale;
+        float ssz = s.sz[idx] * scale;
+        float sux = s.ux[idx] * scale;
+        float suy = s.uy[idx] * scale;
+        float suz = s.uz[idx] * scale;
+        int light = s.nodeLight[idx];
+        // End cap color: use the first segment's face color slightly darkened.
+        int colorBase = Math.min(idx, s.segmentColorARGB.length / 4 - 1) * 4;
+        int capColor = s.segmentColorARGB.length > 0
+                ? s.segmentColorARGB[Math.min(colorBase, s.segmentColorARGB.length - 1)]
+                : 0xFF888888;
+        if (flipWinding) {
+            vertex(vc, px + ssx + sux, py + ssy + suy, pz + ssz + suz, capColor, u, v, light, 0f, 1f, 0f); // P
+            vertex(vc, px + ssx - sux, py + ssy - suy, pz + ssz - suz, capColor, u, v, light, 0f, 1f, 0f); // Q
+            vertex(vc, px - ssx - sux, py - ssy - suy, pz - ssz - suz, capColor, u, v, light, 0f, 1f, 0f); // R
+            vertex(vc, px - ssx + sux, py - ssy + suy, pz - ssz + suz, capColor, u, v, light, 0f, 1f, 0f); // S
+        } else {
+            vertex(vc, px - ssx + sux, py - ssy + suy, pz - ssz + suz, capColor, u, v, light, 0f, 1f, 0f); // S
+            vertex(vc, px - ssx - sux, py - ssy - suy, pz - ssz - suz, capColor, u, v, light, 0f, 1f, 0f); // R
+            vertex(vc, px + ssx - sux, py + ssy - suy, pz + ssz - suz, capColor, u, v, light, 0f, 1f, 0f); // Q
+            vertex(vc, px + ssx + sux, py + ssy + suy, pz + ssz + suz, capColor, u, v, light, 0f, 1f, 0f); // P
         }
     }
 

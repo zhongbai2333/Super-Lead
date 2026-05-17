@@ -61,6 +61,8 @@ public final class SuperLeadNetwork {
     private static final double SERVER_CLAIM_T_SLACK = 0.35D;
     private static final double SERVER_CLAIM_BLOCK_SLACK = 1.10D;
     private static final Map<UUID, Long> INTERIOR_BLOCKED_SINCE = new HashMap<>();
+    /** Round-robin cursor keyed by (BlockPos, kind ordinal) for per-click cycling. */
+    private static final Map<Long, Integer> EXTRACT_TOGGLE_CURSOR = new HashMap<>();
     private static final long STUCK_CHECK_INTERVAL_TICKS = 5L;
     private static final long STUCK_BREAK_TICKS = 100L;
     private static final double STUCK_SAMPLE_STEP = 0.20D;
@@ -436,23 +438,52 @@ public final class SuperLeadNetwork {
             return false;
         }
         SuperLeadSavedData data = SuperLeadSavedData.get(serverLevel);
-        boolean any = false;
-        for (LeadConnection connection : new ArrayList<>(data.connectionsOfKind(kind))) {
-            int newExtract;
-            if (connection.from().pos().equals(pos)) {
-                newExtract = connection.extractAnchor() == 1 ? 0 : 1;
-            } else if (connection.to().pos().equals(pos)) {
-                newExtract = connection.extractAnchor() == 2 ? 0 : 2;
-            } else {
-                continue;
+        List<LeadConnection> all = data.connectionsOfKindFast(kind);
+        // Collect only connections anchored at this position.
+        List<LeadConnection> atPos = new ArrayList<>();
+        for (LeadConnection c : all) {
+            if (c.from().pos().equals(pos) || c.to().pos().equals(pos)) {
+                atPos.add(c);
             }
-            data.update(connection.id(), c -> c.withExtractAnchor(newExtract), false);
-            any = true;
         }
-        if (any) {
-            SuperLeadPayloads.sendToDimension(serverLevel);
+        if (atPos.isEmpty()) {
+            EXTRACT_TOGGLE_CURSOR.remove(cursorKey(pos, kind));
+            return false;
         }
-        return any;
+
+        int n = atPos.size();
+        int cursor = EXTRACT_TOGGLE_CURSOR.getOrDefault(cursorKey(pos, kind), 0) % n;
+        LeadConnection target = atPos.get(cursor);
+
+        int newExtract;
+        if (target.from().pos().equals(pos)) {
+            newExtract = target.extractAnchor() == 1 ? 0 : 1;
+        } else {
+            newExtract = target.extractAnchor() == 2 ? 0 : 2;
+        }
+        data.update(target.id(), c -> c.withExtractAnchor(newExtract), false);
+        EXTRACT_TOGGLE_CURSOR.put(cursorKey(pos, kind), (cursor + 1) % n);
+
+        SuperLeadPayloads.sendToDimension(serverLevel);
+        return true;
+    }
+
+    private static long cursorKey(BlockPos pos, LeadKind kind) {
+        return ((long) pos.hashCode() << 8) | kind.ordinal();
+    }
+
+    /**
+     * Directly set the extract anchor on a specific connection (used by the
+     * crosshair-aimed toggle flow via {@link LeadConnectionAction}).
+     */
+    static boolean updateConnectionExtract(ServerLevel level, Player player,
+            LeadConnection connection, int newExtract) {
+        SuperLeadSavedData data = SuperLeadSavedData.get(level);
+        boolean updated = data.update(connection.id(), c -> c.withExtractAnchor(newExtract), false);
+        if (updated) {
+            SuperLeadPayloads.sendToDimension(level);
+        }
+        return updated;
     }
 
     public static boolean hasItemConnectionAt(Level level, BlockPos pos) {

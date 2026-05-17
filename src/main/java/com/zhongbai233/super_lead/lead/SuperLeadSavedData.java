@@ -58,6 +58,12 @@ public final class SuperLeadSavedData extends SavedData {
     private final Map<Long, List<LeadConnection>> ownedByChunk = new HashMap<>();
     private final Map<Long, Set<UUID>> refsByChunk = new HashMap<>();
     private final Set<Long> dirtyChunkKeys = new LinkedHashSet<>();
+    /**
+     * Monotonically increasing counter bumped on every add/remove/update.
+     * Tick handlers can compare against a cached value to skip index rebuilds
+     * when the network topology hasn't changed.
+     */
+    private long generation;
 
     public SuperLeadSavedData() {
     }
@@ -121,6 +127,26 @@ public final class SuperLeadSavedData extends SavedData {
     public List<LeadConnection> connectionsOfKind(LeadKind kind) {
         LinkedHashMap<UUID, LeadConnection> indexed = byKind.get(kind);
         return indexed == null || indexed.isEmpty() ? List.of() : List.copyOf(indexed.values());
+    }
+
+    /**
+     * Zero-copy internal view for performance-sensitive tick paths.
+     * Callers must not retain the returned list beyond the current tick.
+     */
+    List<LeadConnection> connectionsOfKindFast(LeadKind kind) {
+        LinkedHashMap<UUID, LeadConnection> indexed = byKind.get(kind);
+        if (indexed == null || indexed.isEmpty()) {
+            return List.of();
+        }
+        return List.copyOf(indexed.values());
+    }
+
+    /**
+     * Returns the current generation counter. Tick handlers can cache this
+     * to detect whether the network topology changed since last tick.
+     */
+    long generation() {
+        return generation;
     }
 
     public List<LeadConnection> connectionsForChunk(ChunkPos chunk) {
@@ -215,8 +241,13 @@ public final class SuperLeadSavedData extends SavedData {
         return true;
     }
 
+    private void bumpGeneration() {
+        generation++;
+    }
+
     private void put(LeadConnection connection, boolean markDirty) {
         remove(connection.id());
+        bumpGeneration();
         long owner = ownerChunkKey(connection);
         LinkedHashSet<Long> covered = coveredChunkKeys(connection);
         covered.add(owner);
@@ -246,6 +277,7 @@ public final class SuperLeadSavedData extends SavedData {
         if (stored == null) {
             return;
         }
+        bumpGeneration();
         unindexByKind(stored.connection);
         List<LeadConnection> owned = ownedByChunk.get(stored.ownerChunk);
         if (owned != null) {
@@ -290,6 +322,7 @@ public final class SuperLeadSavedData extends SavedData {
             LeadConnection newConnection) {
         stored.connection = newConnection;
         replaceOwnedConnection(stored.ownerChunk, newConnection);
+        bumpGeneration();
         if (oldConnection.kind() != newConnection.kind()) {
             unindexByKind(oldConnection);
             indexByKind(newConnection);

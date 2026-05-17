@@ -44,7 +44,40 @@ final class LeadTransferService {
     private static final int MAX_TRANSFER_SEARCH_DEPTH = 64;
     private static final int ITEM_PULSE_DURATION_TICKS = 10;
 
+    /**
+     * Per-dimension cached generation and pre-built indexes for each transfer kind.
+     * When the SavedData generation hasn't changed the index is reused,
+     * avoiding a full O(N) rebuild every transfer tick.
+     */
+    private static final Map<ServerLevel, Map<LeadKind, Long>> CACHED_GENERATION = new HashMap<>();
+    private static final Map<ServerLevel, Map<LeadKind, Map<BlockPos, List<LeadConnection>>>> CACHED_ROPES_AT = new HashMap<>();
+    private static final Map<ServerLevel, Map<LeadKind, Map<BlockPos, List<LeadConnection>>>> CACHED_STARTS_BY_SOURCE = new HashMap<>();
+
     private LeadTransferService() {
+    }
+
+    private static Long cachedGeneration(ServerLevel level, LeadKind kind) {
+        Map<LeadKind, Long> perKind = CACHED_GENERATION.get(level);
+        return perKind == null ? null : perKind.get(kind);
+    }
+
+    private static Map<BlockPos, List<LeadConnection>> cachedRopesAt(ServerLevel level, LeadKind kind) {
+        Map<LeadKind, Map<BlockPos, List<LeadConnection>>> perKind = CACHED_ROPES_AT.get(level);
+        return perKind == null ? null : perKind.get(kind);
+    }
+
+    private static Map<BlockPos, List<LeadConnection>> cachedStartsBySource(ServerLevel level, LeadKind kind) {
+        Map<LeadKind, Map<BlockPos, List<LeadConnection>>> perKind = CACHED_STARTS_BY_SOURCE.get(level);
+        return perKind == null ? null : perKind.get(kind);
+    }
+
+    private static void cacheGenerationAndIndexes(ServerLevel level, LeadKind kind, long gen,
+            Map<BlockPos, List<LeadConnection>> ropesAt,
+            Map<BlockPos, List<LeadConnection>> startsBySource) {
+        CACHED_GENERATION.computeIfAbsent(level, k -> new java.util.EnumMap<>(LeadKind.class)).put(kind, gen);
+        CACHED_ROPES_AT.computeIfAbsent(level, k -> new java.util.EnumMap<>(LeadKind.class)).put(kind, ropesAt);
+        CACHED_STARTS_BY_SOURCE.computeIfAbsent(level, k -> new java.util.EnumMap<>(LeadKind.class)).put(kind,
+                startsBySource);
     }
 
     static void tickItem(ServerLevel level) {
@@ -70,19 +103,42 @@ final class LeadTransferService {
         tickPressurizedTransfer(level);
     }
 
+    /**
+     * Invalidate all cached indexes. Called when ropes are added/removed
+     * from outside the tick path (e.g. by player interaction).
+     */
+    static void invalidateCaches() {
+        CACHED_GENERATION.clear();
+        CACHED_ROPES_AT.clear();
+        CACHED_STARTS_BY_SOURCE.clear();
+        ITEM_RR_CURSOR.clear();
+        FLUID_RR_CURSOR.clear();
+        PRESSURIZED_RR_CURSOR.clear();
+    }
+
+    /**
+     * Invalidate cached indexes for a specific dimension.
+     */
+    static void invalidateCachesFor(ServerLevel level) {
+        CACHED_GENERATION.remove(level);
+        CACHED_ROPES_AT.remove(level);
+        CACHED_STARTS_BY_SOURCE.remove(level);
+    }
+
     static void tickThermal(ServerLevel level) {
         if (!isMekanismLoaded()) {
             return;
         }
 
-        List<LeadConnection> thermalConnections = SuperLeadSavedData.get(level).connectionsOfKind(LeadKind.THERMAL);
+        List<LeadConnection> thermalConnections = SuperLeadSavedData.get(level).connectionsOfKindFast(LeadKind.THERMAL);
         if (thermalConnections.isEmpty()) {
             return;
         }
 
         MekanismHeatBridge.HandlerCache heatHandlers = new MekanismHeatBridge.HandlerCache();
-        boolean[] visited = new boolean[thermalConnections.size()];
-        Map<BlockPos, List<Integer>> connectionsByPos = indexConnectionsByBlockPos(thermalConnections);
+        int size = thermalConnections.size();
+        boolean[] visited = new boolean[size];
+        Map<BlockPos, List<Integer>> connectionsByPos = indexConnectionsByBlockPos(thermalConnections, size);
         for (int i = 0; i < thermalConnections.size(); i++) {
             if (visited[i]) {
                 continue;
@@ -106,33 +162,45 @@ final class LeadTransferService {
         if (!isAe2Loaded()) {
             return;
         }
-        List<LeadConnection> aeConnections = SuperLeadSavedData.get(level).connectionsOfKind(LeadKind.AE_NETWORK);
+        List<LeadConnection> aeConnections = SuperLeadSavedData.get(level).connectionsOfKindFast(LeadKind.AE_NETWORK);
         AE2NetworkBridge.reconcile(level, aeConnections);
     }
 
     private static void tickPressurizedTransfer(ServerLevel level) {
         SuperLeadSavedData data = SuperLeadSavedData.get(level);
 
-        List<LeadConnection> pressurizedConnections = data.connectionsOfKind(LeadKind.PRESSURIZED);
+        List<LeadConnection> pressurizedConnections = data.connectionsOfKindFast(LeadKind.PRESSURIZED);
         if (pressurizedConnections.isEmpty()) {
             return;
         }
 
         MekanismChemicalBridge.HandlerCache chemicalHandlers = new MekanismChemicalBridge.HandlerCache();
-        Map<BlockPos, List<LeadConnection>> ropesAt = new HashMap<>();
-        Map<BlockPos, List<LeadConnection>> startsBySource = new HashMap<>();
-        for (LeadConnection c : pressurizedConnections) {
-            BlockPos a = c.from().pos().immutable();
-            BlockPos b = c.to().pos().immutable();
-            ropesAt.computeIfAbsent(a, k -> new ArrayList<>()).add(c);
-            if (!a.equals(b)) {
-                ropesAt.computeIfAbsent(b, k -> new ArrayList<>()).add(c);
-            }
+        Map<BlockPos, List<LeadConnection>> ropesAt;
+        Map<BlockPos, List<LeadConnection>> startsBySource;
+        long currentGen = data.generation();
+        LeadKind kind = LeadKind.PRESSURIZED;
+        Long cachedGen = cachedGeneration(level, kind);
+        if (cachedGen != null && cachedGen.longValue() == currentGen) {
+            ropesAt = cachedRopesAt(level, kind);
+            startsBySource = cachedStartsBySource(level, kind);
+        } else {
+            int size = pressurizedConnections.size();
+            ropesAt = new HashMap<>(size * 2);
+            startsBySource = new HashMap<>(Math.max(16, size / 4));
+            for (LeadConnection c : pressurizedConnections) {
+                BlockPos a = c.from().pos().immutable();
+                BlockPos b = c.to().pos().immutable();
+                ropesAt.computeIfAbsent(a, k -> new ArrayList<>(2)).add(c);
+                if (!a.equals(b)) {
+                    ropesAt.computeIfAbsent(b, k -> new ArrayList<>(2)).add(c);
+                }
 
-            LeadAnchor src = c.extractSource();
-            if (src != null) {
-                startsBySource.computeIfAbsent(src.pos().immutable(), k -> new ArrayList<>()).add(c);
+                LeadAnchor src = c.extractSource();
+                if (src != null) {
+                    startsBySource.computeIfAbsent(src.pos().immutable(), k -> new ArrayList<>(2)).add(c);
+                }
             }
+            cacheGenerationAndIndexes(level, kind, currentGen, ropesAt, startsBySource);
         }
 
         for (Map.Entry<BlockPos, List<LeadConnection>> entry : startsBySource.entrySet()) {
@@ -232,32 +300,44 @@ final class LeadTransferService {
             Map<BlockPos, Integer> rrCursor,
             java.util.function.ToIntFunction<LeadConnection> batchOf) {
         SuperLeadSavedData data = SuperLeadSavedData.get(level);
-        List<LeadConnection> transferConnections = data.connectionsOfKind(kind);
+        List<LeadConnection> transferConnections = data.connectionsOfKindFast(kind);
         if (transferConnections.isEmpty()) {
             return;
         }
 
         // Index every rope of this kind by both endpoint positions so we can walk
         // through fence-knot junctions where multiple ropes share a BlockPos.
+        // Rebuild only when the SavedData generation has changed.
         ResourceHandlerCache<R> handlers = new ResourceHandlerCache<>();
-        Map<BlockPos, List<LeadConnection>> ropesAt = new HashMap<>();
-        Map<BlockPos, List<LeadConnection>> startsBySource = new HashMap<>();
-        for (LeadConnection c : transferConnections) {
-            BlockPos a = c.from().pos().immutable();
-            BlockPos b = c.to().pos().immutable();
-            ropesAt.computeIfAbsent(a, k -> new ArrayList<>()).add(c);
-            if (!a.equals(b)) {
-                ropesAt.computeIfAbsent(b, k -> new ArrayList<>()).add(c);
-            }
+        Map<BlockPos, List<LeadConnection>> ropesAt;
+        Map<BlockPos, List<LeadConnection>> startsBySource;
+        long currentGen = data.generation();
+        Long cachedGen = cachedGeneration(level, kind);
+        if (cachedGen != null && cachedGen.longValue() == currentGen) {
+            ropesAt = cachedRopesAt(level, kind);
+            startsBySource = cachedStartsBySource(level, kind);
+        } else {
+            int size = transferConnections.size();
+            ropesAt = new HashMap<>(size * 2);
+            startsBySource = new HashMap<>(Math.max(16, size / 4));
+            for (LeadConnection c : transferConnections) {
+                BlockPos a = c.from().pos().immutable();
+                BlockPos b = c.to().pos().immutable();
+                ropesAt.computeIfAbsent(a, k -> new ArrayList<>(2)).add(c);
+                if (!a.equals(b)) {
+                    ropesAt.computeIfAbsent(b, k -> new ArrayList<>(2)).add(c);
+                }
 
-            if (c.extractAnchor() == 0) {
-                continue;
+                if (c.extractAnchor() == 0) {
+                    continue;
+                }
+                LeadAnchor src = c.extractSource();
+                if (src == null) {
+                    continue;
+                }
+                startsBySource.computeIfAbsent(src.pos().immutable(), k -> new ArrayList<>(2)).add(c);
             }
-            LeadAnchor src = c.extractSource();
-            if (src == null) {
-                continue;
-            }
-            startsBySource.computeIfAbsent(src.pos().immutable(), k -> new ArrayList<>()).add(c);
+            cacheGenerationAndIndexes(level, kind, currentGen, ropesAt, startsBySource);
         }
 
         for (Map.Entry<BlockPos, List<LeadConnection>> entry : startsBySource.entrySet()) {
@@ -559,9 +639,9 @@ final class LeadTransferService {
         return false;
     }
 
-    private static Map<BlockPos, List<Integer>> indexConnectionsByBlockPos(List<LeadConnection> connections) {
-        Map<BlockPos, List<Integer>> byPos = new HashMap<>();
-        for (int i = 0; i < connections.size(); i++) {
+    private static Map<BlockPos, List<Integer>> indexConnectionsByBlockPos(List<LeadConnection> connections, int size) {
+        Map<BlockPos, List<Integer>> byPos = new HashMap<>(size * 2);
+        for (int i = 0; i < size; i++) {
             LeadConnection connection = connections.get(i);
             addBlockPosIndex(byPos, connection.from().pos(), i);
             if (!connection.to().pos().equals(connection.from().pos())) {

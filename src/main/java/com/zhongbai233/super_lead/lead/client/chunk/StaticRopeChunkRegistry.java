@@ -48,6 +48,7 @@ public final class StaticRopeChunkRegistry {
     private volatile List<RopeAttachmentRenderer.BakedAttachment> bakedAttachments = List.of();
     private volatile Set<UUID> claimed = Set.of();
     private volatile Map<UUID, Long> claimTick = Map.of();
+    private Set<Long> meshedSections = Set.of();
     private Set<UUID> claimedFromSim = Set.of();
     private final Map<UUID, Set<Long>> connectionSections = new HashMap<>();
     private final Set<Long> pendingDirtySections = new HashSet<>();
@@ -84,6 +85,27 @@ public final class StaticRopeChunkRegistry {
 
     public Set<Long> publishedSectionKeys() {
         return bySection.keySet();
+    }
+
+    public synchronized Set<Long> unmeshedPublishedSectionKeys() {
+        if (bySection.isEmpty())
+            return Set.of();
+        HashSet<Long> out = new HashSet<>(bySection.keySet());
+        out.removeAll(meshedSections);
+        return out.isEmpty() ? Set.of() : Set.copyOf(out);
+    }
+
+    public synchronized void markSectionMeshAccepted(long sectionPosLong) {
+        if (!bySection.containsKey(sectionPosLong) || meshedSections.contains(sectionPosLong))
+            return;
+        HashSet<Long> next = new HashSet<>(meshedSections);
+        next.add(sectionPosLong);
+        meshedSections = Set.copyOf(next);
+    }
+
+    public synchronized boolean isMeshAccepted(UUID connectionId) {
+        Set<Long> sections = connectionSections.get(connectionId);
+        return sections != null && !sections.isEmpty() && meshedSections.containsAll(sections);
     }
 
     public List<RopeAttachmentRenderer.BakedAttachment> bakedAttachmentsForRender(long currentTick) {
@@ -199,6 +221,7 @@ public final class StaticRopeChunkRegistry {
         bakedAttachments = List.of();
         claimed = Set.of();
         claimTick = Map.of();
+        meshedSections = Set.of();
         claimedFromSim = Set.of();
         connectionSections.clear();
         bakedWithMissingAnchors.clear();
@@ -277,6 +300,8 @@ public final class StaticRopeChunkRegistry {
         nextClaimedFromSim.remove(connectionId);
         Map<UUID, Long> nextClaimTick = new HashMap<>(claimTick);
         nextClaimTick.remove(connectionId);
+        HashSet<Long> nextMeshedSections = new HashSet<>(meshedSections);
+        nextMeshedSections.removeAll(dirty);
 
         bySection = Map.copyOf(nextBySection);
         byConnection = nextByConnection.isEmpty() ? Map.of() : Map.copyOf(nextByConnection);
@@ -293,6 +318,7 @@ public final class StaticRopeChunkRegistry {
         claimed = Set.copyOf(nextClaimed);
         claimedFromSim = Set.copyOf(nextClaimedFromSim);
         claimTick = Map.copyOf(nextClaimTick);
+        meshedSections = nextMeshedSections.isEmpty() ? Set.of() : Set.copyOf(nextMeshedSections);
         connectionSections.remove(connectionId);
         markSectionsDirty(dirty);
     }
@@ -321,7 +347,8 @@ public final class StaticRopeChunkRegistry {
         long now = level.getGameTime();
         pruneDynamicHolds(now);
         boolean enabled = ClientTuning.MODE_CHUNK_MESH_STATIC_ROPES.get()
-                && ClientTuning.MODE_RENDER3D.get();
+                && ClientTuning.MODE_RENDER3D.get()
+                && !net.neoforged.fml.ModList.get().isLoaded("sodium");
         // If any prior bake used air-defaulted anchors because the anchor chunk hadn't
         // streamed
         // in yet, retry now that chunks may have arrived. Without this, re-logging far
@@ -403,6 +430,7 @@ public final class StaticRopeChunkRegistry {
             bakedAttachments = List.of();
             claimed = Set.of();
             claimTick = Map.of();
+            meshedSections = Set.of();
             claimedFromSim = Set.of();
             connectionSections.clear();
             dynamicHoldUntil.clear();
@@ -413,7 +441,8 @@ public final class StaticRopeChunkRegistry {
         long now = level.getGameTime();
         pruneDynamicHolds(now);
         boolean enabled = ClientTuning.MODE_CHUNK_MESH_STATIC_ROPES.get()
-                && ClientTuning.MODE_RENDER3D.get();
+                && ClientTuning.MODE_RENDER3D.get()
+                && !net.neoforged.fml.ModList.get().isLoaded("sodium");
 
         Map<Long, List<RopeSectionSnapshot>> nextBySection = new HashMap<>();
         Map<UUID, RopeSectionSnapshot> nextByConnection = new HashMap<>();
@@ -484,6 +513,7 @@ public final class StaticRopeChunkRegistry {
         bakedAttachments = nextBakedAttachments.isEmpty() ? List.of() : List.copyOf(nextBakedAttachments);
         claimed = Set.copyOf(nextClaimed);
         claimTick = Map.copyOf(nextClaimTick);
+        meshedSections = Set.of();
         claimedFromSim = Set.copyOf(nextClaimedFromSim);
         connectionSections.clear();
         connectionSections.putAll(nextConnSections);

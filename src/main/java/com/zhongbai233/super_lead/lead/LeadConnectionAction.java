@@ -147,11 +147,6 @@ public enum LeadConnectionAction {
 
         @Override
         public boolean canTarget(LeadConnection connection) {
-            // Highlight any rope so the player gets visual feedback when aiming with a
-            // hopper.
-            // Apply only actually upgrades non-ITEM ropes; for ITEM ropes the player
-            // toggles
-            // extract by clicking the anchor block, handled separately in SuperLeadEvents.
             return true;
         }
 
@@ -162,11 +157,24 @@ public enum LeadConnectionAction {
 
         @Override
         public boolean applyTo(ServerLevel level, Player player, LeadConnection connection) {
-            // Hopper does nothing on already-ITEM ropes; toggle is handled via right-click
-            // on anchor.
             if (connection.kind() == LeadKind.ITEM)
                 return false;
             return SuperLeadNetwork.upgradeConnectionKind(level, connection, LeadKind.ITEM);
+        }
+
+        @Override
+        public boolean applyTo(ServerLevel level, Player player, LeadConnection connection,
+                net.minecraft.world.phys.Vec3 hitPoint, double hitT) {
+            if (connection.kind() != LeadKind.ITEM)
+                return applyTo(level, player, connection);
+            // Already an ITEM rope: toggle the extract anchor at the end closer to the hit.
+            int newExtract;
+            if (hitT < 0.5D) {
+                newExtract = connection.extractAnchor() == 1 ? 0 : 1;
+            } else {
+                newExtract = connection.extractAnchor() == 2 ? 0 : 2;
+            }
+            return SuperLeadNetwork.updateConnectionExtract(level, player, connection, newExtract);
         }
 
         @Override
@@ -225,8 +233,6 @@ public enum LeadConnectionAction {
 
         @Override
         public boolean canTarget(LeadConnection connection) {
-            // Highlight any rope (mirrors ITEM_UPGRADE). Toggle-on-anchor is handled
-            // separately.
             return true;
         }
 
@@ -237,11 +243,23 @@ public enum LeadConnectionAction {
 
         @Override
         public boolean applyTo(ServerLevel level, Player player, LeadConnection connection) {
-            // Cauldron does nothing on already-FLUID ropes; toggle is handled via
-            // right-click on anchor.
             if (connection.kind() == LeadKind.FLUID)
                 return false;
             return SuperLeadNetwork.upgradeConnectionKind(level, connection, LeadKind.FLUID);
+        }
+
+        @Override
+        public boolean applyTo(ServerLevel level, Player player, LeadConnection connection,
+                net.minecraft.world.phys.Vec3 hitPoint, double hitT) {
+            if (connection.kind() != LeadKind.FLUID)
+                return applyTo(level, player, connection);
+            int newExtract;
+            if (hitT < 0.5D) {
+                newExtract = connection.extractAnchor() == 1 ? 0 : 1;
+            } else {
+                newExtract = connection.extractAnchor() == 2 ? 0 : 2;
+            }
+            return SuperLeadNetwork.updateConnectionExtract(level, player, connection, newExtract);
         }
 
         @Override
@@ -315,6 +333,20 @@ public enum LeadConnectionAction {
             if (connection.kind() == LeadKind.PRESSURIZED)
                 return false;
             return SuperLeadNetwork.upgradeConnectionKind(level, connection, LeadKind.PRESSURIZED);
+        }
+
+        @Override
+        public boolean applyTo(ServerLevel level, Player player, LeadConnection connection,
+                net.minecraft.world.phys.Vec3 hitPoint, double hitT) {
+            if (connection.kind() != LeadKind.PRESSURIZED)
+                return applyTo(level, player, connection);
+            int newExtract;
+            if (hitT < 0.5D) {
+                newExtract = connection.extractAnchor() == 1 ? 0 : 1;
+            } else {
+                newExtract = connection.extractAnchor() == 2 ? 0 : 2;
+            }
+            return SuperLeadNetwork.updateConnectionExtract(level, player, connection, newExtract);
         }
 
         @Override
@@ -508,6 +540,16 @@ public enum LeadConnectionAction {
      * successful.
      */
     public abstract boolean applyTo(ServerLevel level, Player player, LeadConnection connection);
+
+    /**
+     * Variant that receives the client-picked hit point and normalized rope
+     * parameter so actions can distinguish which end of the rope was targeted.
+     * Default implementation delegates to {@link #applyTo(ServerLevel, Player, LeadConnection)}.
+     */
+    public boolean applyTo(ServerLevel level, Player player, LeadConnection connection,
+            net.minecraft.world.phys.Vec3 hitPoint, double hitT) {
+        return applyTo(level, player, connection);
+    }
 
     public abstract void consumeSuccessfulUse(ItemStack stack, Player player, InteractionHand hand);
 

@@ -39,20 +39,30 @@ final class LeadSignalService {
     private static final Map<UUID, Long> ENERGY_ACTIVE_UNTIL = new HashMap<>();
     private static final long ENERGY_STICKY_TICKS = 40L;
     private static final ThreadLocal<Boolean> SUPPRESS_LEAD_SIGNALS = ThreadLocal.withInitial(() -> false);
+    /**
+     * Per-dimension BlockPos -> redstone connection list index for O(1) lookup
+     * in {@link #leadSignal}. Rebuilt lazily when the SavedData generation changes.
+     */
+    private static final Map<ServerLevel, Map<BlockPos, List<LeadConnection>>> REDSTONE_POS_INDEX = new HashMap<>();
+    private static final Map<ServerLevel, Long> REDSTONE_POS_INDEX_GEN = new HashMap<>();
 
     private LeadSignalService() {
     }
 
     static void tickRedstone(ServerLevel level) {
         SuperLeadSavedData data = SuperLeadSavedData.get(level);
-        List<LeadConnection> redstoneConnections = data.connectionsOfKind(LeadKind.REDSTONE);
+        List<LeadConnection> redstoneConnections = data.connectionsOfKindFast(LeadKind.REDSTONE);
         if (redstoneConnections.isEmpty()) {
+            invalidateRedstonePosIndex(level);
             return;
         }
 
+        int size = redstoneConnections.size();
         boolean changed = false;
-        boolean[] visited = new boolean[redstoneConnections.size()];
-        Map<LeadAnchor, List<Integer>> connectionsByAnchor = indexConnectionsByAnchor(redstoneConnections);
+        boolean[] visited = new boolean[size];
+        Map<LeadAnchor, List<Integer>> connectionsByAnchor = indexConnectionsByAnchor(redstoneConnections, size);
+        // Rebuild the BlockPos index for leadSignal while we already iterate
+        rebuildRedstonePosIndex(level, redstoneConnections);
         RedstoneTraversalCache redstoneCache = new RedstoneTraversalCache(level);
         for (int i = 0; i < redstoneConnections.size(); i++) {
             if (visited[i]) {
@@ -93,16 +103,17 @@ final class LeadSignalService {
 
     static void tickEnergy(ServerLevel level) {
         SuperLeadSavedData data = SuperLeadSavedData.get(level);
-        List<LeadConnection> energyConnections = data.connectionsOfKind(LeadKind.ENERGY);
+        List<LeadConnection> energyConnections = data.connectionsOfKindFast(LeadKind.ENERGY);
         if (energyConnections.isEmpty()) {
             return;
         }
 
         long now = level.getGameTime();
+        int size = energyConnections.size();
         EnergyHandlerCache energyHandlers = new EnergyHandlerCache();
-        Set<UUID> transferredIds = new HashSet<>();
-        boolean[] visited = new boolean[energyConnections.size()];
-        Map<LeadAnchor, List<Integer>> connectionsByAnchor = indexConnectionsByAnchor(energyConnections);
+        Set<UUID> transferredIds = HashSet.newHashSet(size / 2);
+        boolean[] visited = new boolean[size];
+        Map<LeadAnchor, List<Integer>> connectionsByAnchor = indexConnectionsByAnchor(energyConnections, size);
         RedstoneTraversalCache bridgeCache = new RedstoneTraversalCache(level);
         for (int i = 0; i < energyConnections.size(); i++) {
             if (visited[i]) {
@@ -150,16 +161,40 @@ final class LeadSignalService {
             return 0;
         }
 
+        if (level instanceof ServerLevel serverLevel) {
+            return leadSignalServer(serverLevel, pos);
+        }
+        // Client-side fallback: iterate all connections (client rope count is
+        // typically low since it's chunk-scoped).
         int signal = 0;
-        List<LeadConnection> redstoneConnections = level instanceof ServerLevel serverLevel
-                ? SuperLeadSavedData.get(serverLevel).connectionsOfKind(LeadKind.REDSTONE)
-                : SuperLeadNetwork.connections(level);
+        List<LeadConnection> redstoneConnections = SuperLeadNetwork.connections(level);
         for (LeadConnection connection : redstoneConnections) {
             if (connection.kind() != LeadKind.REDSTONE || connection.power() <= 0) {
                 continue;
             }
             if (isRedstoneOutputPosition(connection.from(), pos) || isRedstoneOutputPosition(connection.to(), pos)) {
                 signal = Math.max(signal, connection.power());
+                if (signal >= 15) {
+                    return 15;
+                }
+            }
+        }
+        return signal;
+    }
+
+    private static int leadSignalServer(ServerLevel level, BlockPos pos) {
+        Map<BlockPos, List<LeadConnection>> index = REDSTONE_POS_INDEX.get(level);
+        if (index == null) {
+            return 0;
+        }
+        List<LeadConnection> candidates = index.get(pos.immutable());
+        if (candidates == null || candidates.isEmpty()) {
+            return 0;
+        }
+        int signal = 0;
+        for (LeadConnection connection : candidates) {
+            if (connection.power() > signal) {
+                signal = connection.power();
                 if (signal >= 15) {
                     return 15;
                 }
@@ -191,24 +226,42 @@ final class LeadSignalService {
             addEnergyEndpoint(level, connection.to(), endpoints, seenAnchors, energyHandlers);
         }
 
+        int epCount = endpoints.size();
+        if (epCount < 2 || componentRate <= 0) {
+            return;
+        }
+
+        // Sort by fill ratio descending: energy flows from fuller to emptier.
+        // This reduces the O(n²) naive pairwise loop to O(n log n + n).
+        endpoints.sort((x, y) -> Double.compare(energyFillRatio(y.handler()), energyFillRatio(x.handler())));
+
         boolean componentMoved = false;
-        for (int i = 0; i < endpoints.size(); i++) {
-            for (int j = i + 1; j < endpoints.size(); j++) {
-                EnergyEndpoint a = endpoints.get(i);
-                EnergyEndpoint b = endpoints.get(j);
-                double fillA = energyFillRatio(a.handler());
-                double fillB = energyFillRatio(b.handler());
-                int moved;
-                if (fillA > fillB + 1.0e-6D) {
-                    moved = transferEnergy(a.handler(), b.handler(), componentRate);
-                } else if (fillB > fillA + 1.0e-6D) {
-                    moved = transferEnergy(b.handler(), a.handler(), componentRate);
-                } else {
-                    moved = 0;
-                }
-                if (moved > 0) {
-                    componentMoved = true;
-                }
+        int lo = 0;
+        int hi = epCount - 1;
+        while (lo < hi) {
+            EnergyEndpoint full = endpoints.get(lo);
+            double fillFull = energyFillRatio(full.handler());
+            if (fillFull <= 0.0D) {
+                break;
+            }
+            EnergyEndpoint empty = endpoints.get(hi);
+            double fillEmpty = energyFillRatio(empty.handler());
+            if (fillEmpty >= 1.0D) {
+                break;
+            }
+            if (fillFull <= fillEmpty + 1.0e-6D) {
+                break;
+            }
+            int moved = transferEnergy(full.handler(), empty.handler(), componentRate);
+            if (moved > 0) {
+                componentMoved = true;
+            }
+            // Advance pointers: full side if still has energy, empty side if satiated
+            if (energyFillRatio(full.handler()) <= 0.0D || moved == 0) {
+                lo++;
+            }
+            if (energyFillRatio(empty.handler()) >= 1.0D || moved == 0) {
+                hi--;
             }
         }
         if (componentMoved) {
@@ -279,9 +332,9 @@ final class LeadSignalService {
         return new LeadAnchor(anchor.pos().immutable(), anchor.face());
     }
 
-    private static Map<LeadAnchor, List<Integer>> indexConnectionsByAnchor(List<LeadConnection> connections) {
-        Map<LeadAnchor, List<Integer>> byAnchor = new HashMap<>();
-        for (int i = 0; i < connections.size(); i++) {
+    private static Map<LeadAnchor, List<Integer>> indexConnectionsByAnchor(List<LeadConnection> connections, int size) {
+        Map<LeadAnchor, List<Integer>> byAnchor = new HashMap<>(size * 2);
+        for (int i = 0; i < size; i++) {
             LeadConnection connection = connections.get(i);
             addAnchorIndex(byAnchor, connection.from(), i);
             if (!connection.to().equals(connection.from())) {
@@ -289,6 +342,35 @@ final class LeadSignalService {
             }
         }
         return byAnchor;
+    }
+
+    private static void rebuildRedstonePosIndex(ServerLevel level, List<LeadConnection> connections) {
+        SuperLeadSavedData data = SuperLeadSavedData.get(level);
+        Map<BlockPos, List<LeadConnection>> index = REDSTONE_POS_INDEX.get(level);
+        Long cachedGen = REDSTONE_POS_INDEX_GEN.get(level);
+        long currentGen = data.generation();
+        if (cachedGen != null && cachedGen.longValue() == currentGen && index != null) {
+            return;
+        }
+        if (index == null) {
+            index = new HashMap<>();
+            REDSTONE_POS_INDEX.put(level, index);
+        } else {
+            index.clear();
+        }
+        for (LeadConnection c : connections) {
+            index.computeIfAbsent(c.from().pos().immutable(), k -> new ArrayList<>(1)).add(c);
+            BlockPos toPos = c.to().pos().immutable();
+            if (!toPos.equals(c.from().pos())) {
+                index.computeIfAbsent(toPos, k -> new ArrayList<>(1)).add(c);
+            }
+        }
+        REDSTONE_POS_INDEX_GEN.put(level, currentGen);
+    }
+
+    private static void invalidateRedstonePosIndex(ServerLevel level) {
+        REDSTONE_POS_INDEX.remove(level);
+        REDSTONE_POS_INDEX_GEN.remove(level);
     }
 
     private static void addAnchorIndex(Map<LeadAnchor, List<Integer>> byAnchor, LeadAnchor anchor, int index) {

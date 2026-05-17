@@ -9,6 +9,9 @@
   "client": [
     "LevelRendererLightCoordsMixin",
     "EntityRendererBlockLightMixin",
+    "GlBufferAccessor",
+    "GlCommandEncoderMixin",
+    "GlRenderPassMixin",
     "StandingAndWallBlockItemAccessor",
     "ZiplineFirstPersonItemMixin",
     "ZiplineHeldItemLayerMixin",

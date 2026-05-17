@@ -416,7 +416,7 @@ public final class SuperLeadPayloads {
                 return;
             }
 
-            if (action.applyTo(level, player, connection)) {
+            if (action.applyTo(level, player, connection, payload.hitPoint(), payload.hitT())) {
                 action.consumeSuccessfulUse(stack, player, hand);
             }
         });
