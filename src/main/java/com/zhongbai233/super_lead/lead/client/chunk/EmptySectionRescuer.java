@@ -23,8 +23,6 @@ public final class EmptySectionRescuer {
         reg.flushPendingDirtySections();
         if (!reg.isActive())
             return;
-        if (net.neoforged.fml.ModList.get().isLoaded("sodium"))
-            return;
 
         Minecraft mc = Minecraft.getInstance();
         ClientLevel level = mc.level;

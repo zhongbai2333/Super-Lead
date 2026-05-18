@@ -53,7 +53,6 @@ public final class RopeDebugOverlay implements DebugScreenEntry {
                         + " miss=" + RopeDebugStats.chunkMeshMissingAnchors,
                 "[SuperLead] bake " + RopeDebugStats.bakeCacheHits + "h/"
                         + RopeDebugStats.bakeCacheMisses + "m"
-                        + " inelig=" + RopeDebugStats.chunkMeshIneligible
                         + " atts=" + RopeDebugStats.attachmentsTotal
                         + " sims=" + RopeDebugStats.simCount,
                 "[SuperLead] nodes=" + RopeDebugStats.totalRenderNodes

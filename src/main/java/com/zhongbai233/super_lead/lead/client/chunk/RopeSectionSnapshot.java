@@ -16,6 +16,8 @@ public final class RopeSectionSnapshot {
     public final float[] uz;
     public final int[] nodeLight;
     public final int[] segmentColorARGB;
+    public final float[] nodeThicknessScale;
+    public final int extractEnd;
     public final int segmentStart;
     public final int segmentEndExclusive;
 
@@ -26,7 +28,7 @@ public final class RopeSectionSnapshot {
             int[] nodeLight,
             int[] segmentColorARGB) {
         this(connectionId, x, y, z, sx, sy, sz, ux, uy, uz,
-                nodeLight, segmentColorARGB, 0, Math.max(0, x.length - 1));
+                nodeLight, segmentColorARGB, null, 0, 0, Math.max(0, x.length - 1));
     }
 
     public RopeSectionSnapshot(UUID connectionId,
@@ -35,6 +37,20 @@ public final class RopeSectionSnapshot {
             float[] ux, float[] uy, float[] uz,
             int[] nodeLight,
             int[] segmentColorARGB,
+            int segmentStart,
+            int segmentEndExclusive) {
+        this(connectionId, x, y, z, sx, sy, sz, ux, uy, uz,
+                nodeLight, segmentColorARGB, null, 0, segmentStart, segmentEndExclusive);
+    }
+
+    public RopeSectionSnapshot(UUID connectionId,
+            float[] x, float[] y, float[] z,
+            float[] sx, float[] sy, float[] sz,
+            float[] ux, float[] uy, float[] uz,
+            int[] nodeLight,
+            int[] segmentColorARGB,
+            float[] nodeThicknessScale,
+            int extractEnd,
             int segmentStart,
             int segmentEndExclusive) {
         this.connectionId = connectionId;
@@ -50,6 +66,8 @@ public final class RopeSectionSnapshot {
         this.uz = uz;
         this.nodeLight = nodeLight;
         this.segmentColorARGB = segmentColorARGB;
+        this.nodeThicknessScale = nodeThicknessScale;
+        this.extractEnd = Math.max(0, Math.min(2, extractEnd));
         this.segmentStart = Math.max(0, Math.min(segmentStart, Math.max(0, x.length - 1)));
         this.segmentEndExclusive = Math.max(this.segmentStart,
                 Math.min(segmentEndExclusive, Math.max(0, x.length - 1)));

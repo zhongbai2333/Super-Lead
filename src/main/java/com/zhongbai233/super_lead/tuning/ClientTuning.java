@@ -18,9 +18,9 @@ import net.neoforged.neoforge.client.event.RegisterClientCommandsEvent;
  * Client-only tuning values used by render, simulation and debug UI paths.
  *
  * <p>
- * These values are intentionally local and mutable so users can tune rope
- * visuals without touching server gameplay config. Accessors should stay cheap;
- * avoid doing file IO from render or physics hot paths.
+ * These values are local and mutable so users can tune rope visuals without
+ * touching server gameplay config. Reads stay cheap; file IO belongs outside
+ * render and physics hot paths.
  */
 public final class ClientTuning {
     private static final Map<String, TuningKey<?>> KEYS = new LinkedHashMap<>();
@@ -100,6 +100,15 @@ public final class ClientTuning {
     public static final TuningKey<Boolean> CONTACT_PLAYER_ZIPLINE = registerB(
             "contact.playerZipline", "physics.contact", Boolean.TRUE,
             "Whether players can use ropes in this zone as ziplines.");
+    public static final TuningKey<Boolean> CONTACT_TRIP_ENABLED = registerB(
+            "contact.trip.enabled", "physics.contact", Boolean.FALSE,
+            "Preset-only gag effect: players walking over synced ropes can trip into crawling.");
+    public static final TuningKey<Double> CONTACT_TRIP_CHANCE = registerD(
+            "contact.trip.chance", "physics.contact", 0.25D, 0.0D, 1.0D,
+            "Per-cooldown chance for the rope trip effect when a player walks over the rope.");
+    public static final TuningKey<Integer> CONTACT_TRIP_COOLDOWN_TICKS = registerI(
+            "contact.trip.cooldownTicks", "physics.contact", 80, 0, 1200,
+            "Minimum ticks before the same player can be tripped by ropes again.");
 
     public static final TuningKey<Double> ZIPLINE_SPEED_LIMIT = registerD(
             "zipline.speedLimit", "physics.zipline", 1.35D, -1.0D, 64.0D,
@@ -116,7 +125,7 @@ public final class ClientTuning {
             "Render ropes as 3D prisms. Disable for camera-facing ribbons.");
     public static final TuningKey<Boolean> MODE_CHUNK_MESH_STATIC_ROPES = registerB(
             "mode.chunkMeshStaticRopes", "render.mode", Boolean.TRUE,
-            "Bake static ropes into chunk meshes when physics is disabled.");
+            "Bake idle or non-physical ropes into chunk meshes to reduce dynamic render load.");
 
     public static final TuningKey<Double> THICKNESS_HALF = registerD(
             "thickness.half", "render.geom", 1.0D / 32.0D, 0.005D, 0.10D,

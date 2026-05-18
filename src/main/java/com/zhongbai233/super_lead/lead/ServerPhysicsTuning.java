@@ -10,7 +10,7 @@ import net.minecraft.server.level.ServerLevel;
 record ServerPhysicsTuning(
         boolean physicsEnabled,
         double gravity,
-    double slack,
+        double slack,
         double segmentLength,
         int segmentMax,
         double damping,
@@ -26,6 +26,9 @@ record ServerPhysicsTuning(
         double contactSideIntentRelease,
         double contactSideDeadbandRatio,
         double pushbackEnableDepth,
+        boolean tripEnabled,
+        double tripChance,
+        int tripCooldownTicks,
         double ziplineSpeedLimit,
         double ziplineRedstoneAccelerationMultiplier,
         double maxSolvedSag,
@@ -55,7 +58,7 @@ record ServerPhysicsTuning(
                 ClientTuning.MODE_PHYSICS.defaultValue);
         double gravity = parseServerGravity(overrides.get(ClientTuning.GRAVITY.id));
         double slack = parseDouble(ClientTuning.overrideValue(overrides, ClientTuning.SLACK),
-            ClientTuning.SLACK, ClientTuning.SLACK.defaultValue, true);
+                ClientTuning.SLACK, ClientTuning.SLACK.defaultValue, true);
         double segmentLength = parseDouble(overrides.get(ClientTuning.SEGMENT_LENGTH.id),
                 ClientTuning.SEGMENT_LENGTH, ClientTuning.SEGMENT_LENGTH.defaultValue);
         int segmentMax = parseInt(overrides.get(ClientTuning.SEGMENT_MAX.id),
@@ -79,19 +82,25 @@ record ServerPhysicsTuning(
                 parseDouble(overrides.get(ClientTuning.CONTACT_MAX_RECOIL_PER_TICK.id),
                         ClientTuning.CONTACT_MAX_RECOIL_PER_TICK, MAX_RECOIL_PER_TICK_FALLBACK));
         double contactTopNormalThreshold = parseDouble(
-            overrides.get(ClientTuning.CONTACT_TOP_NORMAL_THRESHOLD.id),
-            ClientTuning.CONTACT_TOP_NORMAL_THRESHOLD, TOP_NORMAL_THRESHOLD_FALLBACK);
+                overrides.get(ClientTuning.CONTACT_TOP_NORMAL_THRESHOLD.id),
+                ClientTuning.CONTACT_TOP_NORMAL_THRESHOLD, TOP_NORMAL_THRESHOLD_FALLBACK);
         double contactSideAbsorb = parseDouble(overrides.get(ClientTuning.CONTACT_SIDE_ABSORB.id),
-            ClientTuning.CONTACT_SIDE_ABSORB, SIDE_ABSORB_FALLBACK);
+                ClientTuning.CONTACT_SIDE_ABSORB, SIDE_ABSORB_FALLBACK);
         double contactSideIntentRelease = parseDouble(
-            overrides.get(ClientTuning.CONTACT_SIDE_INTENT_RELEASE.id),
-            ClientTuning.CONTACT_SIDE_INTENT_RELEASE, SIDE_INTENT_RELEASE_FALLBACK);
+                overrides.get(ClientTuning.CONTACT_SIDE_INTENT_RELEASE.id),
+                ClientTuning.CONTACT_SIDE_INTENT_RELEASE, SIDE_INTENT_RELEASE_FALLBACK);
         double contactSideDeadbandRatio = parseDouble(
-            overrides.get(ClientTuning.CONTACT_SIDE_DEADBAND_RATIO.id),
-            ClientTuning.CONTACT_SIDE_DEADBAND_RATIO, SIDE_DEADBAND_RATIO_FALLBACK);
+                overrides.get(ClientTuning.CONTACT_SIDE_DEADBAND_RATIO.id),
+                ClientTuning.CONTACT_SIDE_DEADBAND_RATIO, SIDE_DEADBAND_RATIO_FALLBACK);
         double pushbackEnableDepth = parseDouble(
-            overrides.get(ClientTuning.CONTACT_PUSHBACK_ENABLE_DEPTH.id),
-            ClientTuning.CONTACT_PUSHBACK_ENABLE_DEPTH, PUSHBACK_ENABLE_DEPTH_FALLBACK);
+                overrides.get(ClientTuning.CONTACT_PUSHBACK_ENABLE_DEPTH.id),
+                ClientTuning.CONTACT_PUSHBACK_ENABLE_DEPTH, PUSHBACK_ENABLE_DEPTH_FALLBACK);
+        boolean tripEnabled = parseBool(overrides.get(ClientTuning.CONTACT_TRIP_ENABLED.id),
+                ClientTuning.CONTACT_TRIP_ENABLED.defaultValue);
+        double tripChance = parseDouble(overrides.get(ClientTuning.CONTACT_TRIP_CHANCE.id),
+                ClientTuning.CONTACT_TRIP_CHANCE, ClientTuning.CONTACT_TRIP_CHANCE.defaultValue);
+        int tripCooldownTicks = parseInt(overrides.get(ClientTuning.CONTACT_TRIP_COOLDOWN_TICKS.id),
+                ClientTuning.CONTACT_TRIP_COOLDOWN_TICKS, ClientTuning.CONTACT_TRIP_COOLDOWN_TICKS.defaultValue);
         double ziplineSpeedLimit = parseDouble(overrides.get(ClientTuning.ZIPLINE_SPEED_LIMIT.id),
                 ClientTuning.ZIPLINE_SPEED_LIMIT, Double.NaN);
         double ziplineRedstoneAccelerationMultiplier = parseDouble(
@@ -103,6 +112,7 @@ record ServerPhysicsTuning(
                 pushbackEnabled, contactRadius, springK, velocityDamping, maxRecoilPerTick,
                 contactTopNormalThreshold, contactSideAbsorb, contactSideIntentRelease, contactSideDeadbandRatio,
                 pushbackEnableDepth,
+                tripEnabled, tripChance, tripCooldownTicks,
                 ziplineSpeedLimit, ziplineRedstoneAccelerationMultiplier,
                 MAX_SOLVED_SAG_FALLBACK, SAG_ARC_APPROX_FACTOR_FALLBACK, FULL_SLACK_HORIZONTAL_RATIO_FALLBACK);
     }

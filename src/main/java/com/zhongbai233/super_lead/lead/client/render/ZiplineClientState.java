@@ -19,13 +19,14 @@ import java.util.function.Function;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.renderer.SubmitNodeCollector;
-import net.minecraft.client.renderer.rendertype.RenderTypes;
 import net.minecraft.util.LightCoordsUtil;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.phys.Vec3;
 
-/** Client zipline snapshot plus the folded chain visual hanging over the rope. */
+/**
+ * Client zipline snapshot plus the folded chain visual hanging over the rope.
+ */
 public final class ZiplineClientState {
     private static final Map<Integer, Entry> ACTIVE = new HashMap<>();
     private static final Map<Integer, Boolean> PREVIOUS_NO_PHYSICS = new HashMap<>();
@@ -142,7 +143,7 @@ public final class ZiplineClientState {
             return;
         }
 
-        collector.submitCustomGeometry(IDENTITY_POSE, RenderTypes.textBackground(), (pose, buffer) -> {
+        collector.submitCustomGeometry(IDENTITY_POSE, RopeRenderTypes.ziplineChain(), (pose, buffer) -> {
             for (Map.Entry<Integer, Entry> active : ACTIVE.entrySet()) {
                 Entity entity = level.getEntity(active.getKey());
                 if (entity == null) {
@@ -181,7 +182,7 @@ public final class ZiplineClientState {
         double t = clamp01(stateT);
         RopeTuning tuning = RopeTuning.forConnection(connection);
         Vec3 tangent = RopeSagModel.tangent(a, b, t, tuning.slack(), tuning.gravity(),
-            RopeSagModel.stableUnitVector(state.connectionId().getLeastSignificantBits()));
+                RopeSagModel.stableUnitVector(state.connectionId().getLeastSignificantBits()));
         // No active sim (static/LOD fallback): bind the folded chain to the current
         // rendered rider position so it does not wait for the next network zipline
         // snapshot before catching up to the player's head.
@@ -315,18 +316,18 @@ public final class ZiplineClientState {
         int light = LightCoordsUtil.pack(15, 15);
         if (twist == 0) {
             quad(buffer, ax - nx, ay - ny, az - nz, bx - nx, by - ny, bz - nz,
-                bx + nx, by + ny, bz + nz, ax + nx, ay + ny, az + nz, color, light);
+                    bx + nx, by + ny, bz + nz, ax + nx, ay + ny, az + nz, color, light);
             quad(buffer, ax - mx * 0.55F, ay - my * 0.55F, az - mz * 0.55F,
-                bx - mx * 0.55F, by - my * 0.55F, bz - mz * 0.55F,
-                bx + mx * 0.55F, by + my * 0.55F, bz + mz * 0.55F,
-                ax + mx * 0.55F, ay + my * 0.55F, az + mz * 0.55F, color, light);
+                    bx - mx * 0.55F, by - my * 0.55F, bz - mz * 0.55F,
+                    bx + mx * 0.55F, by + my * 0.55F, bz + mz * 0.55F,
+                    ax + mx * 0.55F, ay + my * 0.55F, az + mz * 0.55F, color, light);
         } else {
             quad(buffer, ax - mx, ay - my, az - mz, bx - mx, by - my, bz - mz,
-                bx + mx, by + my, bz + mz, ax + mx, ay + my, az + mz, color, light);
+                    bx + mx, by + my, bz + mz, ax + mx, ay + my, az + mz, color, light);
             quad(buffer, ax - nx * 0.55F, ay - ny * 0.55F, az - nz * 0.55F,
-                bx - nx * 0.55F, by - ny * 0.55F, bz - nz * 0.55F,
-                bx + nx * 0.55F, by + ny * 0.55F, bz + nz * 0.55F,
-                ax + nx * 0.55F, ay + ny * 0.55F, az + nz * 0.55F, color, light);
+                    bx - nx * 0.55F, by - ny * 0.55F, bz - nz * 0.55F,
+                    bx + nx * 0.55F, by + ny * 0.55F, bz + nz * 0.55F,
+                    ax + nx * 0.55F, ay + ny * 0.55F, az + nz * 0.55F, color, light);
         }
     }
 

@@ -15,7 +15,6 @@ public final class RopeDebugStats {
     public static volatile int chunkMeshSnapshots;
     public static volatile int attachmentsTotal;
     public static volatile int chunkMeshEligible;
-    public static volatile int chunkMeshIneligible;
     public static volatile int chunkMeshWaitingQuiet;
     public static volatile int chunkMeshReadyFromSim;
     public static volatile int chunkMeshReadyAnchorBake;
@@ -48,7 +47,6 @@ public final class RopeDebugStats {
         chunkMeshSnapshots = 0;
         attachmentsTotal = 0;
         chunkMeshEligible = 0;
-        chunkMeshIneligible = 0;
         chunkMeshWaitingQuiet = 0;
         chunkMeshReadyFromSim = 0;
         chunkMeshReadyAnchorBake = 0;

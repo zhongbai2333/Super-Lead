@@ -323,12 +323,13 @@ public final class SuperLeadEvents {
             return;
         ItemStack stack = event.getItemStack();
         if (event.getEntity().isShiftKeyDown() && stack.is(Items.SHEARS)) {
-            // Shears + Shift + Left-click 鈫?remove rope attachment.
+            // Shears + Shift + Left-click -> remove rope attachment.
             ClientInteractionBridge.trySendRemoveRopeAttachment();
             return;
         }
         // Plain left-click on a rope attachment with both block- and item-display forms
-        // toggles between the two. trySend鈥?filters on BlockItem so harmless on misses.
+        // toggles between the two. The packet path filters on BlockItem, so misses are
+        // harmless.
         ClientInteractionBridge.trySendToggleRopeAttachmentForm();
     }
 
@@ -340,7 +341,7 @@ public final class SuperLeadEvents {
             return;
         ItemStack stack = event.getItemStack();
         if (event.getEntity().isShiftKeyDown() && stack.is(Items.SHEARS)) {
-            // Shears + Shift + Left-click on block 鈫?remove rope attachment.
+            // Shears + Shift + Left-click on block -> remove rope attachment.
             if (ClientInteractionBridge.trySendRemoveRopeAttachment()) {
                 event.setCanceled(true);
             }
@@ -360,7 +361,8 @@ public final class SuperLeadEvents {
             return false;
         if (!level.isClientSide()) {
             // Server side: don't actually attach, but still cancel the block interaction so
-            // the held block isn't placed while the client鈫抯erver attachment packet is in
+            // the held block isn't placed while the client-to-server attachment packet is
+            // in
             // flight.
             return canAimAtRopeForAttachment(player, hand, level);
         }
@@ -565,6 +567,7 @@ public final class SuperLeadEvents {
                 SuperLeadNetwork.tickThermal(serverLevel);
                 SuperLeadNetwork.tickAeNetwork(serverLevel);
                 RopeContactTracker.tickRopeContacts(serverLevel);
+                RopeTripController.tick(serverLevel);
                 ParrotRopePerchController.tick(serverLevel);
                 ZiplineController.tick(serverLevel);
             }
@@ -574,6 +577,7 @@ public final class SuperLeadEvents {
     @SubscribeEvent
     public static void onPlayerLoggedIn(PlayerEvent.PlayerLoggedInEvent event) {
         if (event.getEntity() instanceof ServerPlayer player) {
+            RopeTripController.stopEverywhere(player);
             ZiplineController.stopEverywhere(player);
             SuperLeadPayloads.sendToPlayer(player);
         }
@@ -582,6 +586,7 @@ public final class SuperLeadEvents {
     @SubscribeEvent
     public static void onPlayerChangedDimension(PlayerEvent.PlayerChangedDimensionEvent event) {
         if (event.getEntity() instanceof ServerPlayer player) {
+            RopeTripController.stopEverywhere(player);
             ZiplineController.stopEverywhere(player);
             SuperLeadPayloads.sendToPlayer(player);
         }
@@ -590,6 +595,7 @@ public final class SuperLeadEvents {
     @SubscribeEvent
     public static void onPlayerLoggedOut(PlayerEvent.PlayerLoggedOutEvent event) {
         if (event.getEntity() instanceof ServerPlayer player) {
+            RopeTripController.stopEverywhere(player);
             ZiplineController.stopEverywhere(player);
         }
     }
@@ -719,5 +725,3 @@ public final class SuperLeadEvents {
         return true;
     }
 }
-
-

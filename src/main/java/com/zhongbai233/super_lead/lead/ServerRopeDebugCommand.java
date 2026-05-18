@@ -16,6 +16,7 @@ import java.util.UUID;
 import net.minecraft.ChatFormatting;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
+import net.minecraft.commands.arguments.EntityArgument;
 import net.minecraft.core.particles.DustParticleOptions;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceKey;
@@ -69,6 +70,11 @@ public final class ServerRopeDebugCommand {
                                         .executes(ctx -> show(ctx,
                                                 DoubleArgumentType.getDouble(ctx, "radius"), 1))))
                         .then(Commands.literal("clear").executes(ServerRopeDebugCommand::clear)));
+        root.then(Commands.literal("debug")
+                .then(Commands.literal("trip")
+                        .executes(ServerRopeDebugCommand::debugTripSelf)
+                        .then(Commands.argument("player", EntityArgument.player())
+                                .executes(ServerRopeDebugCommand::debugTripTarget))));
         dispatcher.register(root);
     }
 
@@ -126,11 +132,13 @@ public final class ServerRopeDebugCommand {
                 .append(Component.literal(shortId(connection.id())).withStyle(ChatFormatting.YELLOW))
                 .append(Component.literal(" preset=").withStyle(ChatFormatting.GRAY))
                 .append(Component.literal(connection.physicsPreset().isBlank() ? "<none>" : connection.physicsPreset())
-                        .withStyle(connection.physicsPreset().isBlank() ? ChatFormatting.DARK_GRAY : ChatFormatting.GREEN))
+                        .withStyle(
+                                connection.physicsPreset().isBlank() ? ChatFormatting.DARK_GRAY : ChatFormatting.GREEN))
                 .append(Component.literal(" nodes=24"
                         + " length=" + format(shape.length())
                         + " target=" + format(shape.targetLength())
-                        + " for " + seconds + "s").withStyle(ChatFormatting.GRAY)), false);
+                        + " for " + seconds + "s").withStyle(ChatFormatting.GRAY)),
+                false);
         return 1;
     }
 
@@ -140,6 +148,32 @@ public final class ServerRopeDebugCommand {
         ctx.getSource().sendSuccess(() -> Component.literal(
                 removed ? "Cleared server rope display." : "No active server rope display."), false);
         return removed ? 1 : 0;
+    }
+
+    private static int debugTripSelf(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
+        return debugTrip(ctx, ctx.getSource().getPlayerOrException());
+    }
+
+    private static int debugTripTarget(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
+        return debugTrip(ctx, EntityArgument.getPlayer(ctx, "player"));
+    }
+
+    private static int debugTrip(CommandContext<CommandSourceStack> ctx, ServerPlayer target) {
+        if (!(target.level() instanceof ServerLevel level)) {
+            ctx.getSource().sendFailure(Component.literal("Target is not in a server level."));
+            return 0;
+        }
+        String name = target.getName().getString();
+        if (!RopeTripController.debugForceTrip(level, target)) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "Could not trip " + name
+                            + " (dead, spectator, passenger, or already forced into a pose)."));
+            return 0;
+        }
+        ctx.getSource().sendSuccess(() -> Component.literal("Forced rope trip on ")
+                .withStyle(ChatFormatting.GREEN)
+                .append(Component.literal(name).withStyle(ChatFormatting.YELLOW)), true);
+        return 1;
     }
 
     private static Optional<LeadConnection> nearestConnection(ServerLevel level, Vec3 origin, double radius) {

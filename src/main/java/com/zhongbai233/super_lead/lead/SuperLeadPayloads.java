@@ -54,6 +54,8 @@ public final class SuperLeadPayloads {
                         SuperLeadPayloads::handleStartZipline)
                 .playToServer(ClientRopeContactReport.TYPE, ClientRopeContactReport.STREAM_CODEC,
                         SuperLeadPayloads::handleClientRopeContactReport)
+                .playToServer(ClientRopeTripWakeRequest.TYPE, ClientRopeTripWakeRequest.STREAM_CODEC,
+                        SuperLeadPayloads::handleClientRopeTripWakeRequest)
                 .playToServer(AddRopeAttachment.TYPE, AddRopeAttachment.STREAM_CODEC,
                         SuperLeadPayloads::handleAddRopeAttachment)
                 .playToServer(RemoveRopeAttachment.TYPE, RemoveRopeAttachment.STREAM_CODEC,
@@ -101,6 +103,8 @@ public final class SuperLeadPayloads {
                 .playToClient(ClearRopeCache.TYPE, ClearRopeCache.STREAM_CODEC, SuperLeadPayloads::ignoreClientPayload)
                 .playToClient(ItemPulse.TYPE, ItemPulse.STREAM_CODEC, SuperLeadPayloads::ignoreClientPayload)
                 .playToClient(RopeContactPulse.TYPE, RopeContactPulse.STREAM_CODEC,
+                        SuperLeadPayloads::ignoreClientPayload)
+                .playToClient(SyncRopeTripState.TYPE, SyncRopeTripState.STREAM_CODEC,
                         SuperLeadPayloads::ignoreClientPayload)
                 .playToClient(SyncZiplines.TYPE, SyncZiplines.STREAM_CODEC, SuperLeadPayloads::ignoreClientPayload)
                 .playToClient(PresetPromptOpen.TYPE, PresetPromptOpen.STREAM_CODEC,
@@ -199,6 +203,10 @@ public final class SuperLeadPayloads {
 
     private static void handleClientRopeContactReport(ClientRopeContactReport payload, IPayloadContext context) {
         runOnServer(context, (player, level) -> RopeContactTracker.acceptClientContact(level, player, payload));
+    }
+
+    private static void handleClientRopeTripWakeRequest(ClientRopeTripWakeRequest payload, IPayloadContext context) {
+        runOnServerPlayer(context, RopeTripController::release);
     }
 
     private static void handleStartZipline(StartZipline payload, IPayloadContext context) {

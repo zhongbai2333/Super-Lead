@@ -7,7 +7,6 @@ import com.zhongbai233.super_lead.lead.client.sim.RopeSimulation;
 import com.zhongbai233.super_lead.lead.client.sim.RopeTuning;
 import com.zhongbai233.super_lead.tuning.ClientTuning;
 import net.minecraft.client.renderer.SubmitNodeCollector;
-import net.minecraft.client.renderer.rendertype.RenderTypes;
 import net.minecraft.util.LightCoordsUtil;
 import net.minecraft.world.phys.Vec3;
 
@@ -208,7 +207,7 @@ public final class LeashBuilder {
         for (int i = 0; i < jobs.size(); i++) {
             totalLengths[i] = Math.max(1.0e-6D, jobs.get(i).sim.prepareRender(partialTick));
         }
-        collector.submitCustomGeometry(BATCH_POSE, RenderTypes.textBackground(), (poseState, buffer) -> {
+        collector.submitCustomGeometry(BATCH_POSE, RopeRenderTypes.dynamicRope(), (poseState, buffer) -> {
             for (int i = 0; i < jobs.size(); i++) {
                 renderJob(buffer, poseState, cameraPos, jobs.get(i), totalLengths[i]);
             }

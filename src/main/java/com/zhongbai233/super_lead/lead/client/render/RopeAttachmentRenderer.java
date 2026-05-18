@@ -15,7 +15,6 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.renderer.SubmitNodeCollector;
 import net.minecraft.client.renderer.item.ItemStackRenderState;
-import net.minecraft.client.renderer.rendertype.RenderTypes;
 import net.minecraft.core.BlockPos;
 import net.minecraft.util.LightCoordsUtil;
 import net.minecraft.world.entity.player.Player;
@@ -362,9 +361,8 @@ public final class RopeAttachmentRenderer {
         BlockState state = configuredBlockState(blockItem, frontSide, attachmentProperty);
         if (powered) {
             if (state.hasProperty(net.minecraft.world.level.block.state.properties.BlockStateProperties.LIT)) {
-                // Redstone torches default to LIT=true → powered means extinguish (LIT=false).
-                // Redstone lamps default to LIT=false → powered means light up (LIT=true).
-                // Invert the default value so both categories render correctly.
+                // Torches default to lit and power turns them off; lamps default to
+                // unlit and power turns them on.
                 boolean defaultLit = state
                         .getValue(net.minecraft.world.level.block.state.properties.BlockStateProperties.LIT);
                 state = state.setValue(net.minecraft.world.level.block.state.properties.BlockStateProperties.LIT,
@@ -733,8 +731,8 @@ public final class RopeAttachmentRenderer {
     }
 
     /**
-     * Shape heuristic: tall block with small bottom footprint → rope pierces
-     * through it.
+     * Shape heuristic: a tall block with a small bottom footprint is likely
+     * pierced by the rope instead of hanging below it.
      */
     private static boolean shouldPierce(ShapeProfile shape) {
         return shape.valid()
@@ -943,7 +941,7 @@ public final class RopeAttachmentRenderer {
                 B2z = (float) (b2z - cameraPos.z);
         final int color = HANGER_COLOR;
         final int light = packedLight;
-        collector.submitCustomGeometry(IDENTITY_POSE, RenderTypes.textBackground(), (state, buffer) -> {
+        collector.submitCustomGeometry(IDENTITY_POSE, RopeRenderTypes.attachmentLine(), (state, buffer) -> {
             emitLineQuads(buffer, A1x, A1y, A1z, B1x, B1y, B1z, color, light);
             emitLineQuads(buffer, A2x, A2y, A2z, B2x, B2y, B2z, color, light);
         });
@@ -977,7 +975,7 @@ public final class RopeAttachmentRenderer {
             n1x /= l1;
             n1z /= l1;
         }
-        // n2 = direction × n1.
+        // n2 = direction x n1.
         float n2x = udy * n1z - udz * n1y;
         float n2y = udz * n1x - udx * n1z;
         float n2z = udx * n1y - udy * n1x;

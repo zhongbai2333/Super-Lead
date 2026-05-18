@@ -34,6 +34,8 @@ import net.minecraft.util.LightCoordsUtil;
 public final class RopeStaticGeometry {
 
     private static final int NODE_COUNT = 16;
+    private static final double EXTRACT_END_AMPLITUDE = 0.9D;
+    private static final double EXTRACT_END_LENGTH = 0.45D;
 
     private RopeStaticGeometry() {
     }
@@ -47,21 +49,28 @@ public final class RopeStaticGeometry {
         LeadEndpointLayout.Endpoints endpoints = LeadEndpointLayout.endpoints(clientLevel, connection, allConnections);
         Vec3 a = endpoints.from();
         Vec3 b = endpoints.to();
+        int extractEnd = extractEnd(connection);
         return build(connection.id(), a, b, clientLevel,
-                connection.kind(), connection.powered(), connection.tier(), RopeTuning.forConnection(connection));
+                connection.kind(), connection.powered(), connection.tier(), RopeTuning.forConnection(connection),
+                extractEnd);
     }
 
     public static RopeStaticGeometryResult build(java.util.UUID id, Vec3 a, Vec3 b, Level clientLevel) {
-        return build(id, a, b, clientLevel, LeadKind.NORMAL, false, 0, RopeTuning.localDefaults());
+        return build(id, a, b, clientLevel, LeadKind.NORMAL, false, 0, RopeTuning.localDefaults(), 0);
     }
 
     public static RopeStaticGeometryResult build(java.util.UUID id, Vec3 a, Vec3 b, Level clientLevel,
             LeadKind kind, boolean powered, int tier) {
-        return build(id, a, b, clientLevel, kind, powered, tier, RopeTuning.localDefaults());
+        return build(id, a, b, clientLevel, kind, powered, tier, RopeTuning.localDefaults(), 0);
     }
 
     public static RopeStaticGeometryResult build(java.util.UUID id, Vec3 a, Vec3 b, Level clientLevel,
             LeadKind kind, boolean powered, int tier, RopeTuning tuning) {
+        return build(id, a, b, clientLevel, kind, powered, tier, tuning, 0);
+    }
+
+    public static RopeStaticGeometryResult build(java.util.UUID id, Vec3 a, Vec3 b, Level clientLevel,
+            LeadKind kind, boolean powered, int tier, RopeTuning tuning, int extractEnd) {
         double len = a.distanceTo(b);
         if (len < 1.0e-6D) {
             return RopeStaticGeometryResult.EMPTY;
@@ -82,33 +91,40 @@ public final class RopeStaticGeometry {
             z[i] = (float) cz[i];
         }
 
-        return finalizeSnapshot(id, x, y, z, clientLevel, kind, powered, tier, effectiveTuning);
+        return finalizeSnapshot(id, x, y, z, clientLevel, kind, powered, tier, effectiveTuning, extractEnd);
     }
 
     public static RopeStaticGeometryResult buildFromSim(LeadConnection connection,
             RopeSimulation sim,
             Level clientLevel) {
         return buildFromSim(connection.id(), sim, clientLevel,
-                connection.kind(), connection.powered(), connection.tier(), sim.tuning());
+                connection.kind(), connection.powered(), connection.tier(), sim.tuning(), extractEnd(connection));
     }
 
     public static RopeStaticGeometryResult buildFromSim(java.util.UUID id,
             RopeSimulation sim,
             Level clientLevel) {
-        return buildFromSim(id, sim, clientLevel, LeadKind.NORMAL, false, 0, sim.tuning());
+        return buildFromSim(id, sim, clientLevel, LeadKind.NORMAL, false, 0, sim.tuning(), 0);
     }
 
     public static RopeStaticGeometryResult buildFromSim(java.util.UUID id,
             RopeSimulation sim,
             Level clientLevel,
             LeadKind kind, boolean powered, int tier) {
-        return buildFromSim(id, sim, clientLevel, kind, powered, tier, sim.tuning());
+        return buildFromSim(id, sim, clientLevel, kind, powered, tier, sim.tuning(), 0);
     }
 
     public static RopeStaticGeometryResult buildFromSim(java.util.UUID id,
             RopeSimulation sim,
             Level clientLevel,
             LeadKind kind, boolean powered, int tier, RopeTuning tuning) {
+        return buildFromSim(id, sim, clientLevel, kind, powered, tier, tuning, 0);
+    }
+
+    public static RopeStaticGeometryResult buildFromSim(java.util.UUID id,
+            RopeSimulation sim,
+            Level clientLevel,
+            LeadKind kind, boolean powered, int tier, RopeTuning tuning, int extractEnd) {
         int n = sim.nodeCount();
         if (n < 2)
             return RopeStaticGeometryResult.EMPTY;
@@ -124,13 +140,13 @@ public final class RopeStaticGeometry {
         double dx = x[n - 1] - x[0], dy = y[n - 1] - y[0], dz = z[n - 1] - z[0];
         if (dx * dx + dy * dy + dz * dz < 1.0e-8D)
             return RopeStaticGeometryResult.EMPTY;
-        return finalizeSnapshot(id, x, y, z, clientLevel, kind, powered, tier, tuning);
+        return finalizeSnapshot(id, x, y, z, clientLevel, kind, powered, tier, tuning, extractEnd);
     }
 
     private static RopeStaticGeometryResult finalizeSnapshot(java.util.UUID id,
             float[] x, float[] y, float[] z,
             Level clientLevel,
-            LeadKind kind, boolean powered, int tier, RopeTuning tuning) {
+            LeadKind kind, boolean powered, int tier, RopeTuning tuning, int extractEnd) {
         int n = x.length;
         RopeTuning effectiveTuning = tuning != null ? tuning : RopeTuning.localDefaults();
         float halfThickness = (float) effectiveTuning.halfThickness();
@@ -141,6 +157,7 @@ public final class RopeStaticGeometry {
         float[] uy = new float[n];
         float[] uz = new float[n];
         buildFrames(x, y, z, halfThickness, sx, sy, sz, ux, uy, uz);
+        float[] nodeThicknessScale = buildNodeThicknessScale(x, y, z, extractEnd);
 
         BlockPos endA = BlockPos.containing(x[0], y[0], z[0]);
         BlockPos endB = BlockPos.containing(x[n - 1], y[n - 1], z[n - 1]);
@@ -190,11 +207,52 @@ public final class RopeStaticGeometry {
             for (int[] range : e.getValue()) {
                 snapshots.add(new RopeSectionSnapshot(
                         id, x, y, z, sx, sy, sz, ux, uy, uz, nodeLight, segColor,
+                        nodeThicknessScale, extractEnd,
                         range[0], range[1]));
             }
             snapshotsBySection.put(e.getKey(), List.copyOf(snapshots));
         }
         return new RopeStaticGeometryResult(snapshotsBySection, sections);
+    }
+
+    private static int extractEnd(LeadConnection connection) {
+        return switch (connection.kind()) {
+            case ITEM, FLUID, PRESSURIZED -> connection.extractAnchor();
+            default -> 0;
+        };
+    }
+
+    private static float[] buildNodeThicknessScale(float[] x, float[] y, float[] z, int extractEnd) {
+        if (extractEnd == 0)
+            return null;
+        int n = x.length;
+        float[] scales = new float[n];
+        double[] cumulative = new double[n];
+        double total = 0.0D;
+        for (int i = 1; i < n; i++) {
+            double dx = x[i] - x[i - 1];
+            double dy = y[i] - y[i - 1];
+            double dz = z[i] - z[i - 1];
+            total += Math.sqrt(dx * dx + dy * dy + dz * dz);
+            cumulative[i] = total;
+        }
+        if (total < 1.0e-6D) {
+            java.util.Arrays.fill(scales, 1.0F);
+            return scales;
+        }
+        for (int i = 0; i < n; i++) {
+            double normalized = cumulative[i] / total;
+            double bonus = 0.0D;
+            if (extractEnd == 1 && normalized < EXTRACT_END_LENGTH) {
+                double f = 1.0D - (normalized / EXTRACT_END_LENGTH);
+                bonus = EXTRACT_END_AMPLITUDE * f * f;
+            } else if (extractEnd == 2 && normalized > 1.0D - EXTRACT_END_LENGTH) {
+                double f = (normalized - (1.0D - EXTRACT_END_LENGTH)) / EXTRACT_END_LENGTH;
+                bonus = EXTRACT_END_AMPLITUDE * f * f;
+            }
+            scales[i] = (float) (1.0D + bonus);
+        }
+        return scales;
     }
 
     private static long sectionAt(float x, float y, float z) {

@@ -4,6 +4,7 @@ import com.zhongbai233.super_lead.lead.ClearRopeCache;
 import com.zhongbai233.super_lead.lead.ItemPulse;
 import com.zhongbai233.super_lead.lead.RopeContactPulse;
 import com.zhongbai233.super_lead.lead.SuperLeadNetwork;
+import com.zhongbai233.super_lead.lead.SyncRopeTripState;
 import com.zhongbai233.super_lead.lead.SyncRopeChunk;
 import com.zhongbai233.super_lead.lead.SyncZiplines;
 import com.zhongbai233.super_lead.lead.UnloadRopeChunk;
@@ -50,6 +51,8 @@ public final class SuperLeadClientPayloads {
                         SuperLeadClientPayloads::handleItemPulse)
                 .playToClient(RopeContactPulse.TYPE, RopeContactPulse.STREAM_CODEC,
                         SuperLeadClientPayloads::handleRopeContactPulse)
+                .playToClient(SyncRopeTripState.TYPE, SyncRopeTripState.STREAM_CODEC,
+                        SuperLeadClientPayloads::handleSyncRopeTripState)
                 .playToClient(SyncZiplines.TYPE, SyncZiplines.STREAM_CODEC,
                         SuperLeadClientPayloads::handleSyncZiplines)
                 .playToClient(PresetPromptOpen.TYPE, PresetPromptOpen.STREAM_CODEC,
@@ -112,6 +115,10 @@ public final class SuperLeadClientPayloads {
         for (RopeContactPulse.Entry entry : payload.contacts()) {
             staticRopes.invalidateConnection(level, entry.ropeId());
         }
+    }
+
+    private static void handleSyncRopeTripState(SyncRopeTripState payload, IPayloadContext context) {
+        RopeTripClientState.apply(payload);
     }
 
     private static void handleSyncZiplines(SyncZiplines payload, IPayloadContext context) {

@@ -16,22 +16,30 @@ import net.minecraft.client.gui.GuiGraphicsExtractor;
  * touching the server simulation.
  */
 public final class PreviewRope {
+    private static final int SIM_TICK_INTERVAL = 3;
+    private static final int LINE_SAMPLE_STRIDE_PX = 4;
+
     private double spanMeters = 5.0D;
 
     private double[] x;
     private double[] y;
     private double[] px;
     private double[] py;
+    private int[] screenX;
+    private int[] screenY;
     private boolean[] pinned;
     private int n;
     private double restLen;
     private long lastPhysEpoch = -1L;
+    private long lastRenderEpoch = -1L;
     private int frame;
 
     private int viewX, viewY, viewW, viewH;
     private double pxPerMeter;
+    private boolean renderDirty = true;
 
     private boolean colliderActive = true;
+    private boolean animatedPreview = true;
     private double colliderX = 2.5D, colliderY = 1.4D;
     private final double colliderR = 0.45D;
     private Map<String, String> overrides = Map.of();
@@ -44,16 +52,33 @@ public final class PreviewRope {
     }
 
     public void setViewport(int x, int y, int w, int h) {
+        boolean changed = this.viewX != x || this.viewY != y || this.viewW != w || this.viewH != h;
         this.viewX = x;
         this.viewY = y;
         this.viewW = w;
         this.viewH = h;
         double margin = 0.10D;
         this.pxPerMeter = (w * (1.0D - 2.0D * margin)) / spanMeters;
+        if (changed) {
+            renderDirty = true;
+        }
     }
 
     public void setColliderActive(boolean active) {
         this.colliderActive = active;
+    }
+
+    public void setAnimatedPreview(boolean animated) {
+        if (animatedPreview == animated) {
+            return;
+        }
+        animatedPreview = animated;
+        colliderActive = animated;
+        rebuildFromTuning(true);
+    }
+
+    public boolean animatedPreview() {
+        return animatedPreview;
     }
 
     public void setOverrides(Map<String, String> overrides, boolean defaultMissingOverrides) {
@@ -76,16 +101,17 @@ public final class PreviewRope {
             x[i] += 0.35D * w;
             y[i] -= 0.20D * w;
         }
+        renderDirty = true;
     }
 
     public void reset() {
         rebuildFromTuning(true);
     }
 
-    private void rebuildFromTuning(boolean force) {
+    private boolean rebuildFromTuning(boolean force) {
         long pe = ClientTuning.physicsEpoch();
         if (!force && pe == lastPhysEpoch && overridesEpoch == lastOverridesEpoch)
-            return;
+            return false;
         lastPhysEpoch = pe;
         lastOverridesEpoch = overridesEpoch;
 
@@ -99,22 +125,43 @@ public final class PreviewRope {
             y = new double[n];
             px = new double[n];
             py = new double[n];
+            screenX = new int[n];
+            screenY = new int[n];
             pinned = new boolean[n];
             pinned[0] = true;
             pinned[n - 1] = true;
         }
         restLen = spanMeters / segments;
+        resetStaticShape();
+        renderDirty = true;
+        return true;
+    }
+
+    private void resetStaticShape() {
+        double slack = value(ClientTuning.SLACK);
+        double gravity = value(ClientTuning.GRAVITY);
+        double sag = Math.abs(RopeSagModel.midspanSag(spanMeters, slack, gravity));
         for (int i = 0; i < n; i++) {
-            x[i] = (i / (double) (n - 1)) * spanMeters;
-            y[i] = 0.0D;
+            double t = i / (double) (n - 1);
+            x[i] = t * spanMeters;
+            y[i] = Math.sin(Math.PI * t) * sag;
             px[i] = x[i];
             py[i] = y[i];
         }
     }
 
     public void tick() {
-        rebuildFromTuning(false);
+        boolean rebuilt = rebuildFromTuning(false);
         frame++;
+        if (!animatedPreview) {
+            if (rebuilt) {
+                renderDirty = true;
+            }
+            return;
+        }
+        if (frame % SIM_TICK_INTERVAL != 0) {
+            return;
+        }
         if (colliderActive) {
             double t = frame / 60.0D;
             colliderX = spanMeters * (0.5D + 0.30D * Math.sin(t));
@@ -138,6 +185,13 @@ public final class PreviewRope {
         double target = restLen * RopeSagModel.lengthFactor(slack);
         double gravityScale = 1.0D - tautWeight;
 
+        integrateNodes(damping, gravity, gravityScale);
+        solveConstraints(iters, target);
+        applyTautProjection(tautWeight);
+        renderDirty = true;
+    }
+
+    private void integrateNodes(double damping, double gravity, double gravityScale) {
         for (int i = 0; i < n; i++) {
             if (pinned[i]) {
                 px[i] = x[i];
@@ -151,50 +205,58 @@ public final class PreviewRope {
             x[i] += vx;
             y[i] += vy + gravity * gravityScale;
         }
+    }
 
+    private void solveConstraints(int iters, double target) {
         for (int it = 0; it < iters; it++) {
-            for (int i = 0; i < n - 1; i++) {
-                double dx = x[i + 1] - x[i];
-                double dy = y[i + 1] - y[i];
-                double d = Math.sqrt(dx * dx + dy * dy);
-                if (d < 1.0e-9D)
-                    continue;
-                double diff = (d - target) / d;
-                double wA = pinned[i] ? 0.0D : 1.0D;
-                double wB = pinned[i + 1] ? 0.0D : 1.0D;
-                double wSum = wA + wB;
-                if (wSum <= 0.0D)
-                    continue;
-                double sA = wA / wSum;
-                double sB = wB / wSum;
-                x[i] += dx * diff * sA;
-                y[i] += dy * diff * sA;
-                x[i + 1] -= dx * diff * sB;
-                y[i + 1] -= dy * diff * sB;
-            }
-
+            solveDistanceConstraints(target);
             if (colliderActive) {
-                for (int i = 1; i < n - 1; i++) {
-                    double dx = x[i] - colliderX;
-                    double dy = y[i] - colliderY;
-                    double d2 = dx * dx + dy * dy;
-                    double r = colliderR;
-                    if (d2 < r * r) {
-                        double d = Math.sqrt(d2);
-                        if (d < 1.0e-6D) {
-                            x[i] += 0.0D;
-                            y[i] -= r;
-                        } else {
-                            double push = (r - d) / d;
-                            x[i] += dx * push;
-                            y[i] += dy * push;
-                        }
-                    }
-                }
+                solveColliderConstraints();
             }
         }
+    }
 
-        applyTautProjection(tautWeight);
+    private void solveDistanceConstraints(double target) {
+        for (int i = 0; i < n - 1; i++) {
+            double dx = x[i + 1] - x[i];
+            double dy = y[i + 1] - y[i];
+            double d = Math.sqrt(dx * dx + dy * dy);
+            if (d < 1.0e-9D)
+                continue;
+            double diff = (d - target) / d;
+            double wA = pinned[i] ? 0.0D : 1.0D;
+            double wB = pinned[i + 1] ? 0.0D : 1.0D;
+            double wSum = wA + wB;
+            if (wSum <= 0.0D)
+                continue;
+            double sA = wA / wSum;
+            double sB = wB / wSum;
+            x[i] += dx * diff * sA;
+            y[i] += dy * diff * sA;
+            x[i + 1] -= dx * diff * sB;
+            y[i + 1] -= dy * diff * sB;
+        }
+    }
+
+    private void solveColliderConstraints() {
+        for (int i = 1; i < n - 1; i++) {
+            double dx = x[i] - colliderX;
+            double dy = y[i] - colliderY;
+            double d2 = dx * dx + dy * dy;
+            double r = colliderR;
+            if (d2 >= r * r) {
+                continue;
+            }
+            double d = Math.sqrt(d2);
+            if (d < 1.0e-6D) {
+                x[i] += 0.0D;
+                y[i] -= r;
+            } else {
+                double push = (r - d) / d;
+                x[i] += dx * push;
+                y[i] += dy * push;
+            }
+        }
     }
 
     private void applyTautProjection(double weight) {
@@ -232,25 +294,22 @@ public final class PreviewRope {
 
         int color = 0xFF000000 | (value(ClientTuning.COLOR_NORMAL_ACCENT) & 0xFFFFFF);
         int outlineColor = 0xFF000000 | (value(ClientTuning.COLOR_NORMAL_BASE) & 0xFFFFFF);
+        rebuildScreenCache(left, top);
 
         for (int i = 0; i < n - 1; i++) {
-            int ax = (int) Math.round(left + x[i] * pxPerMeter);
-            int ay = (int) Math.round(top + y[i] * pxPerMeter);
-            int bx = (int) Math.round(left + x[i + 1] * pxPerMeter);
-            int by = (int) Math.round(top + y[i + 1] * pxPerMeter);
-            drawThickLine(gg, ax, ay, bx, by, thick + 1, outlineColor);
-            drawThickLine(gg, ax, ay, bx, by, thick, color);
+            drawThickLine(gg, screenX[i], screenY[i], screenX[i + 1], screenY[i + 1], thick + 1, outlineColor);
+            drawThickLine(gg, screenX[i], screenY[i], screenX[i + 1], screenY[i + 1], thick, color);
         }
 
         for (int i = 0; i < n; i++) {
-            int nx = (int) Math.round(left + x[i] * pxPerMeter);
-            int ny = (int) Math.round(top + y[i] * pxPerMeter);
+            int nx = screenX[i];
+            int ny = screenY[i];
             int dot = pinned[i] ? 3 : 1;
             int dotColor = pinned[i] ? 0xFFFFCC44 : 0xFF3322FF;
             gg.fill(nx - dot, ny - dot, nx + dot + 1, ny + dot + 1, dotColor);
         }
 
-        if (colliderActive) {
+        if (animatedPreview && colliderActive) {
             int cx = (int) Math.round(left + colliderX * pxPerMeter);
             int cy = (int) Math.round(top + colliderY * pxPerMeter);
             int rad = (int) Math.round(colliderR * pxPerMeter);
@@ -260,6 +319,19 @@ public final class PreviewRope {
             gg.fill(cx - rad, cy - rad, cx - rad + 1, cy + rad, 0xFFAA2222);
             gg.fill(cx + rad - 1, cy - rad, cx + rad, cy + rad, 0xFFAA2222);
         }
+    }
+
+    private void rebuildScreenCache(int left, int top) {
+        long renderEpoch = ClientTuning.renderEpoch();
+        if (!renderDirty && renderEpoch == lastRenderEpoch) {
+            return;
+        }
+        lastRenderEpoch = renderEpoch;
+        for (int i = 0; i < n; i++) {
+            screenX[i] = (int) Math.round(left + x[i] * pxPerMeter);
+            screenY[i] = (int) Math.round(top + y[i] * pxPerMeter);
+        }
+        renderDirty = false;
     }
 
     private static void drawThickLine(GuiGraphicsExtractor gg, int x1, int y1, int x2, int y2, int thickness,
@@ -272,11 +344,27 @@ public final class PreviewRope {
             gg.fill(x1 - h, y1 - h, x1 - h + thickness, y1 - h + thickness, argb);
             return;
         }
-        double sx = dx / (double) steps;
-        double sy = dy / (double) steps;
         int h = thickness / 2;
+        if (Math.abs(dy) <= Math.max(1, thickness / 2)) {
+            int minX = Math.min(x1, x2);
+            int maxX = Math.max(x1, x2);
+            int y = (y1 + y2) / 2;
+            gg.fill(minX, y - h, maxX + 1, y - h + thickness, argb);
+            return;
+        }
+        if (Math.abs(dx) <= Math.max(1, thickness / 2)) {
+            int minY = Math.min(y1, y2);
+            int maxY = Math.max(y1, y2);
+            int x = (x1 + x2) / 2;
+            gg.fill(x - h, minY, x - h + thickness, maxY + 1, argb);
+            return;
+        }
+        int stride = Math.max(LINE_SAMPLE_STRIDE_PX, thickness);
+        int samples = Math.max(1, (steps + stride - 1) / stride);
+        double sx = dx / (double) samples;
+        double sy = dy / (double) samples;
         double fx = x1, fy = y1;
-        for (int i = 0; i <= steps; i++) {
+        for (int i = 0; i <= samples; i++) {
             int ix = (int) Math.round(fx);
             int iy = (int) Math.round(fy);
             gg.fill(ix - h, iy - h, ix - h + thickness, iy - h + thickness, argb);

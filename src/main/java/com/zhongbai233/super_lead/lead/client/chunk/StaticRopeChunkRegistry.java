@@ -35,7 +35,7 @@ public final class StaticRopeChunkRegistry {
     private static final StaticRopeChunkRegistry INSTANCE = new StaticRopeChunkRegistry();
 
     private static final double CHUNK_MESH_QUIET_MOTION_SQR = 4.0e-5D; // ~0.0063 block/tick
-    private static final int CHUNK_MESH_QUIET_TICKS = 6;
+    private static final int CHUNK_MESH_FALLBACK_QUIET_TICKS = 3;
     private static final int CHUNK_MESH_LINGER_TICKS = 3;
     private static final int CHUNK_MESH_DYNAMIC_HOLD_MIN_TICKS = 3;
 
@@ -55,15 +55,8 @@ public final class StaticRopeChunkRegistry {
     private final Map<UUID, Long> dynamicHoldUntil = new HashMap<>();
     private boolean connectionSyncDirty;
     /**
-     * Connections whose latest static bake was produced while at least one anchor
-     * chunk was
-     * not yet loaded on the client (so {@code Level#getBlockState} returned air and
-     * the bake
-     * used the default 1x1x1 fallback shape). They must be re-baked once chunks
-     * finish
-     * streaming, otherwise re-logging far from the player would leave their static
-     * meshes
-     * silently anchored at wrong positions / never re-meshed by NeoForge.
+     * Static bakes made before anchor chunks load use default block shapes; retry
+     * them once both anchor chunks arrive.
      */
     private final Set<UUID> bakedWithMissingAnchors = new HashSet<>();
 
@@ -71,7 +64,6 @@ public final class StaticRopeChunkRegistry {
     private List<StressSource> stressSources = List.of();
 
     private volatile int debugEligible;
-    private volatile int debugIneligible;
     private volatile int debugWaitingQuiet;
     private volatile int debugReadyFromSim;
     private volatile int debugReadyAnchorBake;
@@ -180,10 +172,6 @@ public final class StaticRopeChunkRegistry {
 
     public int eligibleCount() {
         return debugEligible;
-    }
-
-    public int ineligibleCount() {
-        return debugIneligible;
     }
 
     public int waitingQuietCount() {
@@ -347,15 +335,8 @@ public final class StaticRopeChunkRegistry {
         long now = level.getGameTime();
         pruneDynamicHolds(now);
         boolean enabled = ClientTuning.MODE_CHUNK_MESH_STATIC_ROPES.get()
-                && ClientTuning.MODE_RENDER3D.get()
-                && !net.neoforged.fml.ModList.get().isLoaded("sodium");
-        // If any prior bake used air-defaulted anchors because the anchor chunk hadn't
-        // streamed
-        // in yet, retry now that chunks may have arrived. Without this, re-logging far
-        // from
-        // physicalized ropes would leave their static meshes silently mis-anchored
-        // until a later
-        // chunk-scoped rope sync happened to force a re-bake.
+                && ClientTuning.MODE_RENDER3D.get();
+        // Retry meshes that were baked before their endpoint chunks arrived.
         boolean forceRebakeForMissingAnchors = false;
         if (enabled && !bakedWithMissingAnchors.isEmpty()) {
             for (LeadConnection c : realSources) {
@@ -370,16 +351,11 @@ public final class StaticRopeChunkRegistry {
         Set<UUID> desired = new HashSet<>();
         Set<UUID> desiredFromSim = new HashSet<>();
         int eligible = 0;
-        int ineligible = 0;
         int waitingQuiet = 0;
         int readyFromSim = 0;
         int readyAnchorBake = 0;
         if (enabled) {
             for (LeadConnection c : realSources) {
-                if (!isEligible(c)) {
-                    ineligible++;
-                    continue;
-                }
                 eligible++;
                 if (isDynamicallyHeld(c.id(), now)) {
                     waitingQuiet++;
@@ -404,7 +380,6 @@ public final class StaticRopeChunkRegistry {
             }
         }
         debugEligible = eligible;
-        debugIneligible = ineligible;
         debugWaitingQuiet = waitingQuiet;
         debugReadyFromSim = readyFromSim;
         debugReadyAnchorBake = readyAnchorBake;
@@ -441,8 +416,7 @@ public final class StaticRopeChunkRegistry {
         long now = level.getGameTime();
         pruneDynamicHolds(now);
         boolean enabled = ClientTuning.MODE_CHUNK_MESH_STATIC_ROPES.get()
-                && ClientTuning.MODE_RENDER3D.get()
-                && !net.neoforged.fml.ModList.get().isLoaded("sodium");
+                && ClientTuning.MODE_RENDER3D.get();
 
         Map<Long, List<RopeSectionSnapshot>> nextBySection = new HashMap<>();
         Map<UUID, RopeSectionSnapshot> nextByConnection = new HashMap<>();
@@ -453,8 +427,6 @@ public final class StaticRopeChunkRegistry {
 
         if (enabled) {
             for (LeadConnection c : realSources) {
-                if (!isEligible(c))
-                    continue;
                 if (isDynamicallyHeld(c.id(), now))
                     continue;
                 RopeSimulation sim = simLookup == null ? null : simLookup.apply(c.id());
@@ -529,16 +501,10 @@ public final class StaticRopeChunkRegistry {
         }
     }
 
-    private static boolean isEligible(LeadConnection c) {
-        if (c.extractAnchor() != 0)
-            return false;
-        return true;
-    }
-
     private static boolean isQuiescent(RopeSimulation sim) {
-        if (sim.isSettled() && sim.quietTicks() >= CHUNK_MESH_QUIET_TICKS)
+        if (sim.isSettled())
             return true;
-        if (sim.quietTicks() >= CHUNK_MESH_QUIET_TICKS
+        if (sim.quietTicks() >= CHUNK_MESH_FALLBACK_QUIET_TICKS
                 && sim.maxNodeMotionSqr() < CHUNK_MESH_QUIET_MOTION_SQR)
             return true;
         return false;
@@ -593,7 +559,6 @@ public final class StaticRopeChunkRegistry {
 
     private void clearDebugCounts() {
         debugEligible = 0;
-        debugIneligible = 0;
         debugWaitingQuiet = 0;
         debugReadyFromSim = 0;
         debugReadyAnchorBake = 0;

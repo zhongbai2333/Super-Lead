@@ -113,8 +113,7 @@ public final class RopeContactTracker {
         if (opt.isEmpty())
             return;
         LeadConnection connection = opt.get();
-        if (connection.kind() != LeadKind.NORMAL && connection.kind() != LeadKind.REDSTONE)
-            return;
+        boolean normalContactKind = connection.kind() == LeadKind.NORMAL || connection.kind() == LeadKind.REDSTONE;
 
         LeadEndpointLayout.Endpoints endpoints = LeadEndpointLayout.endpoints(level, connection,
                 SuperLeadNetwork.connections(level));
@@ -130,7 +129,9 @@ public final class RopeContactTracker {
         if (connection.physicsPreset().isBlank())
             return;
         ServerPhysicsTuning tuning = loadServerPhysicsTuning(level, connection.physicsPreset());
-        if (!tuning.physicsEnabled())
+        if (!tuning.physicsEnabled() && !tuning.tripEnabled())
+            return;
+        if (!normalContactKind && !tuning.tripEnabled())
             return;
 
         double radius = tuning.contactRadius();
@@ -178,7 +179,12 @@ public final class RopeContactTracker {
 
         ParrotRopePerchController.disturb(level, connection.id(), contact.point());
 
-        if (!tuning.pushbackEnabled())
+        boolean footSupportContact = isFootSupportPoint(playerBox, contact.point(), radius);
+        if (report.tripCandidate() && isTripPlausible(playerBox, contact.point(), radius)) {
+            RopeTripController.maybeTrip(level, player, tuning, report.inputX(), report.inputZ());
+        }
+
+        if (!normalContactKind || !tuning.pushbackEnabled())
             return;
 
         Map<ContactKey, AcceptedClientContact> dimContacts = CLIENT_CONTACTS.computeIfAbsent(dim,
@@ -186,7 +192,6 @@ public final class RopeContactTracker {
         AcceptedClientContact previous = dimContacts.get(key);
         boolean applyVelocityThisTick = previous == null || previous.tick() < now;
 
-        boolean footSupportContact = isFootSupportPoint(playerBox, contact.point(), radius);
         AppliedPush push;
         if (applyVelocityThisTick) {
             push = applyRigidContact(player, contact.normal(), contact.depth(), radius, tuning,
@@ -427,6 +432,20 @@ public final class RopeContactTracker {
                 && point.z >= playerBox.minZ - margin && point.z <= playerBox.maxZ + margin;
     }
 
+    private static boolean isTripPlausible(AABB playerBox, Vec3 point, double radius) {
+        double verticalBelow = Math.max(radius * 2.50D, 0.28D);
+        double verticalAbove = Math.max(radius * 4.00D, 0.72D);
+        if (point.y < playerBox.minY - verticalBelow || point.y > playerBox.minY + verticalAbove) {
+            return false;
+        }
+        double margin = Math.max(radius + 0.08D, 0.18D);
+        if (point.x < playerBox.minX - margin || point.x > playerBox.maxX + margin
+                || point.z < playerBox.minZ - margin || point.z > playerBox.maxZ + margin) {
+            return false;
+        }
+        return true;
+    }
+
     private static Vec3 orientTowardPlayer(Vec3 normal, Vec3 point, Vec3 playerCenter) {
         Vec3 toPlayer = playerCenter.subtract(point);
         if (toPlayer.lengthSqr() > NORMAL_EPSILON * NORMAL_EPSILON && normal.dot(toPlayer) < 0.0D) {
@@ -457,12 +476,14 @@ public final class RopeContactTracker {
         LAST_SENT_COUNT.remove(key);
         CLIENT_CONTACTS.remove(key);
         CLIENT_CONTACT_LAST_ACCEPTED.remove(key);
+        RopeTripController.clear(level);
     }
 
     public static void clearAllSims() {
         CLIENT_CONTACTS.clear();
         CLIENT_CONTACT_LAST_ACCEPTED.clear();
         LAST_SENT_COUNT.clear();
+        RopeTripController.clearAll();
         lastContacts = 0;
     }
 
