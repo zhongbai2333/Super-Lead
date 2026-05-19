@@ -218,7 +218,7 @@ public final class PresetServerManager {
         boolean changed = refreshRopePresets(level);
         syncDimensionPresets(level);
         if (changed) {
-            SuperLeadPayloads.sendToDimension(level);
+            SuperLeadPayloads.sendDirtyToDimension(level);
         }
         sendZonesToOps(level);
     }
@@ -366,7 +366,7 @@ public final class PresetServerManager {
             boolean changed = refreshRopePresets(level);
             syncDimensionPresets(player, level);
             if (changed) {
-                SuperLeadPayloads.sendToDimension(level);
+                SuperLeadPayloads.sendDirtyToDimension(level);
             }
             sendZones(player, level);
         }
@@ -377,7 +377,7 @@ public final class PresetServerManager {
             boolean changed = refreshRopePresets(level);
             syncDimensionPresets(player, level);
             if (changed) {
-                SuperLeadPayloads.sendToDimension(level);
+                SuperLeadPayloads.sendDirtyToDimension(level);
             }
             sendZones(player, level);
         }
@@ -526,7 +526,7 @@ public final class PresetServerManager {
         }
 
         syncDimensionPresets(level);
-        SuperLeadPayloads.sendToDimension(level);
+        SuperLeadPayloads.sendDirtyToDimension(level);
         player.sendSystemMessage(Component.translatable(removing
                 ? "message.super_lead.preset_binder.unbound_rope"
                 : "message.super_lead.preset_binder.bound_rope", binder.presetName())
@@ -556,7 +556,7 @@ public final class PresetServerManager {
             boolean changed = refreshRopePresets(level);
             syncDimensionPresets(level);
             if (changed) {
-                SuperLeadPayloads.sendToDimension(level);
+                SuperLeadPayloads.sendDirtyToDimension(level);
             }
             sendZonesToOps(level);
         }

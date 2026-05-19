@@ -556,22 +556,7 @@ public final class SuperLeadEvents {
         if (!event.getLevel().isClientSide() && event.getLevel().getGameTime() % 20L == 0L) {
             SuperLeadNetwork.pruneInvalid(event.getLevel());
         }
-        if (!event.getLevel().isClientSide()) {
-            if (event.getLevel() instanceof ServerLevel serverLevel) {
-                SuperLeadNetwork.tickStuckBreaks(serverLevel);
-                SuperLeadNetwork.tickRedstone(serverLevel);
-                SuperLeadNetwork.tickEnergy(serverLevel);
-                SuperLeadNetwork.tickItem(serverLevel);
-                SuperLeadNetwork.tickFluid(serverLevel);
-                SuperLeadNetwork.tickPressurized(serverLevel);
-                SuperLeadNetwork.tickThermal(serverLevel);
-                SuperLeadNetwork.tickAeNetwork(serverLevel);
-                RopeContactTracker.tickRopeContacts(serverLevel);
-                RopeTripController.tick(serverLevel);
-                ParrotRopePerchController.tick(serverLevel);
-                ZiplineController.tick(serverLevel);
-            }
-        }
+        LeadServerTickDispatcher.tick(event.getLevel());
     }
 
     @SubscribeEvent

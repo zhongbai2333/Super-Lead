@@ -14,6 +14,8 @@ import net.minecraft.world.phys.Vec3;
  * allocation-light; it runs frequently for every visible dynamic rope.
  */
 abstract class RopeSimulationTerrainConstraints extends RopeSimulationVisualState {
+    private final SegmentBoxContact terrainSegmentBoxContact = new SegmentBoxContact();
+
     protected RopeSimulationTerrainConstraints(Vec3 a, Vec3 b, long seed, RopeTuning tuning) {
         super(a, b, seed, tuning);
     }
@@ -122,77 +124,17 @@ abstract class RopeSimulationTerrainConstraints extends RopeSimulationVisualStat
     private void pushSegmentOutOfBox(int a, int b, AABB box, double radius) {
         double ax = x[a], ay = y[a], az = z[a];
         double bx = x[b], by = y[b], bz = z[b];
-        // Iterative closest-point: alternate (clamp on segment) and (clamp on AABB) a
-        // few times.
-        // Converges very fast for axis-aligned boxes; 4 iterations is overkill but
-        // cheap.
-        double ux = bx - ax, uy = by - ay, uz = bz - az;
-        double segLenSqr = ux * ux + uy * uy + uz * uz;
-        double s;
-        double cpx, cpy, cpz; // closest point on box
-        double spx, spy, spz; // closest point on segment
-        if (segLenSqr < 1.0e-12D) {
-            s = 0.0D;
-            spx = ax;
-            spy = ay;
-            spz = az;
-        } else {
-            // initial s = projection of box centre on segment
-            double mx = (box.minX + box.maxX) * 0.5D - ax;
-            double my = (box.minY + box.maxY) * 0.5D - ay;
-            double mz = (box.minZ + box.maxZ) * 0.5D - az;
-            s = (mx * ux + my * uy + mz * uz) / segLenSqr;
-            if (s < 0.0D)
-                s = 0.0D;
-            else if (s > 1.0D)
-                s = 1.0D;
-            spx = ax + ux * s;
-            spy = ay + uy * s;
-            spz = az + uz * s;
-        }
-        for (int it = 0; it < 4; it++) {
-            cpx = spx < box.minX ? box.minX : (spx > box.maxX ? box.maxX : spx);
-            cpy = spy < box.minY ? box.minY : (spy > box.maxY ? box.maxY : spy);
-            cpz = spz < box.minZ ? box.minZ : (spz > box.maxZ ? box.maxZ : spz);
-            if (segLenSqr < 1.0e-12D) {
-                spx = ax;
-                spy = ay;
-                spz = az;
-                break;
-            }
-            double tx = cpx - ax, ty = cpy - ay, tz = cpz - az;
-            double ns = (tx * ux + ty * uy + tz * uz) / segLenSqr;
-            if (ns < 0.0D)
-                ns = 0.0D;
-            else if (ns > 1.0D)
-                ns = 1.0D;
-            if (Math.abs(ns - s) < 1.0e-6D) {
-                s = ns;
-                spx = ax + ux * s;
-                spy = ay + uy * s;
-                spz = az + uz * s;
-                break;
-            }
-            s = ns;
-            spx = ax + ux * s;
-            spy = ay + uy * s;
-            spz = az + uz * s;
-        }
-        cpx = spx < box.minX ? box.minX : (spx > box.maxX ? box.maxX : spx);
-        cpy = spy < box.minY ? box.minY : (spy > box.maxY ? box.maxY : spy);
-        cpz = spz < box.minZ ? box.minZ : (spz > box.maxZ ? box.maxZ : spz);
-        double dx = spx - cpx, dy = spy - cpy, dz = spz - cpz;
-        double d2 = dx * dx + dy * dy + dz * dz;
-        if (d2 >= radius * radius)
+        SegmentBoxContact contact = terrainSegmentBoxContact.compute(ax, ay, az, bx, by, bz, box);
+        if (contact.distSqr >= radius * radius)
             return;
         double pushLen, nx, ny, nz;
-        if (d2 > 1.0e-12D) {
-            double d = Math.sqrt(d2);
+        if (contact.distSqr > 1.0e-12D) {
+            double d = Math.sqrt(contact.distSqr);
             pushLen = radius - d;
             double inv = 1.0D / d;
-            nx = dx * inv;
-            ny = dy * inv;
-            nz = dz * inv;
+            nx = contact.dx * inv;
+            ny = contact.dy * inv;
+            nz = contact.dz * inv;
         } else {
             // Segment closest point is on the box surface or inside; push upward as a safe
             // default.
@@ -208,8 +150,8 @@ abstract class RopeSimulationTerrainConstraints extends RopeSimulationVisualStat
         // closest point actually moves by pushLen, matching the node pass behaviour.
         double wa = pinned[a] ? 0.0D : 1.0D;
         double wb = pinned[b] ? 0.0D : 1.0D;
-        double oneMinusS = 1.0D - s;
-        double denom = wa * oneMinusS * oneMinusS + wb * s * s;
+        double oneMinusS = 1.0D - contact.s;
+        double denom = wa * oneMinusS * oneMinusS + wb * contact.s * contact.s;
         if (denom < 1.0e-9D)
             return;
         double k = pushLen / denom;
@@ -230,7 +172,7 @@ abstract class RopeSimulationTerrainConstraints extends RopeSimulationVisualStat
             applyTerrainCorrection(a, nx * ka, ny * ka, nz * ka);
         }
         if (wb > 0.0D) {
-            double kb = k * wb * s;
+            double kb = k * wb * contact.s;
             if (kb > maxStep)
                 kb = maxStep;
             applyTerrainCorrection(b, nx * kb, ny * kb, nz * kb);

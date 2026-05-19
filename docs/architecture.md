@@ -5,8 +5,7 @@
 相关文档：
 
 - `docs/design.md`：早期功能设计和方向。
-- `docs/algorithm_split.md`：物理算法拆分说明。
-- `docs/physics_algorithm_technical.md`：绳索物理算法细节。
+- `docs/physics_algorithm_technical.md`：物理算法拆分与绳索物理算法细节。
 
 ## 1. 模块地图
 
@@ -118,7 +117,7 @@
 - 客户端只会收到自己正在 watch 的 chunk 相关绳索，不再登录时拿到整个维度的绳索。
 - 业务代码仍可通过 `connections()`、`find()`、`update()`、`removeIf()` 使用服务端权威数据。
 
-新增、删除、更新后，`SuperLeadSavedData` 会记录受影响的 dirty chunk keys；`SuperLeadPayloads.sendToDimension` 只重发这些 chunk 给正在监听它们的玩家。
+新增、删除、更新后，`SuperLeadSavedData` 会记录受影响的 dirty chunk keys；`SuperLeadPayloads.sendDirtyToDimension` 只重发这些 chunk 给正在监听它们的玩家。
 
 ### 4.2 物理区域存档
 
@@ -246,7 +245,7 @@
 - 服务端：
   - 创建 `LeadConnection`。
   - 写入 `SuperLeadSavedData`。
-  - 调用 `SuperLeadPayloads.sendToDimension(serverLevel)`。
+  - 调用 `SuperLeadPayloads.sendDirtyToDimension(serverLevel)`。
 - 客户端：
   - 只更新本地缓存，通常用于预测/预览，不是权威存档。
 
@@ -289,12 +288,14 @@
 - `ClearRopeCache`：登录和换维度时清掉客户端旧缓存。
 - `SyncDimensionPresets`：同步当前维度启用的预设包内容，不包含物理区域坐标。
 
-`SuperLeadPayloads.sendToDimension(ServerLevel)` 的语义也变了：
+`SuperLeadPayloads.sendDirtyToDimension(ServerLevel)` 的语义也变了：
 
 1. 从 `SuperLeadSavedData.consumeDirtyChunkKeys()` 取出受影响 chunk。
-2. 如果没有 dirty chunk，则退回重发当前所有有绳索 bucket 的 chunk。
-3. 对每个 chunk 调 `PacketDistributor.sendToPlayersTrackingChunk`。
+2. 如果没有 dirty chunk，则不发送任何 chunk。
+3. 对每个 dirty chunk 调 `PacketDistributor.sendToPlayersTrackingChunk`。
 4. 每个玩家只收到自己正在 watch 的 chunk 的 `SyncRopeChunk`。
+
+全量重发必须显式调用 `SuperLeadPayloads.sendAllToDimension(ServerLevel)`，避免普通增量路径意外退化成全维度同步。
 
 客户端处理结果只写本地 chunk 引用缓存：
 
@@ -725,7 +726,7 @@ OP GUI 不直接读服务器文件，而是：
 
 1. 服务端 `SuperLeadSavedData` 是连接权威源。
 2. 客户端 `SuperLeadNetwork.CONNECTIONS` 只是当前已加载 chunk 派生出来的缓存，不是完整维度表。
-3. 任何连接变更都应通过 `SuperLeadNetwork` 写入 saved data，并调用 `SuperLeadPayloads.sendToDimension` 重发 dirty chunks。
+3. 任何连接变更都应通过 `SuperLeadNetwork` 写入 saved data，并调用 `SuperLeadPayloads.sendDirtyToDimension` 重发 dirty chunks。
 4. 客户端发来的连接 ID、动作、挂件位置都不能信任；服务端必须重新查连接和校验玩家触达。
 5. 物理区域是服务端权威；普通客户端只收 `SyncDimensionPresets`，OP 才能通过 `SyncPhysicsZones` 看区域预览。
 6. 每根绳的物理参数应走 `LeadConnection.physicsPreset` 和 `RopeTuning.forConnection`。

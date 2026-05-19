@@ -16,6 +16,8 @@ import net.minecraft.world.phys.Vec3;
 public final class RopeSimulation extends RopeSimulationStepper {
     private static final double TOP_SUPPORT_SNAP = 0.025D;
 
+    private final SegmentBoxContact playerContactScratch = new SegmentBoxContact();
+
     public RopeSimulation(Vec3 a, Vec3 b) {
         this(a, b, 0L, RopeTuning.forMidpoint(a, b));
     }
@@ -54,11 +56,28 @@ public final class RopeSimulation extends RopeSimulationStepper {
     }
 
     public ContactSample findPlayerContact(AABB box, double radius, double topPadding) {
-        topPadding = Math.max(0.0D, topPadding);
+        PlayerContactCurve curve = preparePlayerContactCurve();
+        if (curve.totalLen < 1.0e-6D)
+            return null;
+
+        PlayerContactContext context = new PlayerContactContext(
+                box, radius, Math.max(0.0D, topPadding),
+                (box.minX + box.maxX) * 0.5D,
+                (box.minY + box.maxY) * 0.5D,
+                (box.minZ + box.maxZ) * 0.5D);
+        PlayerContactAccumulator accumulator = new PlayerContactAccumulator();
+        double walked = 0.0D;
+        for (int s = 0; s < segments; s++) {
+            walked += samplePlayerContactSegment(curve, context, s, walked, accumulator);
+        }
+        return accumulator.result();
+    }
+
+    private PlayerContactCurve preparePlayerContactCurve() {
         double[] sampleX = x;
         double[] sampleY = y;
         double[] sampleZ = z;
-        double totalLen;
+        double totalLen = 0.0D;
         if (useCollisionProxy) {
             totalLen = prepareCollisionProxy();
             sampleX = proxyX;
@@ -73,219 +92,151 @@ public final class RopeSimulation extends RopeSimulationStepper {
                 totalLen += Math.sqrt(sx * sx + sy * sy + sz * sz);
             }
         }
-        if (totalLen < 1.0e-6D)
-            return null;
-
         Vec3 endpointA = new Vec3(sampleX[0], sampleY[0], sampleZ[0]);
         Vec3 endpointB = new Vec3(sampleX[nodes - 1], sampleY[nodes - 1], sampleZ[nodes - 1]);
         double chordLen = endpointA.distanceTo(endpointB);
         double targetLen = chordLen > 1.0e-6D ? chordLen * slackFactor(endpointA, endpointB) / segments : 0.0D;
         double freeSlack = Math.max(0.0D, targetLen * segments - chordLen);
+        return new PlayerContactCurve(sampleX, sampleY, sampleZ, totalLen, targetLen, freeSlack);
+    }
 
-        double centerX = (box.minX + box.maxX) * 0.5D;
-        double centerY = (box.minY + box.maxY) * 0.5D;
-        double centerZ = (box.minZ + box.maxZ) * 0.5D;
-        double walked = 0.0D;
-        ContactSample best = null;
-        double bestSeparation = Double.POSITIVE_INFINITY;
-        double weightSum = 0.0D;
-        double sumX = 0.0D, sumY = 0.0D, sumZ = 0.0D, sumT = 0.0D;
-        double sumNx = 0.0D, sumNy = 0.0D, sumNz = 0.0D;
-        double sumTx = 0.0D, sumTy = 0.0D, sumTz = 0.0D;
-        double sumDepth = 0.0D, sumSlack = 0.0D;
+    private double samplePlayerContactSegment(
+            PlayerContactCurve curve,
+            PlayerContactContext context,
+            int segment,
+            double walked,
+            PlayerContactAccumulator accumulator) {
+        double ax = curve.x[segment], ay = curve.y[segment], az = curve.z[segment];
+        double bx = curve.x[segment + 1], by = curve.y[segment + 1], bz = curve.z[segment + 1];
+        double sx = bx - ax, sy = by - ay, sz = bz - az;
+        double segLen = Math.sqrt(sx * sx + sy * sy + sz * sz);
+        SegmentBoxContact contact = playerContactScratch.compute(
+                ax, ay, az, bx, by, bz, context.box, 1.0e-9D);
+        PlayerContactGeometry geometry = playerContactGeometry(context, contact, sx, sy, sz, segLen);
+        if (geometry == null)
+            return 0.0D;
 
-        for (int s = 0; s < segments; s++) {
-            double ax = sampleX[s], ay = sampleY[s], az = sampleZ[s];
-            double bx = sampleX[s + 1], by = sampleY[s + 1], bz = sampleZ[s + 1];
-            double sx = bx - ax, sy = by - ay, sz = bz - az;
-            double segLenSqr = sx * sx + sy * sy + sz * sz;
-            double segLen = Math.sqrt(segLenSqr);
-            double u = 0.0D;
-            if (segLenSqr > 1.0e-9D) {
-                u = ((centerX - ax) * sx + (centerY - ay) * sy + (centerZ - az) * sz) / segLenSqr;
-                if (u < 0.0D)
-                    u = 0.0D;
-                else if (u > 1.0D)
-                    u = 1.0D;
-            }
+        smoothPlayerContactNormal(context, geometry, sx, sy, sz, segLen);
+        boolean topSupportCandidate = topSupportCandidate(context, geometry);
+        double effectiveRadius = topSupportCandidate
+                ? Math.max(context.radius, geometry.separation + 1.0e-6D)
+                : context.radius;
+        if (geometry.separation >= effectiveRadius)
+            return segLen;
 
-            double qx = ax, qy = ay, qz = az;
-            double cx = centerX, cy = centerY, cz = centerZ;
-            for (int it = 0; it < 4; it++) {
-                qx = ax + sx * u;
-                qy = ay + sy * u;
-                qz = az + sz * u;
-                cx = clamp(qx, box.minX, box.maxX);
-                cy = clamp(qy, box.minY, box.maxY);
-                cz = clamp(qz, box.minZ, box.maxZ);
-                if (segLenSqr <= 1.0e-9D)
-                    break;
-                double next = ((cx - ax) * sx + (cy - ay) * sy + (cz - az) * sz) / segLenSqr;
-                if (next < 0.0D)
-                    next = 0.0D;
-                else if (next > 1.0D)
-                    next = 1.0D;
-                if (Math.abs(next - u) < 1.0e-6D) {
-                    u = next;
-                    qx = ax + sx * u;
-                    qy = ay + sy * u;
-                    qz = az + sz * u;
-                    cx = clamp(qx, box.minX, box.maxX);
-                    cy = clamp(qy, box.minY, box.maxY);
-                    cz = clamp(qz, box.minZ, box.maxZ);
-                    break;
-                }
-                u = next;
-            }
+        double t = (walked + segLen * contact.s) / curve.totalLen;
+        double depth = contactDepth(context, geometry, topSupportCandidate);
+        if (depth <= 0.0D)
+            return segLen;
 
-            boolean inside = qx >= box.minX && qx <= box.maxX
-                    && qy >= box.minY && qy <= box.maxY
-                    && qz >= box.minZ && qz <= box.maxZ;
-            double rawNx;
-            double rawNy;
-            double rawNz;
-            double separation;
-            if (inside) {
-                double[] normal = stableSegmentNormal(centerX - qx, centerY - qy, centerZ - qz,
-                        sx, sy, sz, segLen);
-                rawNx = normal[0];
-                rawNy = normal[1];
-                rawNz = normal[2];
-                double exit = Math.min(Math.min(qx - box.minX, box.maxX - qx),
-                        Math.min(Math.min(qy - box.minY, box.maxY - qy),
-                                Math.min(qz - box.minZ, box.maxZ - qz)));
-                separation = -Math.max(0.0D, exit);
-            } else {
-                rawNx = cx - qx;
-                rawNy = cy - qy;
-                rawNz = cz - qz;
-                double nLen = Math.sqrt(rawNx * rawNx + rawNy * rawNy + rawNz * rawNz);
-                if (nLen < 1.0e-5D) {
-                    rawNx = centerX - qx;
-                    rawNy = centerY - qy;
-                    rawNz = centerZ - qz;
-                    nLen = Math.sqrt(rawNx * rawNx + rawNy * rawNy + rawNz * rawNz);
-                }
-                if (nLen < 1.0e-5D)
-                    continue;
-                rawNx /= nLen;
-                rawNy /= nLen;
-                rawNz /= nLen;
-                double dx = cx - qx;
-                double dy = cy - qy;
-                double dz = cz - qz;
-                separation = Math.sqrt(dx * dx + dy * dy + dz * dz);
-            }
-            {
-                double[] smoothed = smoothSideNormal(centerX - qx, centerY - qy, centerZ - qz,
-                        rawNx, rawNy, rawNz, sx, sy, sz, segLen);
-                rawNx = smoothed[0];
-                rawNy = smoothed[1];
-                rawNz = smoothed[2];
-            }
-            double horizontalDx = cx - qx;
-            double horizontalDz = cz - qz;
-            double horizontalSeparation = Math.sqrt(horizontalDx * horizontalDx + horizontalDz * horizontalDz);
-            double footDeltaY = box.minY - qy;
-            double topVerticalReach = radius + TOP_SUPPORT_SNAP;
-            double topHorizontalReach = radius + Math.min(topPadding * 0.25D, 0.045D);
-            boolean topSupportCandidate = topPadding > 0.0D
-                    && footDeltaY >= -radius
-                    && footDeltaY <= topVerticalReach
-                    && horizontalSeparation <= topHorizontalReach;
-            double effectiveRadius = topSupportCandidate ? Math.max(radius, separation + 1.0e-6D) : radius;
-            if (separation >= effectiveRadius) {
-                walked += segLen;
-                continue;
-            }
-            double t = (walked + segLen * u) / totalLen;
-            double tx = 0.0D;
-            double ty = 0.0D;
-            double tz = 0.0D;
-            if (segLen > 1.0e-6D) {
-                tx = sx / segLen;
-                ty = sy / segLen;
-                tz = sz / segLen;
-            }
-            double localSlack = Math.max(0.0D, targetLen - segLen);
-            double midspanSlack = freeSlack * Math.sin(Math.PI * clamp(t, 0.0D, 1.0D));
-            double slackAllowance = localSlack + midspanSlack;
-            double depth = radius - separation;
-            double weightRadius = radius;
-            if (topSupportCandidate && depth <= 0.0D) {
-                double topDepth = radius + TOP_SUPPORT_SNAP - footDeltaY;
-                if (topDepth <= 0.0D) {
-                    walked += segLen;
-                    continue;
-                }
-                depth = Math.min(topDepth, radius);
-            }
-            double weight = contactBlendWeight(depth, weightRadius);
-            if (weightSum > 1.0e-9D && rawNx * sumNx + rawNy * sumNy + rawNz * sumNz < 0.0D) {
-                rawNx = -rawNx;
-                rawNy = -rawNy;
-                rawNz = -rawNz;
-            }
-            if (weightSum > 1.0e-9D && tx * sumTx + ty * sumTy + tz * sumTz < 0.0D) {
-                tx = -tx;
-                ty = -ty;
-                tz = -tz;
-            }
-            weightSum += weight;
-            sumX += qx * weight;
-            sumY += qy * weight;
-            sumZ += qz * weight;
-            sumT += t * weight;
-            sumNx += rawNx * weight;
-            sumNy += rawNy * weight;
-            sumNz += rawNz * weight;
-            sumTx += tx * weight;
-            sumTy += ty * weight;
-            sumTz += tz * weight;
-            sumDepth += depth * weight;
-            sumSlack += slackAllowance * weight;
-            if (separation < bestSeparation) {
-                bestSeparation = separation;
-                best = new ContactSample(qx, qy, qz, t, rawNx, rawNy, rawNz,
-                        tx, ty, tz, depth, slackAllowance);
-            }
-            walked += segLen;
+        double tx = segLen > 1.0e-6D ? sx / segLen : 0.0D;
+        double ty = segLen > 1.0e-6D ? sy / segLen : 0.0D;
+        double tz = segLen > 1.0e-6D ? sz / segLen : 0.0D;
+        double slackAllowance = slackAllowance(curve, segLen, t);
+        double weight = contactBlendWeight(depth, context.radius);
+        accumulator.add(geometry, t, tx, ty, tz, depth, slackAllowance, weight);
+        return segLen;
+    }
+
+    private PlayerContactGeometry playerContactGeometry(
+            PlayerContactContext context,
+            SegmentBoxContact contact,
+            double sx,
+            double sy,
+            double sz,
+            double segLen) {
+        if (insideBox(context.box, contact.spx, contact.spy, contact.spz)) {
+            return insidePlayerContactGeometry(context, contact, sx, sy, sz, segLen);
         }
+        return outsidePlayerContactGeometry(context, contact);
+    }
 
-        if (best == null || weightSum <= 1.0e-9D)
-            return best;
+    private PlayerContactGeometry insidePlayerContactGeometry(
+            PlayerContactContext context,
+            SegmentBoxContact contact,
+            double sx,
+            double sy,
+            double sz,
+            double segLen) {
+        double[] normal = stableSegmentNormal(
+                context.centerX - contact.spx,
+                context.centerY - contact.spy,
+                context.centerZ - contact.spz,
+                sx, sy, sz, segLen);
+        double exit = Math.min(Math.min(contact.spx - context.box.minX, context.box.maxX - contact.spx),
+                Math.min(Math.min(contact.spy - context.box.minY, context.box.maxY - contact.spy),
+                        Math.min(contact.spz - context.box.minZ, context.box.maxZ - contact.spz)));
+        return PlayerContactGeometry.set(contact, normal[0], normal[1], normal[2], -Math.max(0.0D, exit));
+    }
 
-        double invWeight = 1.0D / weightSum;
-        double nx = sumNx * invWeight;
-        double ny = sumNy * invWeight;
-        double nz = sumNz * invWeight;
-        double nLen = Math.sqrt(nx * nx + ny * ny + nz * nz);
+    private PlayerContactGeometry outsidePlayerContactGeometry(
+            PlayerContactContext context, SegmentBoxContact contact) {
+        double rawNx = contact.cpx - contact.spx;
+        double rawNy = contact.cpy - contact.spy;
+        double rawNz = contact.cpz - contact.spz;
+        double nLen = Math.sqrt(rawNx * rawNx + rawNy * rawNy + rawNz * rawNz);
         if (nLen < 1.0e-5D) {
-            nx = best.normalX();
-            ny = best.normalY();
-            nz = best.normalZ();
-        } else {
-            nx /= nLen;
-            ny /= nLen;
-            nz /= nLen;
+            rawNx = context.centerX - contact.spx;
+            rawNy = context.centerY - contact.spy;
+            rawNz = context.centerZ - contact.spz;
+            nLen = Math.sqrt(rawNx * rawNx + rawNy * rawNy + rawNz * rawNz);
         }
-        double tx = sumTx * invWeight;
-        double ty = sumTy * invWeight;
-        double tz = sumTz * invWeight;
-        double tLen = Math.sqrt(tx * tx + ty * ty + tz * tz);
-        if (tLen < 1.0e-5D) {
-            tx = best.tangentX();
-            ty = best.tangentY();
-            tz = best.tangentZ();
-        } else {
-            tx /= tLen;
-            ty /= tLen;
-            tz /= tLen;
-        }
-        double depth = Math.max(sumDepth * invWeight, best.depth() * 0.65D);
-        return new ContactSample(sumX * invWeight, sumY * invWeight, sumZ * invWeight,
-                clamp(sumT * invWeight, 0.0D, 1.0D), nx, ny, nz, tx, ty, tz,
-                depth, sumSlack * invWeight);
+        if (nLen < 1.0e-5D)
+            return null;
+        double invLen = 1.0D / nLen;
+        return PlayerContactGeometry.set(contact,
+                rawNx * invLen, rawNy * invLen, rawNz * invLen, Math.sqrt(contact.distSqr));
+    }
+
+    private static boolean insideBox(AABB box, double x, double y, double z) {
+        return x >= box.minX && x <= box.maxX
+                && y >= box.minY && y <= box.maxY
+                && z >= box.minZ && z <= box.maxZ;
+    }
+
+    private static void smoothPlayerContactNormal(
+            PlayerContactContext context,
+            PlayerContactGeometry geometry,
+            double sx,
+            double sy,
+            double sz,
+            double segLen) {
+        double[] smoothed = smoothSideNormal(
+                context.centerX - geometry.qx,
+                context.centerY - geometry.qy,
+                context.centerZ - geometry.qz,
+                geometry.nx, geometry.ny, geometry.nz, sx, sy, sz, segLen);
+        geometry.nx = smoothed[0];
+        geometry.ny = smoothed[1];
+        geometry.nz = smoothed[2];
+    }
+
+    private static boolean topSupportCandidate(PlayerContactContext context, PlayerContactGeometry geometry) {
+        double horizontalDx = geometry.cx - geometry.qx;
+        double horizontalDz = geometry.cz - geometry.qz;
+        double horizontalSeparation = Math.sqrt(horizontalDx * horizontalDx + horizontalDz * horizontalDz);
+        double footDeltaY = context.box.minY - geometry.qy;
+        double topVerticalReach = context.radius + TOP_SUPPORT_SNAP;
+        double topHorizontalReach = context.radius + Math.min(context.topPadding * 0.25D, 0.045D);
+        return context.topPadding > 0.0D
+                && footDeltaY >= -context.radius
+                && footDeltaY <= topVerticalReach
+                && horizontalSeparation <= topHorizontalReach;
+    }
+
+    private static double contactDepth(
+            PlayerContactContext context, PlayerContactGeometry geometry, boolean topSupportCandidate) {
+        double depth = context.radius - geometry.separation;
+        if (!topSupportCandidate || depth > 0.0D)
+            return depth;
+        double topDepth = context.radius + TOP_SUPPORT_SNAP - (context.box.minY - geometry.qy);
+        return topDepth <= 0.0D ? 0.0D : Math.min(topDepth, context.radius);
+    }
+
+    private static double slackAllowance(PlayerContactCurve curve, double segLen, double t) {
+        double localSlack = Math.max(0.0D, curve.targetLen - segLen);
+        double midspanSlack = curve.freeSlack * Math.sin(Math.PI * clamp(t, 0.0D, 1.0D));
+        return localSlack + midspanSlack;
     }
 
     private static double clamp(double value, double min, double max) {
@@ -354,6 +305,153 @@ public final class RopeSimulation extends RopeSimulationStepper {
     private static double contactBlendWeight(double depth, double radius) {
         double x = clamp(depth / Math.max(radius, 1.0e-6D), 0.0D, 1.0D);
         return 0.05D + x * x;
+    }
+
+    private static final class PlayerContactCurve {
+        final double[] x;
+        final double[] y;
+        final double[] z;
+        final double totalLen;
+        final double targetLen;
+        final double freeSlack;
+
+        PlayerContactCurve(double[] x, double[] y, double[] z,
+                double totalLen, double targetLen, double freeSlack) {
+            this.x = x;
+            this.y = y;
+            this.z = z;
+            this.totalLen = totalLen;
+            this.targetLen = targetLen;
+            this.freeSlack = freeSlack;
+        }
+    }
+
+    private static final class PlayerContactContext {
+        final AABB box;
+        final double radius;
+        final double topPadding;
+        final double centerX;
+        final double centerY;
+        final double centerZ;
+
+        PlayerContactContext(AABB box, double radius, double topPadding,
+                double centerX, double centerY, double centerZ) {
+            this.box = box;
+            this.radius = radius;
+            this.topPadding = topPadding;
+            this.centerX = centerX;
+            this.centerY = centerY;
+            this.centerZ = centerZ;
+        }
+    }
+
+    private static final class PlayerContactGeometry {
+        final double qx;
+        final double qy;
+        final double qz;
+        final double cx;
+        final double cz;
+        final double separation;
+        double nx;
+        double ny;
+        double nz;
+
+        private PlayerContactGeometry(SegmentBoxContact contact,
+                double nx, double ny, double nz, double separation) {
+            this.qx = contact.spx;
+            this.qy = contact.spy;
+            this.qz = contact.spz;
+            this.cx = contact.cpx;
+            this.cz = contact.cpz;
+            this.nx = nx;
+            this.ny = ny;
+            this.nz = nz;
+            this.separation = separation;
+        }
+
+        static PlayerContactGeometry set(SegmentBoxContact contact,
+                double nx, double ny, double nz, double separation) {
+            return new PlayerContactGeometry(contact, nx, ny, nz, separation);
+        }
+    }
+
+    private static final class PlayerContactAccumulator {
+        private ContactSample best;
+        private double bestSeparation = Double.POSITIVE_INFINITY;
+        private double weightSum;
+        private double sumX;
+        private double sumY;
+        private double sumZ;
+        private double sumT;
+        private double sumNx;
+        private double sumNy;
+        private double sumNz;
+        private double sumTx;
+        private double sumTy;
+        private double sumTz;
+        private double sumDepth;
+        private double sumSlack;
+
+        void add(PlayerContactGeometry geometry,
+                double t, double tx, double ty, double tz,
+                double depth, double slackAllowance, double weight) {
+            double nx = geometry.nx;
+            double ny = geometry.ny;
+            double nz = geometry.nz;
+            if (weightSum > 1.0e-9D && nx * sumNx + ny * sumNy + nz * sumNz < 0.0D) {
+                nx = -nx;
+                ny = -ny;
+                nz = -nz;
+            }
+            if (weightSum > 1.0e-9D && tx * sumTx + ty * sumTy + tz * sumTz < 0.0D) {
+                tx = -tx;
+                ty = -ty;
+                tz = -tz;
+            }
+            weightSum += weight;
+            sumX += geometry.qx * weight;
+            sumY += geometry.qy * weight;
+            sumZ += geometry.qz * weight;
+            sumT += t * weight;
+            sumNx += nx * weight;
+            sumNy += ny * weight;
+            sumNz += nz * weight;
+            sumTx += tx * weight;
+            sumTy += ty * weight;
+            sumTz += tz * weight;
+            sumDepth += depth * weight;
+            sumSlack += slackAllowance * weight;
+            if (geometry.separation < bestSeparation) {
+                bestSeparation = geometry.separation;
+                best = new ContactSample(geometry.qx, geometry.qy, geometry.qz, t, nx, ny, nz,
+                        tx, ty, tz, depth, slackAllowance);
+            }
+        }
+
+        ContactSample result() {
+            if (best == null || weightSum <= 1.0e-9D)
+                return best;
+            double invWeight = 1.0D / weightSum;
+            double[] normal = normalizedOrBest(sumNx * invWeight, sumNy * invWeight, sumNz * invWeight,
+                    best.normalX(), best.normalY(), best.normalZ());
+            double[] tangent = normalizedOrBest(sumTx * invWeight, sumTy * invWeight, sumTz * invWeight,
+                    best.tangentX(), best.tangentY(), best.tangentZ());
+            double depth = Math.max(sumDepth * invWeight, best.depth() * 0.65D);
+            return new ContactSample(sumX * invWeight, sumY * invWeight, sumZ * invWeight,
+                    clamp(sumT * invWeight, 0.0D, 1.0D),
+                    normal[0], normal[1], normal[2],
+                    tangent[0], tangent[1], tangent[2],
+                    depth, sumSlack * invWeight);
+        }
+
+        private static double[] normalizedOrBest(
+                double x, double y, double z, double bestX, double bestY, double bestZ) {
+            double len = Math.sqrt(x * x + y * y + z * z);
+            if (len < 1.0e-5D)
+                return new double[] { bestX, bestY, bestZ };
+            double invLen = 1.0D / len;
+            return new double[] { x * invLen, y * invLen, z * invLen };
+        }
     }
 
     public record ContactSample(double x, double y, double z, double t,

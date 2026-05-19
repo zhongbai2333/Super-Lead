@@ -24,12 +24,13 @@ Gradle 中采用两层依赖：
 | Mod | 坐标 | 用途 |
 | --- | --- | --- |
 | Applied Energistics 2 | 编译期 API `org.appliedenergistics:appliedenergistics2:26.1.8-alpha:api` + 完整 compileOnly `org.appliedenergistics:appliedenergistics2:26.1.8-alpha`；运行期完整 `org.appliedenergistics:appliedenergistics2:26.1.8-alpha` | AE 网络绳 API、本地运行时测试，以及绳挂终端打开 AE2 原生菜单 |
-| Mekanism | `com.github.QiuYe-123:Mekanism:26.1-SNAPSHOT` | Mek 气体/化学品 capability API 与本地运行时测试；该 26.1 线的 mod version 当前是 `10.8.0` |
+| Mekanism | 优先 `./libs/Mekanism-*.jar` / `./libs/mekanism-*.jar`；默认开发兜底为 `com.github.QiuYe-123:Mekanism:26.1-SNAPSHOT` | Mek 气体/化学品 capability API。发布前建议使用本地固定 jar 或 JitPack 的固定 commit/tag，而不是浮动 `SNAPSHOT`；该 26.1 线的 mod version 当前是 `10.8.0` |
 | Mekanism: MoreMachine | `./libs/Mekanism-MoreMachine-*.jar` 或 `com.github.lostmyself8:Mekanism-MoreMachine:v1.2.0-1.21.1` | 可选机器测试目标，默认未启用 |
 
 MoreMachine 的 `26.1` 分支目前没有稳定可解析的 JitPack 坐标；JitPack 上能解析的公开 tag 是 `v1.2.0-1.21.1`，但它不是 26.1 线。为了不让本项目的默认测试流因为上游分支发布状态而失败，当前策略是：
 
-- AE2 与 Mekanism 默认进入 `localRuntimeOnly`。
+- AE2 与 Mekanism 默认只进入 `compileOnly`，避免成为 Super Lead 的硬运行时依赖。
+- Mekanism 26.1 还没有官方稳定 ModMaven 坐标时，`build.gradle` 会同时接受本地 `./libs/Mekanism-*.jar` 作为更可复现的编译来源；没有本地 jar 时才依赖 JitPack 开发兜底。
 - MoreMachine 26.1 推荐把本地构建出的 jar 放到 `./libs/`，文件名匹配 `Mekanism-MoreMachine-*.jar` 或 `mekmm-*.jar` 即会自动进入运行时。
 - 如果只是临时验证 JitPack 已发布 tag，可用 `-PenableMoreMachineRuntime=true` 打开 Maven 依赖；默认版本是当前可解析的 `v1.2.0-1.21.1`。
 

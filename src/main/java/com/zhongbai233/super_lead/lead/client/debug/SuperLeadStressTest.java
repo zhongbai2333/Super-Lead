@@ -8,6 +8,7 @@ import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import com.mojang.brigadier.context.CommandContext;
 import com.zhongbai233.super_lead.Super_lead;
 import com.zhongbai233.super_lead.lead.LeadKind;
+import com.zhongbai233.super_lead.lead.client.RopeNeighborBuckets;
 import com.zhongbai233.super_lead.lead.client.chunk.StaticRopeChunkRegistry;
 import com.zhongbai233.super_lead.lead.client.chunk.StressSource;
 import com.zhongbai233.super_lead.lead.client.chunk.RopeSectionSnapshot;
@@ -63,7 +64,6 @@ public final class SuperLeadStressTest {
     private static final double NEIGHBOR_GRID_SIZE = 4.0D;
     private static final double NEIGHBOR_BOUNDS_MARGIN = 0.08D;
     private static final double NEIGHBOR_CONTACT_DISTANCE = 0.14D;
-    private static final int GRID_KEY_BIAS = 1 << 20;
     private static final Logger LOG = LogUtils.getLogger();
 
     private static final List<StressRope> ROPES = new ArrayList<>();
@@ -597,76 +597,53 @@ public final class SuperLeadStressTest {
 
     private static Map<RopeSimulation, List<RopeSimulation>> buildNeighborMap(long tick) {
         lastNeighborCandidates = 0;
-        Map<Long, List<Integer>> buckets = new HashMap<>();
-        for (int i = 0; i < ROPES.size(); i++) {
-            addToNeighborBuckets(buckets, i, ROPES.get(i).bounds(tick).inflate(NEIGHBOR_BOUNDS_MARGIN));
-        }
-
+        RopeNeighborBuckets buckets = buildNeighborBuckets(tick);
         Map<RopeSimulation, List<RopeSimulation>> out = new HashMap<>();
         for (int i = 0; i < ROPES.size(); i++) {
             StressRope rope = ROPES.get(i);
-            AABB query = rope.bounds(tick).inflate(NEIGHBOR_BOUNDS_MARGIN);
-            HashSet<RopeSimulation> set = new HashSet<>();
-            HashSet<Integer> seen = new HashSet<>();
-            int minX = cell(query.minX);
-            int maxX = cell(query.maxX);
-            int minY = cell(query.minY);
-            int maxY = cell(query.maxY);
-            int minZ = cell(query.minZ);
-            int maxZ = cell(query.maxZ);
-            for (int cx = minX; cx <= maxX; cx++) {
-                for (int cy = minY; cy <= maxY; cy++) {
-                    for (int cz = minZ; cz <= maxZ; cz++) {
-                        List<Integer> candidates = buckets.get(cellKey(cx, cy, cz));
-                        if (candidates == null)
-                            continue;
-                        for (int idx : candidates) {
-                            if (idx == i || !seen.add(idx))
-                                continue;
-                            StressRope other = ROPES.get(idx);
-                            AABB otherBounds = other.bounds(tick);
-                            if (query.intersects(otherBounds)) {
-                                lastNeighborCandidates++;
-                                if (rope.sim().mightContact(other.sim(), NEIGHBOR_CONTACT_DISTANCE)) {
-                                    set.add(other.sim());
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            if (!set.isEmpty()) {
-                out.put(rope.sim(), new ArrayList<>(set));
+            List<RopeSimulation> neighbors = collectNeighborsForRope(buckets, tick, i, rope);
+            if (!neighbors.isEmpty()) {
+                out.put(rope.sim(), neighbors);
             }
         }
         return out;
     }
 
-    private static void addToNeighborBuckets(Map<Long, List<Integer>> buckets, int index, AABB bounds) {
-        int minX = cell(bounds.minX);
-        int maxX = cell(bounds.maxX);
-        int minY = cell(bounds.minY);
-        int maxY = cell(bounds.maxY);
-        int minZ = cell(bounds.minZ);
-        int maxZ = cell(bounds.maxZ);
-        for (int cx = minX; cx <= maxX; cx++) {
-            for (int cy = minY; cy <= maxY; cy++) {
-                for (int cz = minZ; cz <= maxZ; cz++) {
-                    buckets.computeIfAbsent(cellKey(cx, cy, cz), key -> new ArrayList<>()).add(index);
-                }
-            }
+    private static RopeNeighborBuckets buildNeighborBuckets(long tick) {
+        RopeNeighborBuckets buckets = new RopeNeighborBuckets(NEIGHBOR_GRID_SIZE);
+        for (int i = 0; i < ROPES.size(); i++) {
+            buckets.add(i, ROPES.get(i).bounds(tick).inflate(NEIGHBOR_BOUNDS_MARGIN));
         }
+        return buckets;
     }
 
-    private static int cell(double value) {
-        return (int) Math.floor(value / NEIGHBOR_GRID_SIZE);
+    private static List<RopeSimulation> collectNeighborsForRope(
+            RopeNeighborBuckets buckets, long tick, int index, StressRope rope) {
+        AABB query = rope.bounds(tick).inflate(NEIGHBOR_BOUNDS_MARGIN);
+        HashSet<RopeSimulation> neighbors = new HashSet<>();
+        HashSet<Integer> seen = new HashSet<>();
+        buckets.forEachCandidate(query, candidate -> collectNeighborCandidate(
+                tick, index, rope, query, seen, neighbors, candidate));
+        return neighbors.isEmpty() ? List.of() : new ArrayList<>(neighbors);
     }
 
-    private static long cellKey(int x, int y, int z) {
-        long px = (x + GRID_KEY_BIAS) & 0x1FFFFFL;
-        long py = (y + GRID_KEY_BIAS) & 0x1FFFFFL;
-        long pz = (z + GRID_KEY_BIAS) & 0x1FFFFFL;
-        return (px << 42) | (py << 21) | pz;
+    private static void collectNeighborCandidate(
+            long tick,
+            int index,
+            StressRope rope,
+            AABB query,
+            HashSet<Integer> seen,
+            HashSet<RopeSimulation> neighbors,
+            int candidate) {
+        if (candidate == index || !seen.add(candidate))
+            return;
+        StressRope other = ROPES.get(candidate);
+        if (!query.intersects(other.bounds(tick)))
+            return;
+        lastNeighborCandidates++;
+        if (rope.sim().mightContact(other.sim(), NEIGHBOR_CONTACT_DISTANCE)) {
+            neighbors.add(other.sim());
+        }
     }
 
     private static int estimateVertices(RopeSimulation sim, Vec3 cameraPos) {

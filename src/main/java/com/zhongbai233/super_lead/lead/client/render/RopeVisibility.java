@@ -212,70 +212,117 @@ public final class RopeVisibility {
      */
     private static boolean rayHitsOpaque(Level level, double sx, double sy, double sz,
             double tx, double ty, double tz) {
-        double dx = tx - sx;
-        double dy = ty - sy;
-        double dz = tz - sz;
-        // Standard Amanatides-Woo voxel traversal between two world points.
-        int x = (int) Math.floor(sx);
-        int y = (int) Math.floor(sy);
-        int z = (int) Math.floor(sz);
-        int endX = (int) Math.floor(tx);
-        int endY = (int) Math.floor(ty);
-        int endZ = (int) Math.floor(tz);
+        DdaRay ray = new DdaRay(sx, sy, sz, tx, ty, tz);
         BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
-        if (isOpaqueOccluder(level, cursor.set(x, y, z))) {
+        if (isOpaqueOccluder(level, cursor.set(ray.x, ray.y, ray.z))) {
             return true;
         }
-        if (x == endX && y == endY && z == endZ) {
+        if (ray.atEnd()) {
             return false;
         }
-        int stepX = dx > 0 ? 1 : (dx < 0 ? -1 : 0);
-        int stepY = dy > 0 ? 1 : (dy < 0 ? -1 : 0);
-        int stepZ = dz > 0 ? 1 : (dz < 0 ? -1 : 0);
-        double tDeltaX = stepX != 0 ? Math.abs(1.0D / dx) : Double.POSITIVE_INFINITY;
-        double tDeltaY = stepY != 0 ? Math.abs(1.0D / dy) : Double.POSITIVE_INFINITY;
-        double tDeltaZ = stepZ != 0 ? Math.abs(1.0D / dz) : Double.POSITIVE_INFINITY;
-        double tMaxX = stepX > 0 ? ((x + 1) - sx) / dx
-                : (stepX < 0 ? (x - sx) / dx : Double.POSITIVE_INFINITY);
-        double tMaxY = stepY > 0 ? ((y + 1) - sy) / dy
-                : (stepY < 0 ? (y - sy) / dy : Double.POSITIVE_INFINITY);
-        double tMaxZ = stepZ > 0 ? ((z + 1) - sz) / dz
-                : (stepZ < 0 ? (z - sz) / dz : Double.POSITIVE_INFINITY);
         // Hard cap: rope render distance is bounded so a few hundred steps is plenty
         // even at
         // the diagonal extreme; this guards against any pathological NaN-fuelled loop.
         for (int guard = 0; guard < 512; guard++) {
-            if (tMaxX < tMaxY) {
-                if (tMaxX < tMaxZ) {
-                    if (tMaxX > 1.0D)
-                        return false;
-                    x += stepX;
-                    tMaxX += tDeltaX;
-                } else {
-                    if (tMaxZ > 1.0D)
-                        return false;
-                    z += stepZ;
-                    tMaxZ += tDeltaZ;
-                }
-            } else if (tMaxY < tMaxZ) {
-                if (tMaxY > 1.0D)
-                    return false;
-                y += stepY;
-                tMaxY += tDeltaY;
-            } else {
-                if (tMaxZ > 1.0D)
-                    return false;
-                z += stepZ;
-                tMaxZ += tDeltaZ;
+            if (!ray.advance()) {
+                return false;
             }
-            if (isOpaqueOccluder(level, cursor.set(x, y, z))) {
+            if (isOpaqueOccluder(level, cursor.set(ray.x, ray.y, ray.z))) {
                 return true;
             }
-            if (x == endX && y == endY && z == endZ) {
+            if (ray.atEnd()) {
                 return false;
             }
         }
         return false;
+    }
+
+    private static final class DdaRay {
+        private final int endX;
+        private final int endY;
+        private final int endZ;
+        private final int stepX;
+        private final int stepY;
+        private final int stepZ;
+        private final double tDeltaX;
+        private final double tDeltaY;
+        private final double tDeltaZ;
+        private double tMaxX;
+        private double tMaxY;
+        private double tMaxZ;
+        private int x;
+        private int y;
+        private int z;
+
+        private DdaRay(double sx, double sy, double sz, double tx, double ty, double tz) {
+            double dx = tx - sx;
+            double dy = ty - sy;
+            double dz = tz - sz;
+            x = (int) Math.floor(sx);
+            y = (int) Math.floor(sy);
+            z = (int) Math.floor(sz);
+            endX = (int) Math.floor(tx);
+            endY = (int) Math.floor(ty);
+            endZ = (int) Math.floor(tz);
+            stepX = axisStep(dx);
+            stepY = axisStep(dy);
+            stepZ = axisStep(dz);
+            tDeltaX = stepX != 0 ? Math.abs(1.0D / dx) : Double.POSITIVE_INFINITY;
+            tDeltaY = stepY != 0 ? Math.abs(1.0D / dy) : Double.POSITIVE_INFINITY;
+            tDeltaZ = stepZ != 0 ? Math.abs(1.0D / dz) : Double.POSITIVE_INFINITY;
+            tMaxX = initialTMax(stepX, x, sx, dx);
+            tMaxY = initialTMax(stepY, y, sy, dy);
+            tMaxZ = initialTMax(stepZ, z, sz, dz);
+        }
+
+        private boolean atEnd() {
+            return x == endX && y == endY && z == endZ;
+        }
+
+        private boolean advance() {
+            if (tMaxX < tMaxY) {
+                return tMaxX < tMaxZ ? advanceX() : advanceZ();
+            }
+            return tMaxY < tMaxZ ? advanceY() : advanceZ();
+        }
+
+        private boolean advanceX() {
+            if (tMaxX > 1.0D)
+                return false;
+            x += stepX;
+            tMaxX += tDeltaX;
+            return true;
+        }
+
+        private boolean advanceY() {
+            if (tMaxY > 1.0D)
+                return false;
+            y += stepY;
+            tMaxY += tDeltaY;
+            return true;
+        }
+
+        private boolean advanceZ() {
+            if (tMaxZ > 1.0D)
+                return false;
+            z += stepZ;
+            tMaxZ += tDeltaZ;
+            return true;
+        }
+
+        private static int axisStep(double delta) {
+            return delta > 0.0D ? 1 : (delta < 0.0D ? -1 : 0);
+        }
+
+        private static double initialTMax(int step, int cell, double start, double delta) {
+            if (step > 0) {
+                return ((cell + 1) - start) / delta;
+            }
+            if (step < 0) {
+                return (cell - start) / delta;
+            }
+            return Double.POSITIVE_INFINITY;
+        }
     }
 
     private static boolean isOpaqueOccluder(Level level, BlockPos pos) {

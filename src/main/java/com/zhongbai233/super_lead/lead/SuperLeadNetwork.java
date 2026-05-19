@@ -61,7 +61,9 @@ public final class SuperLeadNetwork {
     private static final double SERVER_CLAIM_T_SLACK = 0.35D;
     private static final double SERVER_CLAIM_BLOCK_SLACK = 1.10D;
     private static final Map<UUID, Long> INTERIOR_BLOCKED_SINCE = new HashMap<>();
-    /** Round-robin cursor keyed by (BlockPos, kind ordinal) for per-click cycling. */
+    /**
+     * Round-robin cursor keyed by (BlockPos, kind ordinal) for per-click cycling.
+     */
     private static final Map<Long, Integer> EXTRACT_TOGGLE_CURSOR = new HashMap<>();
     private static final long STUCK_CHECK_INTERVAL_TICKS = 5L;
     private static final long STUCK_BREAK_TICKS = 100L;
@@ -151,7 +153,7 @@ public final class SuperLeadNetwork {
             SuperLeadSavedData.get(serverLevel).add(connection);
             notifyRedstoneChange(serverLevel, connection);
             PresetServerManager.syncDimensionPresets(serverLevel);
-            SuperLeadPayloads.sendToDimension(serverLevel);
+            SuperLeadPayloads.sendDirtyToDimension(serverLevel);
             return connection;
         }
         // Client-side right-click handling only maintains the local pending-anchor
@@ -239,7 +241,7 @@ public final class SuperLeadNetwork {
                 notifyRedstoneChange(serverLevel, connection);
             }
             ensureFenceKnots(serverLevel);
-            SuperLeadPayloads.sendToDimension(serverLevel);
+            SuperLeadPayloads.sendDirtyToDimension(serverLevel);
             PresetServerManager.syncDimensionPresets(serverLevel);
             return;
         }
@@ -302,7 +304,7 @@ public final class SuperLeadNetwork {
             cleanupFenceKnot(level, connection.to());
             notifyRedstoneChange(level, connection);
         }
-        SuperLeadPayloads.sendToDimension(level);
+        SuperLeadPayloads.sendDirtyToDimension(level);
         PresetServerManager.syncDimensionPresets(level);
     }
 
@@ -464,7 +466,7 @@ public final class SuperLeadNetwork {
         data.update(target.id(), c -> c.withExtractAnchor(newExtract), false);
         EXTRACT_TOGGLE_CURSOR.put(cursorKey(pos, kind), (cursor + 1) % n);
 
-        SuperLeadPayloads.sendToDimension(serverLevel);
+        SuperLeadPayloads.sendDirtyToDimension(serverLevel);
         return true;
     }
 
@@ -481,7 +483,7 @@ public final class SuperLeadNetwork {
         SuperLeadSavedData data = SuperLeadSavedData.get(level);
         boolean updated = data.update(connection.id(), c -> c.withExtractAnchor(newExtract), false);
         if (updated) {
-            SuperLeadPayloads.sendToDimension(level);
+            SuperLeadPayloads.sendDirtyToDimension(level);
         }
         return updated;
     }
@@ -780,7 +782,7 @@ public final class SuperLeadNetwork {
         boolean ok = SuperLeadSavedData.get(level).update(connection.id(),
                 c -> c.withTier(c.tier() + 1), true);
         if (ok) {
-            SuperLeadPayloads.sendToDimension(level);
+            SuperLeadPayloads.sendDirtyToDimension(level);
         }
         return ok;
     }
@@ -794,7 +796,7 @@ public final class SuperLeadNetwork {
         cleanupFenceKnot(level, connection.from());
         cleanupFenceKnot(level, connection.to());
         notifyRedstoneChange(level, connection);
-        SuperLeadPayloads.sendToDimension(level);
+        SuperLeadPayloads.sendDirtyToDimension(level);
         PresetServerManager.syncDimensionPresets(level);
         return true;
     }
@@ -817,7 +819,7 @@ public final class SuperLeadNetwork {
         boolean ok = SuperLeadSavedData.get(level).update(connection.id(),
                 c -> c.addAttachment(attachment), true);
         if (ok) {
-            SuperLeadPayloads.sendToDimension(level);
+            SuperLeadPayloads.sendDirtyToDimension(level);
         }
         return ok;
     }
@@ -845,7 +847,7 @@ public final class SuperLeadNetwork {
         if (!ok)
             return false;
         if (player != null && player.isCreative()) {
-            SuperLeadPayloads.sendToDimension(level);
+            SuperLeadPayloads.sendDirtyToDimension(level);
             return true;
         }
         LeadEndpointLayout.Endpoints endpoints = endpoints(level, connection);
@@ -859,7 +861,7 @@ public final class SuperLeadNetwork {
             entity.setDefaultPickUpDelay();
             level.addFreshEntity(entity);
         }
-        SuperLeadPayloads.sendToDimension(level);
+        SuperLeadPayloads.sendDirtyToDimension(level);
         return true;
     }
 
@@ -873,7 +875,7 @@ public final class SuperLeadNetwork {
         boolean ok = SuperLeadSavedData.get(level).update(connection.id(),
                 c -> c.toggleAttachmentForm(attachmentId), true);
         if (ok) {
-            SuperLeadPayloads.sendToDimension(level);
+            SuperLeadPayloads.sendDirtyToDimension(level);
         }
         return ok;
     }
@@ -905,7 +907,7 @@ public final class SuperLeadNetwork {
             return changed ? c.withAttachments(updated) : c;
         }, true);
         if (ok) {
-            SuperLeadPayloads.sendToDimension(level);
+            SuperLeadPayloads.sendDirtyToDimension(level);
         }
         return ok;
     }
@@ -940,7 +942,7 @@ public final class SuperLeadNetwork {
             return changed ? c.withAttachments(updated) : c;
         }, true);
         if (ok && sync) {
-            SuperLeadPayloads.sendToDimension(level);
+            SuperLeadPayloads.sendDirtyToDimension(level);
         }
         return ok;
     }
@@ -1018,7 +1020,7 @@ public final class SuperLeadNetwork {
             return changed ? c.withAttachments(updated) : c;
         }, true);
         if (ok) {
-            SuperLeadPayloads.sendToDimension(level);
+            SuperLeadPayloads.sendDirtyToDimension(level);
         }
         return ok;
     }
@@ -1084,7 +1086,7 @@ public final class SuperLeadNetwork {
         }
         SuperLeadSavedData.get(serverLevel).update(target.id(),
                 connection -> connection.withTier(connection.tier() + 1), true);
-        SuperLeadPayloads.sendToDimension(serverLevel);
+        SuperLeadPayloads.sendDirtyToDimension(serverLevel);
         return true;
     }
 
@@ -1110,7 +1112,7 @@ public final class SuperLeadNetwork {
 
         SuperLeadSavedData.get(serverLevel).update(target.id(),
                 connection -> connection.withTier(connection.tier() + 1), true);
-        SuperLeadPayloads.sendToDimension(serverLevel);
+        SuperLeadPayloads.sendDirtyToDimension(serverLevel);
         return true;
     }
 
@@ -1189,7 +1191,7 @@ public final class SuperLeadNetwork {
         LeadConnection upgraded = oldConnection.withKind(kind);
         notifyRedstoneChange(serverLevel, oldConnection);
         notifyRedstoneChange(serverLevel, upgraded);
-        SuperLeadPayloads.sendToDimension(serverLevel);
+        SuperLeadPayloads.sendDirtyToDimension(serverLevel);
         return true;
     }
 
@@ -1376,7 +1378,7 @@ public final class SuperLeadNetwork {
         cleanupFenceKnot(serverLevel, removedConnection.from());
         cleanupFenceKnot(serverLevel, removedConnection.to());
         notifyRedstoneChange(serverLevel, removedConnection);
-        SuperLeadPayloads.sendToDimension(serverLevel);
+        SuperLeadPayloads.sendDirtyToDimension(serverLevel);
         PresetServerManager.syncDimensionPresets(serverLevel);
         return true;
     }
@@ -1402,7 +1404,7 @@ public final class SuperLeadNetwork {
         cleanupFenceKnot(serverLevel, removedConnection.from());
         cleanupFenceKnot(serverLevel, removedConnection.to());
         notifyRedstoneChange(serverLevel, removedConnection);
-        SuperLeadPayloads.sendToDimension(serverLevel);
+        SuperLeadPayloads.sendDirtyToDimension(serverLevel);
         PresetServerManager.syncDimensionPresets(serverLevel);
         return true;
     }
@@ -1432,7 +1434,7 @@ public final class SuperLeadNetwork {
             cleanupFenceKnot(serverLevel, connection.to());
             notifyRedstoneChange(serverLevel, connection);
         }
-        SuperLeadPayloads.sendToDimension(serverLevel);
+        SuperLeadPayloads.sendDirtyToDimension(serverLevel);
         PresetServerManager.syncDimensionPresets(serverLevel);
         return removedConnections.size();
     }
@@ -1463,7 +1465,7 @@ public final class SuperLeadNetwork {
             cleanupFenceKnot(level, connection.to());
             notifyRedstoneChange(level, connection);
         }
-        SuperLeadPayloads.sendToDimension(level);
+        SuperLeadPayloads.sendDirtyToDimension(level);
         PresetServerManager.syncDimensionPresets(level);
         return removedConnections.size();
     }

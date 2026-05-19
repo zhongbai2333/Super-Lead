@@ -718,7 +718,6 @@ public final class ParrotRopePerchController {
             this.facingSide = facingSide;
         }
 
-        @SuppressWarnings("unused")
         long startTick() {
             return startTick;
         }

@@ -20,6 +20,9 @@ abstract class RopeSimulationContactConstraints extends RopeSimulationTerrainCon
     private static final double ENTITY_FOOT_SUPPORT_MARGIN = 0.08D;
     private static final double ENTITY_FOOT_SUPPORT_MAX_HORIZONTAL_SPEED = 0.08D;
 
+    private final SegmentBoxContact entitySegmentBoxContact = new SegmentBoxContact();
+    private final EntityPush entityPush = new EntityPush();
+
     protected RopeSimulationContactConstraints(Vec3 a, Vec3 b, long seed, RopeTuning tuning) {
         super(a, b, seed, tuning);
     }
@@ -70,42 +73,62 @@ abstract class RopeSimulationContactConstraints extends RopeSimulationTerrainCon
         final int aSegs = this.segments;
         for (int n = 0; n < neighbors.size(); n++) {
             RopeSimulation other = neighbors.get(n);
-            if (other == this)
+            if (!prepareNeighborForRopeRopeSolve(other, m))
                 continue;
-            if (!boundsOverlap(other, m))
+            solveNeighborSegmentPairs(other, amin, aSegs, m);
+        }
+    }
+
+    private boolean prepareNeighborForRopeRopeSolve(RopeSimulation other, double margin) {
+        if (other == this || !boundsOverlap(other, margin))
+            return false;
+        // Same as above: skip writing to other's segAabb in parallel; prepare phase did
+        // it.
+        if (!parallelPhase()) {
+            other.refreshSegmentAabbs();
+        }
+        return true;
+    }
+
+    private void solveNeighborSegmentPairs(RopeSimulation other, double[] amin, int aSegs, double margin) {
+        final double[] bmin = other.segAabb;
+        final int bSegs = other.segments;
+        for (int i = 0; i < aSegs; i++) {
+            int oa = i * 6;
+            if (!segmentOverlapsRopeBounds(amin, oa, other, margin))
                 continue;
-            // Same as above: skip writing to other's segAabb in parallel; prepare phase did
-            // it.
-            if (!parallelPhase())
-                other.refreshSegmentAabbs();
-            final double[] bmin = other.segAabb;
-            final int bSegs = other.segments;
-            // Per-rope full bbox of `other` (already updated by boundsOverlap).
-            final double oMinX = other.minX, oMinY = other.minY, oMinZ = other.minZ;
-            final double oMaxX = other.maxX, oMaxY = other.maxY, oMaxZ = other.maxZ;
-            for (int i = 0; i < aSegs; i++) {
-                int oa = i * 6;
-                double aMinX = amin[oa], aMinY = amin[oa + 1], aMinZ = amin[oa + 2];
-                double aMaxX = amin[oa + 3], aMaxY = amin[oa + 4], aMaxZ = amin[oa + 5];
-                // Row prune: this segment vs other-rope full bbox.
-                if (aMaxX + m < oMinX || aMinX - m > oMaxX)
-                    continue;
-                if (aMaxY + m < oMinY || aMinY - m > oMaxY)
-                    continue;
-                if (aMaxZ + m < oMinZ || aMinZ - m > oMaxZ)
-                    continue;
-                for (int j = 0; j < bSegs; j++) {
-                    int ob = j * 6;
-                    if (aMaxX + m < bmin[ob] || bmin[ob + 3] + m < aMinX)
-                        continue;
-                    if (aMaxY + m < bmin[ob + 1] || bmin[ob + 4] + m < aMinY)
-                        continue;
-                    if (aMaxZ + m < bmin[ob + 2] || bmin[ob + 5] + m < aMinZ)
-                        continue;
-                    solveSegmentPairNoCheck(other, i, j);
-                }
+            solveSegmentAgainstNeighbor(other, amin, bmin, bSegs, i, oa, margin);
+        }
+    }
+
+    private void solveSegmentAgainstNeighbor(
+            RopeSimulation other, double[] amin, double[] bmin, int bSegs, int segment, int offset, double margin) {
+        for (int j = 0; j < bSegs; j++) {
+            int ob = j * 6;
+            if (segmentAabbsOverlap(amin, offset, bmin, ob, margin)) {
+                solveSegmentPairNoCheck(other, segment, j);
             }
         }
+    }
+
+    private static boolean segmentOverlapsRopeBounds(
+            double[] segmentAabb, int offset, RopeSimulation other, double margin) {
+        return segmentAabb[offset + 3] + margin >= other.minX
+                && segmentAabb[offset] - margin <= other.maxX
+                && segmentAabb[offset + 4] + margin >= other.minY
+                && segmentAabb[offset + 1] - margin <= other.maxY
+                && segmentAabb[offset + 5] + margin >= other.minZ
+                && segmentAabb[offset + 2] - margin <= other.maxZ;
+    }
+
+    private static boolean segmentAabbsOverlap(double[] aabbA, int offsetA, double[] aabbB, int offsetB,
+            double margin) {
+        return aabbA[offsetA + 3] + margin >= aabbB[offsetB]
+                && aabbB[offsetB + 3] + margin >= aabbA[offsetA]
+                && aabbA[offsetA + 4] + margin >= aabbB[offsetB + 1]
+                && aabbB[offsetB + 4] + margin >= aabbA[offsetA + 1]
+                && aabbA[offsetA + 5] + margin >= aabbB[offsetB + 2]
+                && aabbB[offsetB + 5] + margin >= aabbA[offsetA + 2];
     }
 
     /** Refresh {@link #segAabb} from current node positions. Cheap O(segments). */
@@ -169,228 +192,158 @@ abstract class RopeSimulationContactConstraints extends RopeSimulationTerrainCon
     private void pushSegmentOutOfEntityBox(int a, int b, AABB box, Vec3 entityVelocity, double radius) {
         double ax = x[a], ay = y[a], az = z[a];
         double bx = x[b], by = y[b], bz = z[b];
-        double ux = bx - ax, uy = by - ay, uz = bz - az;
-        double segLenSqr = ux * ux + uy * uy + uz * uz;
-        double segLen = Math.sqrt(segLenSqr);
-        double verticality = segLen > 1.0e-6D ? Math.abs(uy) / segLen : 0.0D;
-        double s;
-        double cpx, cpy, cpz;
-        double spx, spy, spz;
-        if (segLenSqr < 1.0e-12D) {
-            s = 0.0D;
-            spx = ax;
-            spy = ay;
-            spz = az;
-        } else {
-            double mx = (box.minX + box.maxX) * 0.5D - ax;
-            double my = (box.minY + box.maxY) * 0.5D - ay;
-            double mz = (box.minZ + box.maxZ) * 0.5D - az;
-            s = (mx * ux + my * uy + mz * uz) / segLenSqr;
-            if (s < 0.0D)
-                s = 0.0D;
-            else if (s > 1.0D)
-                s = 1.0D;
-            spx = ax + ux * s;
-            spy = ay + uy * s;
-            spz = az + uz * s;
-        }
-        for (int it = 0; it < 4; it++) {
-            cpx = spx < box.minX ? box.minX : (spx > box.maxX ? box.maxX : spx);
-            cpy = spy < box.minY ? box.minY : (spy > box.maxY ? box.maxY : spy);
-            cpz = spz < box.minZ ? box.minZ : (spz > box.maxZ ? box.maxZ : spz);
-            if (segLenSqr < 1.0e-12D) {
-                spx = ax;
-                spy = ay;
-                spz = az;
-                break;
-            }
-            double tx = cpx - ax, ty = cpy - ay, tz = cpz - az;
-            double ns = (tx * ux + ty * uy + tz * uz) / segLenSqr;
-            if (ns < 0.0D)
-                ns = 0.0D;
-            else if (ns > 1.0D)
-                ns = 1.0D;
-            if (Math.abs(ns - s) < 1.0e-6D) {
-                s = ns;
-                spx = ax + ux * s;
-                spy = ay + uy * s;
-                spz = az + uz * s;
-                break;
-            }
-            s = ns;
-            spx = ax + ux * s;
-            spy = ay + uy * s;
-            spz = az + uz * s;
-        }
-        cpx = spx < box.minX ? box.minX : (spx > box.maxX ? box.maxX : spx);
-        cpy = spy < box.minY ? box.minY : (spy > box.maxY ? box.maxY : spy);
-        cpz = spz < box.minZ ? box.minZ : (spz > box.maxZ ? box.maxZ : spz);
-        boolean footSupportContact = isFootSupportEntityContact(box, entityVelocity, spx, spy, spz, radius);
-        double dx = spx - cpx, dy = spy - cpy, dz = spz - cpz;
-        double d2 = dx * dx + dy * dy + dz * dz;
-
-        double pushLen, nx, ny, nz;
-        if (d2 >= radius * radius) {
-            if (!footSupportContact)
-                return;
-            pushLen = footSupportPushLength(box, spy);
-            if (pushLen <= 1.0e-6D)
-                return;
-            nx = 0.0D;
-            ny = -1.0D;
-            nz = 0.0D;
-        } else if (d2 > 1.0e-12D) {
-            double d = Math.sqrt(d2);
-            pushLen = radius - d;
-            double inv = 1.0D / d;
-            nx = dx * inv;
-            ny = dy * inv;
-            nz = dz * inv;
-
-            if (verticality > 0.82D && cpy > box.minY + 1.0e-6D && cpy < box.maxY - 1.0e-6D) {
-                double hLenSqr = nx * nx + nz * nz;
-                if (hLenSqr > 1.0e-8D) {
-                    double invH = 1.0D / Math.sqrt(hLenSqr);
-                    nx *= invH;
-                    ny = 0.0D;
-                    nz *= invH;
-                }
-            }
-
-            // A vertical landing/standing contact near the feet should bend the rope
-            // downward. Do not let a tiny lateral offset on the foot edge shove the rope
-            // sideways out from under the player.
-            if (footSupportContact && ny > -0.35D) {
-                double footPush = footSupportPushLength(box, spy);
-                if (footPush <= 1.0e-6D)
-                    return;
-                pushLen = Math.max(pushLen, footPush);
-                nx = 0.0D;
-                ny = -1.0D;
-                nz = 0.0D;
-            }
-
-            // Budgeted slip-under / slip-over. Default behaviour stays lateral push so the
-            // rope
-            // shoves the entity around. Only when the rope is jammed against a side face
-            // near
-            // the top or bottom AND has already absorbed >25% of the entity width worth of
-            // horizontal push do we let it ignore that band, so gravity pulls it under (or
-            // it
-            // drapes over) naturally instead of being teleported into the ground.
-            boolean cpOnSideFace = cpy > box.minY + 1.0e-6D && cpy < box.maxY - 1.0e-6D
-                    && Math.abs(ny) < 0.30D;
-            if (cpOnSideFace) {
-                double height = box.maxY - box.minY;
-                double slipBand = Math.min(0.40D, height * 0.25D);
-                double distBottom = spy - box.minY;
-                double distTop = box.maxY - spy;
-                boolean nearBottom = distBottom < slipBand && distBottom <= distTop;
-                boolean nearTop = !nearBottom && distTop < slipBand;
-                if (nearBottom || nearTop) {
-                    double width = Math.max(box.maxX - box.minX, box.maxZ - box.minZ);
-                    double budget = 0.25D * width;
-                    double avgAccum = 0.5D * (entityPushAccum[a] + entityPushAccum[b]);
-                    if (avgAccum >= budget) {
-                        // Budget exhausted: skip this contact entirely; gravity / distance
-                        // constraints will pull the rope through the ignored band naturally.
-                        return;
-                    }
-                    // Otherwise fall through to apply lateral push and credit the budget.
-                    double horiz = pushLen * Math.hypot(nx, nz);
-                    double oneMinusS_acc = 1.0D - s;
-                    double cap = budget * 2.0D;
-                    if (!pinned[a]) {
-                        entityPushAccum[a] = Math.min(entityPushAccum[a] + horiz * oneMinusS_acc, cap);
-                    }
-                    if (!pinned[b]) {
-                        entityPushAccum[b] = Math.min(entityPushAccum[b] + horiz * s, cap);
-                    }
-                }
-            }
-        } else {
-            // Segment closest point is inside the box. Choose the smallest-penetration face
-            // so
-            // a lateral walk-through results in horizontal push (a hard 0,1,0 default makes
-            // the
-            // rope only ever lift, never get shoved sideways).
-            double pxNeg = spx - box.minX;
-            double pxPos = box.maxX - spx;
-            double pyNeg = spy - box.minY;
-            double pyPos = box.maxY - spy;
-            double pzNeg = spz - box.minZ;
-            double pzPos = box.maxZ - spz;
-            double bestPen;
-            if (footSupportContact) {
-                bestPen = Math.max(0.0D, pyNeg);
-                nx = 0.0D;
-                ny = -1.0D;
-                nz = 0.0D;
-            } else {
-                bestPen = pxNeg;
-                nx = -1.0D;
-                ny = 0.0D;
-                nz = 0.0D;
-                if (pxPos < bestPen) {
-                    bestPen = pxPos;
-                    nx = 1.0D;
-                    ny = 0.0D;
-                    nz = 0.0D;
-                }
-                if (pzNeg < bestPen) {
-                    bestPen = pzNeg;
-                    nx = 0.0D;
-                    ny = 0.0D;
-                    nz = -1.0D;
-                }
-                if (pzPos < bestPen) {
-                    bestPen = pzPos;
-                    nx = 0.0D;
-                    ny = 0.0D;
-                    nz = 1.0D;
-                }
-                if (verticality <= 0.82D) {
-                    if (pyNeg < bestPen) {
-                        bestPen = pyNeg;
-                        nx = 0.0D;
-                        ny = -1.0D;
-                        nz = 0.0D;
-                    }
-                    if (pyPos < bestPen) {
-                        bestPen = pyPos;
-                        nx = 0.0D;
-                        ny = 1.0D;
-                        nz = 0.0D;
-                    }
-                }
-            }
-            pushLen = bestPen + radius;
-        }
-
-        if (pushLen <= 1.0e-6D)
+        SegmentBoxContact contact = entitySegmentBoxContact.compute(ax, ay, az, bx, by, bz, box);
+        double segLen = Math.sqrt(contact.segLenSqr);
+        double verticality = segLen > 1.0e-6D ? Math.abs(contact.uy) / segLen : 0.0D;
+        boolean footSupportContact = isFootSupportEntityContact(box, entityVelocity,
+                contact.spx, contact.spy, contact.spz, radius);
+        if (!resolveEntityPush(a, b, box, contact, verticality, footSupportContact, radius, entityPush)) {
             return;
+        }
 
         double wa = pinned[a] ? 0.0D : 1.0D;
         double wb = pinned[b] ? 0.0D : 1.0D;
-        double oneMinusS = 1.0D - s;
-        double denom = wa * oneMinusS * oneMinusS + wb * s * s;
+        double oneMinusS = 1.0D - contact.s;
+        double denom = wa * oneMinusS * oneMinusS + wb * contact.s * contact.s;
         if (denom < 1.0e-9D)
             return;
-        double horizontalPushScale = entityHorizontalPushScale(entityVelocity, nx, nz);
-        double k = pushLen / denom;
-        double maxStep = 2.0D * pushLen;
+        double horizontalPushScale = entityHorizontalPushScale(entityVelocity, entityPush.nx, entityPush.nz);
+        double k = entityPush.length / denom;
+        double maxStep = 2.0D * entityPush.length;
         if (wa > 0.0D) {
             double ka = k * wa * oneMinusS;
             if (ka > maxStep)
                 ka = maxStep;
-            applyTerrainCorrection(a, nx * ka * horizontalPushScale, ny * ka, nz * ka * horizontalPushScale);
+            applyTerrainCorrection(a, entityPush.nx * ka * horizontalPushScale, entityPush.ny * ka,
+                    entityPush.nz * ka * horizontalPushScale);
         }
         if (wb > 0.0D) {
-            double kb = k * wb * s;
+            double kb = k * wb * contact.s;
             if (kb > maxStep)
                 kb = maxStep;
-            applyTerrainCorrection(b, nx * kb * horizontalPushScale, ny * kb, nz * kb * horizontalPushScale);
+            applyTerrainCorrection(b, entityPush.nx * kb * horizontalPushScale, entityPush.ny * kb,
+                    entityPush.nz * kb * horizontalPushScale);
         }
+    }
+
+    private boolean resolveEntityPush(int a, int b, AABB box, SegmentBoxContact contact,
+            double verticality, boolean footSupportContact, double radius, EntityPush out) {
+        if (contact.distSqr >= radius * radius) {
+            return outsideFootSupportPush(box, contact.spy, footSupportContact, out);
+        }
+        if (contact.distSqr > 1.0e-12D) {
+            return surfaceEntityPush(a, b, box, contact, verticality, footSupportContact, radius, out);
+        }
+        return insideEntityPush(box, contact, verticality, footSupportContact, radius, out);
+    }
+
+    private boolean outsideFootSupportPush(AABB box, double spy, boolean footSupportContact, EntityPush out) {
+        if (!footSupportContact)
+            return false;
+        double footPush = footSupportPushLength(box, spy);
+        if (footPush <= 1.0e-6D)
+            return false;
+        out.set(footPush, 0.0D, -1.0D, 0.0D);
+        return true;
+    }
+
+    private boolean surfaceEntityPush(int a, int b, AABB box, SegmentBoxContact contact,
+            double verticality, boolean footSupportContact, double radius, EntityPush out) {
+        double d = Math.sqrt(contact.distSqr);
+        double inv = 1.0D / d;
+        out.set(radius - d, contact.dx * inv, contact.dy * inv, contact.dz * inv);
+        normalizeVerticalSidePush(box, contact, verticality, out);
+        if (!applyFootSupportOverride(box, contact.spy, footSupportContact, out)) {
+            return false;
+        }
+        return creditOrSkipSlipBand(a, b, box, contact, out);
+    }
+
+    private void normalizeVerticalSidePush(AABB box, SegmentBoxContact contact, double verticality, EntityPush out) {
+        if (verticality <= 0.82D || contact.cpy <= box.minY + 1.0e-6D || contact.cpy >= box.maxY - 1.0e-6D) {
+            return;
+        }
+        double hLenSqr = out.nx * out.nx + out.nz * out.nz;
+        if (hLenSqr <= 1.0e-8D) {
+            return;
+        }
+        double invH = 1.0D / Math.sqrt(hLenSqr);
+        out.nx *= invH;
+        out.ny = 0.0D;
+        out.nz *= invH;
+    }
+
+    private boolean applyFootSupportOverride(AABB box, double spy, boolean footSupportContact, EntityPush out) {
+        if (!footSupportContact || out.ny <= -0.35D) {
+            return true;
+        }
+        double footPush = footSupportPushLength(box, spy);
+        if (footPush <= 1.0e-6D)
+            return false;
+        out.set(Math.max(out.length, footPush), 0.0D, -1.0D, 0.0D);
+        return true;
+    }
+
+    private boolean creditOrSkipSlipBand(int a, int b, AABB box, SegmentBoxContact contact, EntityPush out) {
+        if (contact.cpy <= box.minY + 1.0e-6D || contact.cpy >= box.maxY - 1.0e-6D || Math.abs(out.ny) >= 0.30D) {
+            return true;
+        }
+        double height = box.maxY - box.minY;
+        double slipBand = Math.min(0.40D, height * 0.25D);
+        double distBottom = contact.spy - box.minY;
+        double distTop = box.maxY - contact.spy;
+        boolean nearBottom = distBottom < slipBand && distBottom <= distTop;
+        boolean nearTop = !nearBottom && distTop < slipBand;
+        if (!nearBottom && !nearTop) {
+            return true;
+        }
+
+        double width = Math.max(box.maxX - box.minX, box.maxZ - box.minZ);
+        double budget = 0.25D * width;
+        double avgAccum = 0.5D * (entityPushAccum[a] + entityPushAccum[b]);
+        if (avgAccum >= budget) {
+            return false;
+        }
+
+        double horiz = out.length * Math.hypot(out.nx, out.nz);
+        double cap = budget * 2.0D;
+        if (!pinned[a]) {
+            entityPushAccum[a] = Math.min(entityPushAccum[a] + horiz * (1.0D - contact.s), cap);
+        }
+        if (!pinned[b]) {
+            entityPushAccum[b] = Math.min(entityPushAccum[b] + horiz * contact.s, cap);
+        }
+        return true;
+    }
+
+    private boolean insideEntityPush(AABB box, SegmentBoxContact contact,
+            double verticality, boolean footSupportContact, double radius, EntityPush out) {
+        double pyNeg = contact.spy - box.minY;
+        if (footSupportContact) {
+            out.set(Math.max(0.0D, pyNeg) + radius, 0.0D, -1.0D, 0.0D);
+            return true;
+        }
+
+        double bestPen = contact.spx - box.minX;
+        out.set(bestPen, -1.0D, 0.0D, 0.0D);
+        bestPen = chooseInsideFace(box.maxX - contact.spx, 1.0D, 0.0D, 0.0D, bestPen, out);
+        bestPen = chooseInsideFace(contact.spz - box.minZ, 0.0D, 0.0D, -1.0D, bestPen, out);
+        bestPen = chooseInsideFace(box.maxZ - contact.spz, 0.0D, 0.0D, 1.0D, bestPen, out);
+        if (verticality <= 0.82D) {
+            bestPen = chooseInsideFace(pyNeg, 0.0D, -1.0D, 0.0D, bestPen, out);
+            bestPen = chooseInsideFace(box.maxY - contact.spy, 0.0D, 1.0D, 0.0D, bestPen, out);
+        }
+        out.length = bestPen + radius;
+        return true;
+    }
+
+    private static double chooseInsideFace(double penetration, double nx, double ny, double nz,
+            double bestPen, EntityPush out) {
+        if (penetration < bestPen) {
+            out.set(penetration, nx, ny, nz);
+            return penetration;
+        }
+        return bestPen;
     }
 
     private boolean isFootSupportEntityContact(AABB box, Vec3 entityVelocity,
@@ -435,6 +388,20 @@ abstract class RopeSimulationContactConstraints extends RopeSimulationTerrainCon
         if (extra > 1.50D)
             extra = 1.50D;
         return 1.0D + extra;
+    }
+
+    private static final class EntityPush {
+        private double length;
+        private double nx;
+        private double ny;
+        private double nz;
+
+        private void set(double length, double nx, double ny, double nz) {
+            this.length = length;
+            this.nx = nx;
+            this.ny = ny;
+            this.nz = nz;
+        }
     }
 
     private void solveSegmentPairNoCheck(RopeSimulation other, int i, int j) {

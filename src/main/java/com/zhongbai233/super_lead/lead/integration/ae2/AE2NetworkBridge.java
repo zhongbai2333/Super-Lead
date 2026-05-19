@@ -68,11 +68,14 @@ import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.Vec3;
 
 /**
- * Runtime bridge between Super Lead AE-network ropes and AE2's official grid API.
+ * Runtime bridge between Super Lead AE-network ropes and AE2's official grid
+ * API.
  *
  * <p>
- * The bridge intentionally stays outside core rope logic so Super Lead can still
- * load without AE2. Callers must guard access with {@code ModList#isLoaded("ae2")}
+ * The bridge intentionally stays outside core rope logic so Super Lead can
+ * still
+ * load without AE2. Callers must guard access with
+ * {@code ModList#isLoaded("ae2")}
  * before touching this class.
  */
 public final class AE2NetworkBridge {
@@ -97,6 +100,16 @@ public final class AE2NetworkBridge {
                 RopeAeTerminalLocator::writeToPacket,
                 RopeAeTerminalLocator::readFromPacket);
         menuLocatorsRegistered = true;
+    }
+
+    public static void clearDimension(ResourceKey<Level> dimension) {
+        Map<UUID, BridgeLink> active = LINKS.remove(dimension);
+        if (active == null) {
+            return;
+        }
+        for (BridgeLink link : active.values()) {
+            link.destroy();
+        }
     }
 
     public static boolean isTerminalItem(ItemStack stack) {

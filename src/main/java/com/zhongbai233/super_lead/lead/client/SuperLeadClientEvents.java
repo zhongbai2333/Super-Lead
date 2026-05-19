@@ -88,7 +88,6 @@ public final class SuperLeadClientEvents {
     private static final double LOCAL_ROPE_JUMP_SPEED = 0.42D;
     private static final double LOCAL_CONTACT_SIDE_HARD_DEPTH_FRACTION = 0.65D;
     private static final double LOCAL_CONTACT_EXIT_INPUT_DOT = 0.05D;
-    private static final int GRID_KEY_BIAS = 1 << 20;
     /**
      * Inflated rope-bound margin used to query nearby entities for the
      * entity-pushes-rope pass.
@@ -1223,82 +1222,60 @@ public final class SuperLeadClientEvents {
     }
 
     private static Map<RopeSimulation, List<RopeSimulation>> buildNeighborMap(List<RenderEntry> entries) {
-        Map<Long, List<Integer>> buckets = new HashMap<>();
-        for (int i = 0; i < entries.size(); i++) {
-            RenderEntry entry = entries.get(i);
-            if (!entry.sim().physicsEnabled())
-                continue;
-            if (entry.lodDistSqr() > PHYSICS_LOD_DISTANCE_SQR)
-                continue;
-            addToNeighborBuckets(buckets, i, entry.physicsBounds().inflate(NEIGHBOR_BOUNDS_MARGIN));
-        }
-
+        RopeNeighborBuckets buckets = buildNeighborBuckets(entries);
         Map<RopeSimulation, List<RopeSimulation>> out = new HashMap<>();
         for (int i = 0; i < entries.size(); i++) {
             RenderEntry entry = entries.get(i);
-            if (!entry.sim().physicsEnabled())
+            if (!participatesInPhysics(entry))
                 continue;
-            if (entry.lodDistSqr() > PHYSICS_LOD_DISTANCE_SQR)
-                continue;
-            AABB query = entry.physicsBounds().inflate(NEIGHBOR_BOUNDS_MARGIN);
-            HashSet<RopeSimulation> set = new HashSet<>();
-            HashSet<Integer> seen = new HashSet<>();
-            int minX = cell(query.minX);
-            int maxX = cell(query.maxX);
-            int minY = cell(query.minY);
-            int maxY = cell(query.maxY);
-            int minZ = cell(query.minZ);
-            int maxZ = cell(query.maxZ);
-            for (int cx = minX; cx <= maxX; cx++) {
-                for (int cy = minY; cy <= maxY; cy++) {
-                    for (int cz = minZ; cz <= maxZ; cz++) {
-                        List<Integer> candidates = buckets.get(cellKey(cx, cy, cz));
-                        if (candidates == null)
-                            continue;
-                        for (int idx : candidates) {
-                            if (idx == i || !seen.add(idx))
-                                continue;
-                            RenderEntry other = entries.get(idx);
-                            if (query.intersects(other.physicsBounds())
-                                    && entry.sim().mightContact(other.sim(), NEIGHBOR_CONTACT_DISTANCE)) {
-                                set.add(other.sim());
-                            }
-                        }
-                    }
-                }
-            }
-            if (!set.isEmpty()) {
-                out.put(entry.sim(), new ArrayList<>(set));
+            List<RopeSimulation> neighbors = collectNeighborsForEntry(entries, buckets, i, entry);
+            if (!neighbors.isEmpty()) {
+                out.put(entry.sim(), neighbors);
             }
         }
         return out;
     }
 
-    private static void addToNeighborBuckets(Map<Long, List<Integer>> buckets, int index, AABB bounds) {
-        int minX = cell(bounds.minX);
-        int maxX = cell(bounds.maxX);
-        int minY = cell(bounds.minY);
-        int maxY = cell(bounds.maxY);
-        int minZ = cell(bounds.minZ);
-        int maxZ = cell(bounds.maxZ);
-        for (int cx = minX; cx <= maxX; cx++) {
-            for (int cy = minY; cy <= maxY; cy++) {
-                for (int cz = minZ; cz <= maxZ; cz++) {
-                    buckets.computeIfAbsent(cellKey(cx, cy, cz), key -> new ArrayList<>()).add(index);
-                }
+    private static RopeNeighborBuckets buildNeighborBuckets(List<RenderEntry> entries) {
+        RopeNeighborBuckets buckets = new RopeNeighborBuckets(NEIGHBOR_GRID_SIZE);
+        for (int i = 0; i < entries.size(); i++) {
+            RenderEntry entry = entries.get(i);
+            if (participatesInPhysics(entry)) {
+                buckets.add(i, entry.physicsBounds().inflate(NEIGHBOR_BOUNDS_MARGIN));
             }
         }
+        return buckets;
     }
 
-    private static int cell(double value) {
-        return (int) Math.floor(value / NEIGHBOR_GRID_SIZE);
+    private static boolean participatesInPhysics(RenderEntry entry) {
+        return entry.sim().physicsEnabled() && entry.lodDistSqr() <= PHYSICS_LOD_DISTANCE_SQR;
     }
 
-    private static long cellKey(int x, int y, int z) {
-        long px = (x + GRID_KEY_BIAS) & 0x1FFFFFL;
-        long py = (y + GRID_KEY_BIAS) & 0x1FFFFFL;
-        long pz = (z + GRID_KEY_BIAS) & 0x1FFFFFL;
-        return (px << 42) | (py << 21) | pz;
+    private static List<RopeSimulation> collectNeighborsForEntry(
+            List<RenderEntry> entries, RopeNeighborBuckets buckets, int index, RenderEntry entry) {
+        AABB query = entry.physicsBounds().inflate(NEIGHBOR_BOUNDS_MARGIN);
+        HashSet<RopeSimulation> neighbors = new HashSet<>();
+        HashSet<Integer> seen = new HashSet<>();
+        buckets.forEachCandidate(query, candidate -> collectNeighborCandidate(
+                entries, index, entry, query, seen, neighbors, candidate));
+        return neighbors.isEmpty() ? List.of() : new ArrayList<>(neighbors);
+    }
+
+    private static void collectNeighborCandidate(
+            List<RenderEntry> entries,
+            int index,
+            RenderEntry entry,
+            AABB query,
+            HashSet<Integer> seen,
+            HashSet<RopeSimulation> neighbors,
+            int candidate) {
+        if (candidate == index || !seen.add(candidate))
+            return;
+        RenderEntry other = entries.get(candidate);
+        if (query.intersects(other.physicsBounds())
+                && entry.sim().mightContact(other.sim(), NEIGHBOR_CONTACT_DISTANCE)) {
+            neighbors.add(other.sim());
+        }
     }
 
     /**

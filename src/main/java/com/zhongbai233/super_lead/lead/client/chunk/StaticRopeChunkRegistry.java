@@ -396,108 +396,149 @@ public final class StaticRopeChunkRegistry {
 
     private void rebuildInternal(Level level, Function<UUID, RopeSimulation> simLookup) {
         if (level == null) {
-            if (bySection.isEmpty() && byConnection.isEmpty() && bakedAttachments.isEmpty()
-                    && dynamicHoldUntil.isEmpty() && !connectionSyncDirty)
-                return;
-            Set<Long> toDirty = new HashSet<>(bySection.keySet());
-            bySection = Map.of();
-            byConnection = Map.of();
-            bakedAttachments = List.of();
-            claimed = Set.of();
-            claimTick = Map.of();
-            meshedSections = Set.of();
-            claimedFromSim = Set.of();
-            connectionSections.clear();
-            dynamicHoldUntil.clear();
-            connectionSyncDirty = false;
-            markSectionsDirty(toDirty);
+            clearPublishedState();
             return;
         }
         long now = level.getGameTime();
         pruneDynamicHolds(now);
-        boolean enabled = ClientTuning.MODE_CHUNK_MESH_STATIC_ROPES.get()
+        RebuildState next = new RebuildState();
+        if (staticMeshEnabled()) {
+            collectRealSources(level, simLookup, now, next);
+            collectStressSources(level, next);
+        }
+        publishRebuild(next, now);
+    }
+
+    private void clearPublishedState() {
+        if (bySection.isEmpty() && byConnection.isEmpty() && bakedAttachments.isEmpty()
+                && dynamicHoldUntil.isEmpty() && !connectionSyncDirty)
+            return;
+        Set<Long> toDirty = new HashSet<>(bySection.keySet());
+        bySection = Map.of();
+        byConnection = Map.of();
+        bakedAttachments = List.of();
+        claimed = Set.of();
+        claimTick = Map.of();
+        meshedSections = Set.of();
+        claimedFromSim = Set.of();
+        connectionSections.clear();
+        dynamicHoldUntil.clear();
+        connectionSyncDirty = false;
+        markSectionsDirty(toDirty);
+    }
+
+    private static boolean staticMeshEnabled() {
+        return ClientTuning.MODE_CHUNK_MESH_STATIC_ROPES.get()
                 && ClientTuning.MODE_RENDER3D.get();
+    }
 
-        Map<Long, List<RopeSectionSnapshot>> nextBySection = new HashMap<>();
-        Map<UUID, RopeSectionSnapshot> nextByConnection = new HashMap<>();
-        List<RopeAttachmentRenderer.BakedAttachment> nextBakedAttachments = new ArrayList<>();
-        Set<UUID> nextClaimed = new HashSet<>();
-        Set<UUID> nextClaimedFromSim = new HashSet<>();
-        Map<UUID, Set<Long>> nextConnSections = new HashMap<>();
+    private void collectRealSources(
+            Level level, Function<UUID, RopeSimulation> simLookup, long now, RebuildState next) {
+        for (LeadConnection connection : realSources) {
+            if (isDynamicallyHeld(connection.id(), now))
+                continue;
+            addRealSource(level, simLookup, connection, next);
+        }
+    }
 
-        if (enabled) {
-            for (LeadConnection c : realSources) {
-                if (isDynamicallyHeld(c.id(), now))
-                    continue;
-                RopeSimulation sim = simLookup == null ? null : simLookup.apply(c.id());
-                RopeStaticGeometryResult r;
-                if (sim != null) {
-                    if (!isQuiescent(sim))
-                        continue;
-                    r = RopeStaticGeometry.buildFromSim(c, sim, level);
-                    if (r.snapshot != null && !r.sectionKeys.isEmpty()) {
-                        nextClaimedFromSim.add(c.id());
-                    }
-                } else {
-                    r = RopeStaticGeometry.build(c, level, realSources);
-                }
-                if (r.snapshot == null || r.sectionKeys.isEmpty())
-                    continue;
-                nextClaimed.add(c.id());
-                nextConnSections.put(c.id(), r.sectionKeys);
-                nextByConnection.put(c.id(), r.snapshot);
-                addSnapshots(nextBySection, r);
-                nextBakedAttachments.addAll(RopeAttachmentRenderer.bakeStatic(
-                        level, c, r.snapshot.x, r.snapshot.y, r.snapshot.z));
-                if (sim == null && !anchorsLoaded(level, c)) {
-                    bakedWithMissingAnchors.add(c.id());
-                } else {
-                    bakedWithMissingAnchors.remove(c.id());
-                }
-            }
-            for (StressSource s : stressSources) {
-                RopeStaticGeometryResult r = RopeStaticGeometry.build(s.id(), s.a(), s.b(), level);
-                if (r.snapshot == null || r.sectionKeys.isEmpty())
-                    continue;
-                nextClaimed.add(s.id());
-                nextConnSections.put(s.id(), r.sectionKeys);
-                nextByConnection.put(s.id(), r.snapshot);
-                addSnapshots(nextBySection, r);
+    private void addRealSource(
+            Level level, Function<UUID, RopeSimulation> simLookup, LeadConnection connection, RebuildState next) {
+        RopeSimulation sim = simLookup == null ? null : simLookup.apply(connection.id());
+        RopeStaticGeometryResult result = buildRealSourceGeometry(level, connection, sim);
+        if (!hasGeometry(result))
+            return;
+        next.addConnection(connection.id(), result);
+        if (sim != null) {
+            next.claimedFromSim.add(connection.id());
+        }
+        next.bakedAttachments.addAll(RopeAttachmentRenderer.bakeStatic(
+                level, connection, result.snapshot.x, result.snapshot.y, result.snapshot.z));
+        updateMissingAnchorBake(level, connection, sim == null);
+    }
+
+    private RopeStaticGeometryResult buildRealSourceGeometry(
+            Level level, LeadConnection connection, RopeSimulation sim) {
+        if (sim == null) {
+            return RopeStaticGeometry.build(connection, level, realSources);
+        }
+        return isQuiescent(sim) ? RopeStaticGeometry.buildFromSim(connection, sim, level) : null;
+    }
+
+    private void updateMissingAnchorBake(Level level, LeadConnection connection, boolean bakedFromAnchors) {
+        if (bakedFromAnchors && !anchorsLoaded(level, connection)) {
+            bakedWithMissingAnchors.add(connection.id());
+        } else {
+            bakedWithMissingAnchors.remove(connection.id());
+        }
+    }
+
+    private void collectStressSources(Level level, RebuildState next) {
+        for (StressSource source : stressSources) {
+            RopeStaticGeometryResult result = RopeStaticGeometry.build(source.id(), source.a(), source.b(), level);
+            if (hasGeometry(result)) {
+                next.addConnection(source.id(), result);
             }
         }
+    }
 
-        Map<Long, List<RopeSectionSnapshot>> publishedBySection = new HashMap<>(nextBySection.size());
-        for (Map.Entry<Long, List<RopeSectionSnapshot>> e : nextBySection.entrySet()) {
+    private void publishRebuild(RebuildState next, long now) {
+        Map<Long, List<RopeSectionSnapshot>> publishedBySection = new HashMap<>(next.bySection.size());
+        for (Map.Entry<Long, List<RopeSectionSnapshot>> e : next.bySection.entrySet()) {
             publishedBySection.put(e.getKey(), List.copyOf(e.getValue()));
         }
 
         Set<Long> toDirty = new HashSet<>(bySection.keySet());
         toDirty.addAll(publishedBySection.keySet());
 
-        java.util.Map<UUID, Long> nextClaimTick = new java.util.HashMap<>(nextClaimed.size());
-        for (UUID id : nextClaimed) {
-            Long prev = claimTick.get(id);
-            nextClaimTick.put(id, prev != null ? prev : now);
-        }
+        Map<UUID, Long> nextClaimTick = copyClaimTicks(next.claimed, now);
 
         bySection = Map.copyOf(publishedBySection);
-        byConnection = nextByConnection.isEmpty() ? Map.of() : Map.copyOf(nextByConnection);
-        bakedAttachments = nextBakedAttachments.isEmpty() ? List.of() : List.copyOf(nextBakedAttachments);
-        claimed = Set.copyOf(nextClaimed);
+        byConnection = next.byConnection.isEmpty() ? Map.of() : Map.copyOf(next.byConnection);
+        bakedAttachments = next.bakedAttachments.isEmpty() ? List.of() : List.copyOf(next.bakedAttachments);
+        claimed = Set.copyOf(next.claimed);
         claimTick = Map.copyOf(nextClaimTick);
         meshedSections = Set.of();
-        claimedFromSim = Set.copyOf(nextClaimedFromSim);
+        claimedFromSim = Set.copyOf(next.claimedFromSim);
         connectionSections.clear();
-        connectionSections.putAll(nextConnSections);
-        bakedWithMissingAnchors.retainAll(nextClaimed);
+        connectionSections.putAll(next.connectionSections);
+        bakedWithMissingAnchors.retainAll(next.claimed);
         connectionSyncDirty = false;
 
         markSectionsDirty(toDirty);
     }
 
+    private Map<UUID, Long> copyClaimTicks(Set<UUID> nextClaimed, long now) {
+        Map<UUID, Long> nextClaimTick = new HashMap<>(nextClaimed.size());
+        for (UUID id : nextClaimed) {
+            Long prev = claimTick.get(id);
+            nextClaimTick.put(id, prev != null ? prev : now);
+        }
+        return nextClaimTick;
+    }
+
+    private static boolean hasGeometry(RopeStaticGeometryResult result) {
+        return result != null && result.snapshot != null && !result.sectionKeys.isEmpty();
+    }
+
     private static void addSnapshots(Map<Long, List<RopeSectionSnapshot>> target, RopeStaticGeometryResult result) {
         for (Map.Entry<Long, List<RopeSectionSnapshot>> e : result.snapshotsBySection.entrySet()) {
             target.computeIfAbsent(e.getKey(), k -> new ArrayList<>(2)).addAll(e.getValue());
+        }
+    }
+
+    private static final class RebuildState {
+        final Map<Long, List<RopeSectionSnapshot>> bySection = new HashMap<>();
+        final Map<UUID, RopeSectionSnapshot> byConnection = new HashMap<>();
+        final List<RopeAttachmentRenderer.BakedAttachment> bakedAttachments = new ArrayList<>();
+        final Set<UUID> claimed = new HashSet<>();
+        final Set<UUID> claimedFromSim = new HashSet<>();
+        final Map<UUID, Set<Long>> connectionSections = new HashMap<>();
+
+        void addConnection(UUID id, RopeStaticGeometryResult result) {
+            claimed.add(id);
+            connectionSections.put(id, result.sectionKeys);
+            byConnection.put(id, result.snapshot);
+            addSnapshots(bySection, result);
         }
     }
 

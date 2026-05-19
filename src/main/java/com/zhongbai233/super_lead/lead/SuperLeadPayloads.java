@@ -147,15 +147,33 @@ public final class SuperLeadPayloads {
         PacketDistributor.sendToPlayer(player, new UnloadRopeChunk(chunk));
     }
 
-    public static void sendToDimension(ServerLevel level) {
+    /**
+     * Sends only chunks marked dirty by {@link SuperLeadSavedData}. Call
+     * {@link #sendAllToDimension(ServerLevel)} when a deliberate full resend is
+     * needed.
+     */
+    public static void sendDirtyToDimension(ServerLevel level) {
         SuperLeadSavedData data = SuperLeadSavedData.get(level);
         java.util.Set<Long> dirty = data.consumeDirtyChunkKeys();
-        if (dirty.isEmpty()) {
-            dirty = data.allChunkKeys();
-        }
         for (long chunkKey : dirty) {
             sendChunkToTracking(level, SuperLeadSavedData.chunkFromKey(chunkKey));
         }
+    }
+
+    public static void sendAllToDimension(ServerLevel level) {
+        for (long chunkKey : SuperLeadSavedData.get(level).allChunkKeys()) {
+            sendChunkToTracking(level, SuperLeadSavedData.chunkFromKey(chunkKey));
+        }
+    }
+
+    /**
+     * @deprecated use {@link #sendDirtyToDimension(ServerLevel)} or
+     *             {@link #sendAllToDimension(ServerLevel)} so call sites spell out
+     *             their sync intent.
+     */
+    @Deprecated(forRemoval = false)
+    public static void sendToDimension(ServerLevel level) {
+        sendDirtyToDimension(level);
     }
 
     private static void sendChunkToTracking(ServerLevel level, ChunkPos chunk) {

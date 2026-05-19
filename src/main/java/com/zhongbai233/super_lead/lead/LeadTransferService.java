@@ -125,6 +125,13 @@ final class LeadTransferService {
         CACHED_STARTS_BY_SOURCE.remove(level);
     }
 
+    static void discardLevelState(ServerLevel level) {
+        invalidateCachesFor(level);
+        if (isAe2Loaded()) {
+            AE2NetworkBridge.clearDimension(level.dimension());
+        }
+    }
+
     static void tickThermal(ServerLevel level) {
         if (!isMekanismLoaded()) {
             return;

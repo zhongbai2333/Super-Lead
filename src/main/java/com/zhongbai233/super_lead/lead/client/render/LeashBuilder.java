@@ -642,162 +642,180 @@ public final class LeashBuilder {
             double[] upX,
             double[] upY,
             double[] upZ) {
-        double prevSideX = 0.0D;
-        double prevSideY = 0.0D;
-        double prevSideZ = 0.0D;
-        boolean hasPrevSide = false;
+        NodeFrameScratch frame = new NodeFrameScratch();
         for (int i = 0; i < nodeCount; i++) {
-            double tx;
-            double ty;
-            double tz;
-            if (i == 0) {
-                tx = sim.renderX(1) - sim.renderX(0);
-                ty = sim.renderY(1) - sim.renderY(0);
-                tz = sim.renderZ(1) - sim.renderZ(0);
-            } else if (i == nodeCount - 1) {
-                tx = sim.renderX(i) - sim.renderX(i - 1);
-                ty = sim.renderY(i) - sim.renderY(i - 1);
-                tz = sim.renderZ(i) - sim.renderZ(i - 1);
-            } else {
-                double px = sim.renderX(i) - sim.renderX(i - 1);
-                double py = sim.renderY(i) - sim.renderY(i - 1);
-                double pz = sim.renderZ(i) - sim.renderZ(i - 1);
-                double nx = sim.renderX(i + 1) - sim.renderX(i);
-                double ny = sim.renderY(i + 1) - sim.renderY(i);
-                double nz = sim.renderZ(i + 1) - sim.renderZ(i);
-                double pLen = Math.sqrt(px * px + py * py + pz * pz);
-                double nLen = Math.sqrt(nx * nx + ny * ny + nz * nz);
-                if (pLen > 1.0e-6D) {
-                    px /= pLen;
-                    py /= pLen;
-                    pz /= pLen;
-                }
-                if (nLen > 1.0e-6D) {
-                    nx /= nLen;
-                    ny /= nLen;
-                    nz /= nLen;
-                }
-                tx = px + nx;
-                ty = py + ny;
-                tz = pz + nz;
-                if (tx * tx + ty * ty + tz * tz < 1.0e-8D) {
-                    tx = nx;
-                    ty = ny;
-                    tz = nz;
-                }
-            }
-
-            double tLen = Math.sqrt(tx * tx + ty * ty + tz * tz);
-            if (tLen < 1.0e-6D) {
-                tx = 1.0D;
-                ty = 0.0D;
-                tz = 0.0D;
-            } else {
-                tx /= tLen;
-                ty /= tLen;
-                tz /= tLen;
-            }
-
-            double sx;
-            double sy;
-            double sz;
-            if (hasPrevSide) {
-                double along = prevSideX * tx + prevSideY * ty + prevSideZ * tz;
-                sx = prevSideX - tx * along;
-                sy = prevSideY - ty * along;
-                sz = prevSideZ - tz * along;
-                double sLenSqr = sx * sx + sy * sy + sz * sz;
-                if (sLenSqr < 1.0e-8D) {
-                    sx = -tz;
-                    sy = 0.0D;
-                    sz = tx;
-                    sLenSqr = sx * sx + sz * sz;
-                }
-                if (sLenSqr < 1.0e-8D) {
-                    sx = 1.0D;
-                    sy = 0.0D;
-                    sz = 0.0D;
-                    double fallbackAlong = sx * tx + sy * ty + sz * tz;
-                    sx -= tx * fallbackAlong;
-                    sy -= ty * fallbackAlong;
-                    sz -= tz * fallbackAlong;
-                    sLenSqr = sx * sx + sy * sy + sz * sz;
-                    if (sLenSqr < 1.0e-8D) {
-                        sx = 0.0D;
-                        sy = 0.0D;
-                        sz = 1.0D;
-                        fallbackAlong = sx * tx + sy * ty + sz * tz;
-                        sx -= tx * fallbackAlong;
-                        sy -= ty * fallbackAlong;
-                        sz -= tz * fallbackAlong;
-                        sLenSqr = sx * sx + sy * sy + sz * sz;
-                    }
-                }
-                double invSide = 1.0D / Math.sqrt(sLenSqr);
-                sx *= invSide;
-                sy *= invSide;
-                sz *= invSide;
-            } else {
-                sx = -tz;
-                sy = 0.0D;
-                sz = tx;
-                double sLenSqr = sx * sx + sz * sz;
-                if (sLenSqr < 1.0e-8D) {
-                    sx = 1.0D;
-                    sy = 0.0D;
-                    sz = 0.0D;
-                    double fallbackAlong = sx * tx + sy * ty + sz * tz;
-                    sx -= tx * fallbackAlong;
-                    sy -= ty * fallbackAlong;
-                    sz -= tz * fallbackAlong;
-                    sLenSqr = sx * sx + sy * sy + sz * sz;
-                    if (sLenSqr < 1.0e-8D) {
-                        sx = 0.0D;
-                        sy = 0.0D;
-                        sz = 1.0D;
-                        fallbackAlong = sx * tx + sy * ty + sz * tz;
-                        sx -= tx * fallbackAlong;
-                        sy -= ty * fallbackAlong;
-                        sz -= tz * fallbackAlong;
-                        sLenSqr = sx * sx + sy * sy + sz * sz;
-                    }
-                }
-                double invSide = 1.0D / Math.sqrt(sLenSqr);
-                sx *= invSide;
-                sy *= invSide;
-                sz *= invSide;
-            }
-
-            double ux = sy * tz - sz * ty;
-            double uy = sz * tx - sx * tz;
-            double uz = sx * ty - sy * tx;
-            double invUp = 1.0D / Math.sqrt(ux * ux + uy * uy + uz * uz);
-            ux *= invUp;
-            uy *= invUp;
-            uz *= invUp;
-
-            if (hasPrevSide && sx * prevSideX + sy * prevSideY + sz * prevSideZ < 0.0D) {
-                sx = -sx;
-                sy = -sy;
-                sz = -sz;
-                ux = -ux;
-                uy = -uy;
-                uz = -uz;
-            }
-
-            prevSideX = sx;
-            prevSideY = sy;
-            prevSideZ = sz;
-            hasPrevSide = true;
-
+            frame.build(sim, nodeCount, i);
             double normalized = sim.renderLength(i) / totalLength;
             double thickness = baseThickness * thicknessMultiplier(normalized, pulsePositions, extractEnd);
-            sideX[i] = sx * thickness;
-            sideY[i] = sy * thickness;
-            sideZ[i] = sz * thickness;
-            upX[i] = ux * thickness;
-            upY[i] = uy * thickness;
-            upZ[i] = uz * thickness;
+            sideX[i] = frame.side.x * thickness;
+            sideY[i] = frame.side.y * thickness;
+            sideZ[i] = frame.side.z * thickness;
+            upX[i] = frame.up.x * thickness;
+            upY[i] = frame.up.y * thickness;
+            upZ[i] = frame.up.z * thickness;
+        }
+    }
+
+    private static final class NodeFrameScratch {
+        final FrameVec tangent = new FrameVec();
+        final FrameVec side = new FrameVec();
+        final FrameVec up = new FrameVec();
+        final FrameVec prevSide = new FrameVec();
+        final FrameVec previous = new FrameVec();
+        final FrameVec next = new FrameVec();
+        boolean hasPrevSide;
+
+        void build(RopeSimulation sim, int nodeCount, int index) {
+            nodeTangent(sim, nodeCount, index, tangent, previous, next);
+            tangent.normalizeOr(1.0D, 0.0D, 0.0D, 1.0e-12D);
+            if (hasPrevSide) {
+                side.projectFrom(prevSide, tangent);
+                side.normalizeWithFallback(tangent);
+            } else {
+                side.setPerpendicularTo(tangent);
+                side.normalizeWithFallback(tangent);
+            }
+            up.cross(side, tangent);
+            up.normalizeOr(0.0D, 1.0D, 0.0D);
+            alignToPreviousSide();
+            prevSide.set(side);
+            hasPrevSide = true;
+        }
+
+        private void alignToPreviousSide() {
+            if (hasPrevSide && side.dot(prevSide) < 0.0D) {
+                side.negate();
+                up.negate();
+            }
+        }
+    }
+
+    private static void nodeTangent(
+            RopeSimulation sim, int nodeCount, int index, FrameVec out, FrameVec previous, FrameVec next) {
+        if (index == 0) {
+            out.set(sim.renderX(1) - sim.renderX(0),
+                    sim.renderY(1) - sim.renderY(0),
+                    sim.renderZ(1) - sim.renderZ(0));
+        } else if (index == nodeCount - 1) {
+            out.set(sim.renderX(index) - sim.renderX(index - 1),
+                    sim.renderY(index) - sim.renderY(index - 1),
+                    sim.renderZ(index) - sim.renderZ(index - 1));
+        } else {
+            middleNodeTangent(sim, index, out, previous, next);
+        }
+    }
+
+    private static void middleNodeTangent(
+            RopeSimulation sim, int index, FrameVec out, FrameVec previous, FrameVec next) {
+        previous.set(
+                sim.renderX(index) - sim.renderX(index - 1),
+                sim.renderY(index) - sim.renderY(index - 1),
+                sim.renderZ(index) - sim.renderZ(index - 1));
+        next.set(
+                sim.renderX(index + 1) - sim.renderX(index),
+                sim.renderY(index + 1) - sim.renderY(index),
+                sim.renderZ(index + 1) - sim.renderZ(index));
+        previous.normalizeIfLongEnough(1.0e-12D);
+        next.normalizeIfLongEnough(1.0e-12D);
+        out.set(previous.x + next.x, previous.y + next.y, previous.z + next.z);
+        if (out.lengthSqr() < 1.0e-8D) {
+            out.set(next);
+        }
+    }
+
+    private static final class FrameVec {
+        double x;
+        double y;
+        double z;
+
+        FrameVec() {
+        }
+
+        void set(FrameVec other) {
+            set(other.x, other.y, other.z);
+        }
+
+        void set(double x, double y, double z) {
+            this.x = x;
+            this.y = y;
+            this.z = z;
+        }
+
+        void setPerpendicularTo(FrameVec tangent) {
+            set(-tangent.z, 0.0D, tangent.x);
+        }
+
+        void projectFrom(FrameVec source, FrameVec tangent) {
+            set(source);
+            double along = dot(tangent);
+            x -= tangent.x * along;
+            y -= tangent.y * along;
+            z -= tangent.z * along;
+        }
+
+        void normalizeWithFallback(FrameVec tangent) {
+            if (normalizeIfLongEnough())
+                return;
+            setPerpendicularTo(tangent);
+            if (normalizeIfLongEnough())
+                return;
+            setProjectedAxis(1.0D, 0.0D, 0.0D, tangent);
+            if (normalizeIfLongEnough())
+                return;
+            setProjectedAxis(0.0D, 0.0D, 1.0D, tangent);
+            normalizeIfLongEnough();
+        }
+
+        void setProjectedAxis(double axisX, double axisY, double axisZ, FrameVec tangent) {
+            double along = axisX * tangent.x + axisY * tangent.y + axisZ * tangent.z;
+            set(axisX - tangent.x * along, axisY - tangent.y * along, axisZ - tangent.z * along);
+        }
+
+        void cross(FrameVec a, FrameVec b) {
+            set(a.y * b.z - a.z * b.y,
+                    a.z * b.x - a.x * b.z,
+                    a.x * b.y - a.y * b.x);
+        }
+
+        double dot(FrameVec other) {
+            return x * other.x + y * other.y + z * other.z;
+        }
+
+        double lengthSqr() {
+            return x * x + y * y + z * z;
+        }
+
+        boolean normalizeIfLongEnough() {
+            return normalizeIfLongEnough(1.0e-8D);
+        }
+
+        boolean normalizeIfLongEnough(double minLenSqr) {
+            double lenSqr = lengthSqr();
+            if (lenSqr < minLenSqr)
+                return false;
+            double invLen = 1.0D / Math.sqrt(lenSqr);
+            x *= invLen;
+            y *= invLen;
+            z *= invLen;
+            return true;
+        }
+
+        void normalizeOr(double fallbackX, double fallbackY, double fallbackZ) {
+            if (!normalizeIfLongEnough()) {
+                set(fallbackX, fallbackY, fallbackZ);
+            }
+        }
+
+        void normalizeOr(double fallbackX, double fallbackY, double fallbackZ, double minLenSqr) {
+            if (!normalizeIfLongEnough(minLenSqr)) {
+                set(fallbackX, fallbackY, fallbackZ);
+            }
+        }
+
+        void negate() {
+            x = -x;
+            y = -y;
+            z = -z;
         }
     }
 

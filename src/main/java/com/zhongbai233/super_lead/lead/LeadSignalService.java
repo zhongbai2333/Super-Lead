@@ -97,7 +97,7 @@ final class LeadSignalService {
         }
 
         if (changed) {
-            SuperLeadPayloads.sendToDimension(level);
+            SuperLeadPayloads.sendDirtyToDimension(level);
         }
     }
 
@@ -152,7 +152,7 @@ final class LeadSignalService {
         // Drop deadlines for connections that no longer exist.
         ENERGY_ACTIVE_UNTIL.keySet().retainAll(currentIds);
         if (changed) {
-            SuperLeadPayloads.sendToDimension(level);
+            SuperLeadPayloads.sendDirtyToDimension(level);
         }
     }
 
@@ -371,6 +371,10 @@ final class LeadSignalService {
     private static void invalidateRedstonePosIndex(ServerLevel level) {
         REDSTONE_POS_INDEX.remove(level);
         REDSTONE_POS_INDEX_GEN.remove(level);
+    }
+
+    static void discardLevelState(ServerLevel level) {
+        invalidateRedstonePosIndex(level);
     }
 
     private static void addAnchorIndex(Map<LeadAnchor, List<Integer>> byAnchor, LeadAnchor anchor, int index) {

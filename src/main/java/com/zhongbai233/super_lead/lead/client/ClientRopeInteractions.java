@@ -17,6 +17,7 @@ import com.zhongbai233.super_lead.lead.client.render.RopeAttachmentRenderer;
 import com.zhongbai233.super_lead.lead.client.sim.RopeSimulation;
 import com.zhongbai233.super_lead.lead.client.sim.RopeTuning;
 import com.zhongbai233.super_lead.lead.physics.RopeSagModel;
+import java.util.List;
 import java.util.UUID;
 import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
@@ -439,119 +440,190 @@ final class ClientRopeInteractions {
     }
 
     static AttachPick pickZiplinePoint(Minecraft mc, float partialTick) {
-        Player player = mc.player;
-        if (player == null) {
+        ZiplinePickContext context = ZiplinePickContext.from(mc);
+        if (context == null)
             return null;
-        }
-        ClientLevel level = mc.level;
-        if (level == null) {
-            return null;
-        }
-        Camera camera = mc.gameRenderer.getMainCamera();
-        Vec3 cameraPos = camera.position();
-        var fwd = camera.forwardVector();
-        double dirX = fwd.x(), dirY = fwd.y(), dirZ = fwd.z();
-        double inv = 1.0D / Math.sqrt(dirX * dirX + dirY * dirY + dirZ * dirZ);
-        dirX *= inv;
-        dirY *= inv;
-        dirZ *= inv;
 
-        double maxDistance = SuperLeadNetwork.MAX_LEASH_DISTANCE;
-        net.minecraft.world.phys.HitResult hit = mc.hitResult;
-        if (hit != null && hit.getType() != net.minecraft.world.phys.HitResult.Type.MISS) {
-            maxDistance = Math.min(maxDistance, hit.getLocation().distanceTo(cameraPos) + ZIPLINE_PICK_RADIUS);
-        }
-
-        double bestDistSqr = ZIPLINE_PICK_RADIUS * ZIPLINE_PICK_RADIUS;
-        UUID bestId = null;
-        double bestT = 0.5D;
-        Vec3 bestPoint = Vec3.ZERO;
-        Vec3 bestA = Vec3.ZERO;
-        Vec3 bestB = Vec3.ZERO;
-
-        for (LeadConnection connection : SuperLeadNetwork.connections(level)) {
-            LeadKind kind = connection.kind();
-            if (kind != LeadKind.NORMAL && kind != LeadKind.REDSTONE) {
+        List<LeadConnection> connections = SuperLeadNetwork.connections(context.level);
+        ZiplinePickSearch search = new ZiplinePickSearch();
+        for (LeadConnection connection : connections) {
+            if (!isZiplinePickable(connection))
                 continue;
-            }
-            if (connection.physicsPreset().isBlank()) {
-                continue;
-            }
             RopeSimulation sim = SuperLeadClientEvents.simulation(connection.id());
             if (sim != null) {
-                double total = sim.prepareRender(partialTick);
-                if (total <= 0.0D) {
-                    continue;
-                }
-                int nodeCount = sim.nodeCount();
-                for (int i = 0; i < nodeCount - 1; i++) {
-                    double ax = sim.renderX(i), ay = sim.renderY(i), az = sim.renderZ(i);
-                    double bx = sim.renderX(i + 1), by = sim.renderY(i + 1), bz = sim.renderZ(i + 1);
-                    for (int sample = 0; sample <= 4; sample++) {
-                        double frac = sample / 4.0D;
-                        double px = ax + (bx - ax) * frac;
-                        double py = ay + (by - ay) * frac;
-                        double pz = az + (bz - az) * frac;
-                        double d = RopePickMath.distancePointToRaySqr(px, py, pz,
-                                cameraPos.x, cameraPos.y, cameraPos.z,
-                                dirX, dirY, dirZ, maxDistance);
-                        if (d < bestDistSqr) {
-                            bestDistSqr = d;
-                            bestId = connection.id();
-                            double l0 = sim.renderLength(i);
-                            double l1 = sim.renderLength(i + 1);
-                            double arc = l0 + (l1 - l0) * frac;
-                            bestT = Math.max(0.02D, Math.min(0.98D, arc / total));
-                            bestPoint = new Vec3(px, py, pz);
-                            bestA = new Vec3(ax, ay, az);
-                            bestB = new Vec3(bx, by, bz);
-                        }
-                    }
-                }
-                continue;
-            }
-
-            LeadEndpointLayout.Endpoints endpoints = LeadEndpointLayout.endpoints(level, connection,
-                    SuperLeadNetwork.connections(level));
-            Vec3 endpointA = endpoints.from();
-            Vec3 endpointB = endpoints.to();
-            double length = endpointA.distanceTo(endpointB);
-            if (length < 1.0e-6D) {
-                continue;
-            }
-            RopeTuning tuning = RopeTuning.forConnection(connection);
-            Vec3 fallback = RopeSagModel.stableUnitVector(connection.id().getLeastSignificantBits());
-            final int segments = 16;
-            for (int i = 0; i < segments; i++) {
-                double t0 = i / (double) segments;
-                double t1 = (i + 1) / (double) segments;
-                Vec3 segA = simpleSagPoint(endpointA, endpointB, t0, tuning, fallback);
-                Vec3 segB = simpleSagPoint(endpointA, endpointB, t1, tuning, fallback);
-                for (int sample = 0; sample <= 4; sample++) {
-                    double frac = sample / 4.0D;
-                    double t = t0 + (t1 - t0) * frac;
-                    double px = segA.x + (segB.x - segA.x) * frac;
-                    double py = segA.y + (segB.y - segA.y) * frac;
-                    double pz = segA.z + (segB.z - segA.z) * frac;
-                    double d = RopePickMath.distancePointToRaySqr(px, py, pz,
-                            cameraPos.x, cameraPos.y, cameraPos.z,
-                            dirX, dirY, dirZ, maxDistance);
-                    if (d < bestDistSqr) {
-                        bestDistSqr = d;
-                        bestId = connection.id();
-                        bestT = Math.max(0.02D, Math.min(0.98D, t));
-                        bestPoint = new Vec3(px, py, pz);
-                        bestA = segA;
-                        bestB = segB;
-                    }
-                }
+                searchSimZipline(connection, sim, partialTick, context, search);
+            } else {
+                searchFallbackZipline(connection, connections, context, search);
             }
         }
-        return bestId == null ? null : new AttachPick(bestId, bestT, bestPoint, bestA, bestB);
+        return search.result();
+    }
+
+    private static boolean isZiplinePickable(LeadConnection connection) {
+        LeadKind kind = connection.kind();
+        return (kind == LeadKind.NORMAL || kind == LeadKind.REDSTONE)
+                && !connection.physicsPreset().isBlank();
+    }
+
+    private static void searchSimZipline(
+            LeadConnection connection,
+            RopeSimulation sim,
+            float partialTick,
+            ZiplinePickContext context,
+            ZiplinePickSearch search) {
+        double total = sim.prepareRender(partialTick);
+        if (total <= 0.0D)
+            return;
+        int nodeCount = sim.nodeCount();
+        for (int i = 0; i < nodeCount - 1; i++) {
+            sampleSimZiplineSegment(connection, sim, i, total, context, search);
+        }
+    }
+
+    private static void sampleSimZiplineSegment(
+            LeadConnection connection,
+            RopeSimulation sim,
+            int segment,
+            double total,
+            ZiplinePickContext context,
+            ZiplinePickSearch search) {
+        double ax = sim.renderX(segment), ay = sim.renderY(segment), az = sim.renderZ(segment);
+        double bx = sim.renderX(segment + 1), by = sim.renderY(segment + 1), bz = sim.renderZ(segment + 1);
+        double l0 = sim.renderLength(segment);
+        double l1 = sim.renderLength(segment + 1);
+        for (int sample = 0; sample <= 4; sample++) {
+            double frac = sample / 4.0D;
+            double px = ax + (bx - ax) * frac;
+            double py = ay + (by - ay) * frac;
+            double pz = az + (bz - az) * frac;
+            double arc = l0 + (l1 - l0) * frac;
+            search.considerSegment(connection.id(), context, px, py, pz,
+                    Math.max(0.02D, Math.min(0.98D, arc / total)),
+                    ax, ay, az, bx, by, bz);
+        }
+    }
+
+    private static void searchFallbackZipline(
+            LeadConnection connection,
+            List<LeadConnection> connections,
+            ZiplinePickContext context,
+            ZiplinePickSearch search) {
+        LeadEndpointLayout.Endpoints endpoints = LeadEndpointLayout.endpoints(context.level, connection, connections);
+        Vec3 endpointA = endpoints.from();
+        Vec3 endpointB = endpoints.to();
+        if (endpointA.distanceTo(endpointB) < 1.0e-6D)
+            return;
+
+        RopeTuning tuning = RopeTuning.forConnection(connection);
+        Vec3 fallback = RopeSagModel.stableUnitVector(connection.id().getLeastSignificantBits());
+        final int segments = 16;
+        for (int i = 0; i < segments; i++) {
+            double t0 = i / (double) segments;
+            double t1 = (i + 1) / (double) segments;
+            Vec3 segA = simpleSagPoint(endpointA, endpointB, t0, tuning, fallback);
+            Vec3 segB = simpleSagPoint(endpointA, endpointB, t1, tuning, fallback);
+            for (int sample = 0; sample <= 4; sample++) {
+                double frac = sample / 4.0D;
+                search.consider(connection.id(), context,
+                        segA.x + (segB.x - segA.x) * frac,
+                        segA.y + (segB.y - segA.y) * frac,
+                        segA.z + (segB.z - segA.z) * frac,
+                        Math.max(0.02D, Math.min(0.98D, t0 + (t1 - t0) * frac)),
+                        segA, segB);
+            }
+        }
     }
 
     private static Vec3 simpleSagPoint(Vec3 a, Vec3 b, double t, RopeTuning tuning, Vec3 fallback) {
         return RopeSagModel.point(a, b, t, tuning.slack(), tuning.gravity(), fallback);
+    }
+
+    private static final class ZiplinePickContext {
+        final ClientLevel level;
+        final Vec3 cameraPos;
+        final double dirX;
+        final double dirY;
+        final double dirZ;
+        final double maxDistance;
+
+        private ZiplinePickContext(ClientLevel level, Vec3 cameraPos,
+                double dirX, double dirY, double dirZ, double maxDistance) {
+            this.level = level;
+            this.cameraPos = cameraPos;
+            this.dirX = dirX;
+            this.dirY = dirY;
+            this.dirZ = dirZ;
+            this.maxDistance = maxDistance;
+        }
+
+        static ZiplinePickContext from(Minecraft mc) {
+            Player player = mc.player;
+            ClientLevel level = mc.level;
+            if (player == null || level == null)
+                return null;
+            Camera camera = mc.gameRenderer.getMainCamera();
+            Vec3 cameraPos = camera.position();
+            var fwd = camera.forwardVector();
+            double dirX = fwd.x(), dirY = fwd.y(), dirZ = fwd.z();
+            double inv = 1.0D / Math.sqrt(dirX * dirX + dirY * dirY + dirZ * dirZ);
+            double maxDistance = ziplineMaxDistance(mc, cameraPos);
+            return new ZiplinePickContext(level, cameraPos, dirX * inv, dirY * inv, dirZ * inv, maxDistance);
+        }
+
+        private static double ziplineMaxDistance(Minecraft mc, Vec3 cameraPos) {
+            double maxDistance = SuperLeadNetwork.MAX_LEASH_DISTANCE;
+            net.minecraft.world.phys.HitResult hit = mc.hitResult;
+            if (hit != null && hit.getType() != net.minecraft.world.phys.HitResult.Type.MISS) {
+                return Math.min(maxDistance, hit.getLocation().distanceTo(cameraPos) + ZIPLINE_PICK_RADIUS);
+            }
+            return maxDistance;
+        }
+    }
+
+    private static final class ZiplinePickSearch {
+        private double bestDistSqr = ZIPLINE_PICK_RADIUS * ZIPLINE_PICK_RADIUS;
+        private UUID bestId;
+        private double bestT = 0.5D;
+        private Vec3 bestPoint = Vec3.ZERO;
+        private Vec3 bestA = Vec3.ZERO;
+        private Vec3 bestB = Vec3.ZERO;
+
+        void consider(UUID connectionId, ZiplinePickContext context,
+                double px, double py, double pz, double t, Vec3 a, Vec3 b) {
+            if (!isBetter(context, px, py, pz))
+                return;
+            bestId = connectionId;
+            bestT = t;
+            bestPoint = new Vec3(px, py, pz);
+            bestA = a;
+            bestB = b;
+        }
+
+        void considerSegment(UUID connectionId, ZiplinePickContext context,
+                double px, double py, double pz, double t,
+                double ax, double ay, double az, double bx, double by, double bz) {
+            if (!isBetter(context, px, py, pz))
+                return;
+            bestId = connectionId;
+            bestT = t;
+            bestPoint = new Vec3(px, py, pz);
+            bestA = new Vec3(ax, ay, az);
+            bestB = new Vec3(bx, by, bz);
+        }
+
+        private boolean isBetter(ZiplinePickContext context, double px, double py, double pz) {
+            double distanceSqr = RopePickMath.distancePointToRaySqr(px, py, pz,
+                    context.cameraPos.x, context.cameraPos.y, context.cameraPos.z,
+                    context.dirX, context.dirY, context.dirZ, context.maxDistance);
+            if (distanceSqr >= bestDistSqr)
+                return false;
+            bestDistSqr = distanceSqr;
+            return true;
+        }
+
+        AttachPick result() {
+            return bestId == null ? null : new AttachPick(bestId, bestT, bestPoint, bestA, bestB);
+        }
     }
 
     /** Picks the existing attachment closest to the player's crosshair. */
