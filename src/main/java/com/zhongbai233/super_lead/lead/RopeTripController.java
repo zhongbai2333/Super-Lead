@@ -84,8 +84,9 @@ final class RopeTripController {
         player.setDeltaMovement(0.0D, Math.min(motion.y, 0.0D), 0.0D);
         player.hurtMarked = true;
         player.connection.send(new ClientboundSetEntityMotionPacket(player));
-        PacketDistributor.sendToPlayer(player,
-                SyncRopeTripState.active(CRAWL_TICKS, startX, startZ, target.x, target.z, FALL_TICKS));
+        SyncRopeTripState payload = SyncRopeTripState.active(player.getId(), CRAWL_TICKS, startX, startZ,
+                target.x, target.z, FALL_TICKS);
+        PacketDistributor.sendToPlayersTrackingEntityAndSelf(player, payload);
         player.hurtServer(level, player.damageSources().fall(), 1.0F);
         player.resetFallDistance();
         FORCED_CRAWLS.computeIfAbsent(NetworkKey.of(level), ignored -> new HashMap<>())
@@ -102,7 +103,8 @@ final class RopeTripController {
                 ServerPlayer player = level.getServer().getPlayerList().getPlayer(entry.getKey());
                 if (player == null || player.level() != level || !player.isAlive()) {
                     if (player != null) {
-                        PacketDistributor.sendToPlayer(player, SyncRopeTripState.inactive());
+                        PacketDistributor.sendToPlayersTrackingEntityAndSelf(player,
+                                SyncRopeTripState.inactive(player.getId()));
                     }
                     return true;
                 }
@@ -134,7 +136,8 @@ final class RopeTripController {
                 if (player.getForcedPose() == Pose.SWIMMING) {
                     player.setForcedPose(null);
                 }
-                PacketDistributor.sendToPlayer(player, SyncRopeTripState.inactive());
+                PacketDistributor.sendToPlayersTrackingEntityAndSelf(player,
+                        SyncRopeTripState.inactive(player.getId()));
                 return true;
             });
             if (crawls.isEmpty()) {
@@ -165,7 +168,8 @@ final class RopeTripController {
         if (player.getForcedPose() == Pose.SWIMMING) {
             player.setForcedPose(null);
         }
-        PacketDistributor.sendToPlayer(player, SyncRopeTripState.inactive());
+        PacketDistributor.sendToPlayersTrackingEntityAndSelf(player,
+                SyncRopeTripState.inactive(player.getId()));
     }
 
     static void clear(ServerLevel level) {

@@ -39,8 +39,8 @@ class SuperLeadSavedDataTest {
 
         data.update(connection.id(), old -> new LeadConnection(old.id(), old.from(),
                 new LeadAnchor(new BlockPos(-32, 64, 0), Direction.UP), old.kind(), old.power(), old.tier(),
-                old.extractAnchor(), old.attachments(), old.physicsPreset(), old.manualPhysicsPreset(),
-                old.adventureOwner()), true);
+                old.extractAnchor(), old.lengthUnits(), old.attachments(), old.physicsPreset(),
+                old.manualPhysicsPreset(), old.adventureOwner()), true);
 
         Set<Long> expectedDirty = Set.of(
                 SuperLeadSavedData.chunkKey(0, 0),
@@ -68,9 +68,18 @@ class SuperLeadSavedDataTest {
         assertEquals(1, data.connectionsOfKindFast(LeadKind.FLUID).size());
     }
 
+    @Test
+    void lengthUnitsAreClamped() {
+        LeadConnection connection = connection("00000000-0000-0000-0000-000000000004",
+                new BlockPos(0, 64, 0), new BlockPos(4, 64, 0), LeadKind.NORMAL);
+
+        assertEquals(LeadConnection.MIN_LENGTH_UNITS, connection.withLengthUnits(0).lengthUnits());
+        assertEquals(LeadConnection.MAX_LENGTH_UNITS, connection.withLengthUnits(99).lengthUnits());
+    }
+
     private static LeadConnection connection(String id, BlockPos from, BlockPos to, LeadKind kind) {
         return new LeadConnection(UUID.fromString(id), new LeadAnchor(from, Direction.UP),
-                new LeadAnchor(to, Direction.UP), kind, 0, 0, 0, List.of(),
+                new LeadAnchor(to, Direction.UP), kind, 0, 0, 0, LeadConnection.MIN_LENGTH_UNITS, List.of(),
                 LeadConnection.NO_PHYSICS_PRESET, LeadConnection.NO_PHYSICS_PRESET,
                 LeadConnection.NO_ADVENTURE_OWNER);
     }

@@ -10,10 +10,10 @@ import net.minecraft.world.phys.Vec3;
  *
  * <p>
  * This layer resolves soft collisions against nearby entities and records
- * contact candidates for gameplay pulses. It sits above terrain constraints so
- * block collision has already stabilized particle positions before entity
- * pushes
- * are applied.
+ * contact candidates for gameplay pulses. It runs <em>before</em> terrain
+ * constraints so that block collision always has the final word — when a
+ * player pushes a rope against a wall the rope slides into the player's
+ * bounding box rather than clipping into blocks.
  */
 abstract class RopeSimulationContactConstraints extends RopeSimulationTerrainConstraints {
     private static final double ENTITY_FOOT_SUPPORT_HEIGHT = 0.18D;

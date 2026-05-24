@@ -15,8 +15,15 @@ record ServerPhysicsTuning(
         int segmentMax,
         double damping,
         int iterAir,
+        int iterContact,
         double compliance,
+        double ropeRadius,
+        double terrainRadius,
+        double collisionEps,
+        double entityPushGain,
         boolean pushbackEnabled,
+        boolean parrotPathfindingEnabled,
+        boolean playerZiplineEnabled,
         double contactRadius,
         double springK,
         double velocityDamping,
@@ -33,7 +40,19 @@ record ServerPhysicsTuning(
         double ziplineRedstoneAccelerationMultiplier,
         double maxSolvedSag,
         double sagArcApproxFactor,
-        double fullSlackHorizontalRatio) {
+        double fullSlackHorizontalRatio,
+        boolean windEnabled,
+        double windStrength,
+        double windStrengthJitter,
+        double windDirectionDeg,
+        double windDirectionJitterDeg,
+        double windWaveLength,
+        double windSpeed,
+        double windDuty,
+        double windDurationJitter,
+        double windPauseJitter,
+        double windRampBias,
+        double windVerticalLift) {
     private static final double CONTACT_RADIUS_FALLBACK = ClientTuning.CONTACT_RADIUS.defaultValue;
     private static final double SPRING_K_FALLBACK = ClientTuning.CONTACT_SPRING.defaultValue;
     private static final double SPRING_K_MINIMUM = 0.30D;
@@ -67,10 +86,24 @@ record ServerPhysicsTuning(
                 ClientTuning.DAMPING, ClientTuning.DAMPING.defaultValue);
         int iterAir = parseInt(overrides.get(ClientTuning.ITER_AIR.id),
                 ClientTuning.ITER_AIR, ClientTuning.ITER_AIR.defaultValue);
+        int iterContact = parseInt(overrides.get(ClientTuning.ITER_CONTACT.id),
+                ClientTuning.ITER_CONTACT, ClientTuning.ITER_CONTACT.defaultValue);
         double compliance = parseDouble(overrides.get(ClientTuning.COMPLIANCE.id),
                 ClientTuning.COMPLIANCE, ClientTuning.COMPLIANCE.defaultValue);
+        double ropeRadius = parseDouble(ClientTuning.overrideValue(overrides, ClientTuning.ROPE_RADIUS_K),
+                ClientTuning.ROPE_RADIUS_K, ClientTuning.ROPE_RADIUS_K.defaultValue);
+        double terrainRadius = parseDouble(ClientTuning.overrideValue(overrides, ClientTuning.TERRAIN_RADIUS_K),
+                ClientTuning.TERRAIN_RADIUS_K, ClientTuning.TERRAIN_RADIUS_K.defaultValue);
+        double collisionEps = parseDouble(ClientTuning.overrideValue(overrides, ClientTuning.COLLISION_EPS),
+                ClientTuning.COLLISION_EPS, ClientTuning.COLLISION_EPS.defaultValue);
+        double entityPushGain = parseDouble(ClientTuning.overrideValue(overrides, ClientTuning.ENTITY_PUSH_GAIN),
+                ClientTuning.ENTITY_PUSH_GAIN, ClientTuning.ENTITY_PUSH_GAIN.defaultValue);
         boolean pushbackEnabled = parseBool(overrides.get(ClientTuning.CONTACT_PUSHBACK.id),
                 ClientTuning.CONTACT_PUSHBACK.defaultValue);
+        boolean parrotPathfindingEnabled = parseBool(overrides.get(ClientTuning.CONTACT_PARROT_PATHFINDING.id),
+                ClientTuning.CONTACT_PARROT_PATHFINDING.defaultValue);
+        boolean playerZiplineEnabled = parseBool(overrides.get(ClientTuning.CONTACT_PLAYER_ZIPLINE.id),
+                ClientTuning.CONTACT_PLAYER_ZIPLINE.defaultValue);
         double contactRadius = parseDouble(overrides.get(ClientTuning.CONTACT_RADIUS.id),
                 ClientTuning.CONTACT_RADIUS, CONTACT_RADIUS_FALLBACK);
         double springK = Math.max(SPRING_K_MINIMUM,
@@ -107,14 +140,46 @@ record ServerPhysicsTuning(
                 overrides.get(ClientTuning.ZIPLINE_REDSTONE_ACCELERATION_MULTIPLIER.id),
                 ClientTuning.ZIPLINE_REDSTONE_ACCELERATION_MULTIPLIER,
                 ClientTuning.ZIPLINE_REDSTONE_ACCELERATION_MULTIPLIER.defaultValue);
+        boolean windEnabled = parseBool(ClientTuning.overrideValue(overrides, ClientTuning.WIND_ENABLED),
+                ClientTuning.WIND_ENABLED.defaultValue);
+        double windStrength = parseDouble(ClientTuning.overrideValue(overrides, ClientTuning.WIND_STRENGTH),
+                ClientTuning.WIND_STRENGTH, ClientTuning.WIND_STRENGTH.defaultValue);
+        double windStrengthJitter = parseDouble(
+                ClientTuning.overrideValue(overrides, ClientTuning.WIND_STRENGTH_JITTER),
+                ClientTuning.WIND_STRENGTH_JITTER, ClientTuning.WIND_STRENGTH_JITTER.defaultValue);
+        double windDirectionDeg = parseDouble(ClientTuning.overrideValue(overrides, ClientTuning.WIND_DIRECTION_DEG),
+                ClientTuning.WIND_DIRECTION_DEG, ClientTuning.WIND_DIRECTION_DEG.defaultValue);
+        double windDirectionJitterDeg = parseDouble(
+                ClientTuning.overrideValue(overrides, ClientTuning.WIND_DIRECTION_JITTER_DEG),
+                ClientTuning.WIND_DIRECTION_JITTER_DEG, ClientTuning.WIND_DIRECTION_JITTER_DEG.defaultValue);
+        double windWaveLength = parseDouble(ClientTuning.overrideValue(overrides, ClientTuning.WIND_WAVELENGTH),
+                ClientTuning.WIND_WAVELENGTH, ClientTuning.WIND_WAVELENGTH.defaultValue);
+        double windSpeed = parseDouble(ClientTuning.overrideValue(overrides, ClientTuning.WIND_SPEED),
+                ClientTuning.WIND_SPEED, ClientTuning.WIND_SPEED.defaultValue);
+        double windDuty = parseDouble(ClientTuning.overrideValue(overrides, ClientTuning.WIND_DUTY),
+                ClientTuning.WIND_DUTY, ClientTuning.WIND_DUTY.defaultValue);
+        double windDurationJitter = parseDouble(
+                ClientTuning.overrideValue(overrides, ClientTuning.WIND_DURATION_JITTER),
+                ClientTuning.WIND_DURATION_JITTER, ClientTuning.WIND_DURATION_JITTER.defaultValue);
+        double windPauseJitter = parseDouble(ClientTuning.overrideValue(overrides, ClientTuning.WIND_PAUSE_JITTER),
+                ClientTuning.WIND_PAUSE_JITTER, ClientTuning.WIND_PAUSE_JITTER.defaultValue);
+        double windRampBias = parseDouble(ClientTuning.overrideValue(overrides, ClientTuning.WIND_RAMP_BIAS),
+                ClientTuning.WIND_RAMP_BIAS, ClientTuning.WIND_RAMP_BIAS.defaultValue);
+        double windVerticalLift = parseDouble(ClientTuning.overrideValue(overrides, ClientTuning.WIND_VERTICAL_LIFT),
+                ClientTuning.WIND_VERTICAL_LIFT, ClientTuning.WIND_VERTICAL_LIFT.defaultValue);
         return new ServerPhysicsTuning(physicsEnabled, gravity, slack,
-                segmentLength, segmentMax, damping, iterAir, compliance,
-                pushbackEnabled, contactRadius, springK, velocityDamping, maxRecoilPerTick,
+                segmentLength, segmentMax, damping, iterAir, iterContact, compliance,
+                ropeRadius, terrainRadius, collisionEps, entityPushGain,
+                pushbackEnabled, parrotPathfindingEnabled, playerZiplineEnabled,
+                contactRadius, springK, velocityDamping, maxRecoilPerTick,
                 contactTopNormalThreshold, contactSideAbsorb, contactSideIntentRelease, contactSideDeadbandRatio,
                 pushbackEnableDepth,
                 tripEnabled, tripChance, tripCooldownTicks,
                 ziplineSpeedLimit, ziplineRedstoneAccelerationMultiplier,
-                MAX_SOLVED_SAG_FALLBACK, SAG_ARC_APPROX_FACTOR_FALLBACK, FULL_SLACK_HORIZONTAL_RATIO_FALLBACK);
+                MAX_SOLVED_SAG_FALLBACK, SAG_ARC_APPROX_FACTOR_FALLBACK, FULL_SLACK_HORIZONTAL_RATIO_FALLBACK,
+                windEnabled, windStrength, windStrengthJitter, windDirectionDeg, windDirectionJitterDeg,
+                windWaveLength, windSpeed, windDuty, windDurationJitter, windPauseJitter, windRampBias,
+                windVerticalLift);
     }
 
     private static double parseDouble(String raw, TuningKey<Double> key, double fallback) {

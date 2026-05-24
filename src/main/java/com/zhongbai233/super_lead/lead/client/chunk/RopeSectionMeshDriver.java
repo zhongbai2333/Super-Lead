@@ -24,7 +24,7 @@ public final class RopeSectionMeshDriver {
      * Static ropes are vertex-colored, but the chunk solid buffer still requires
      * UVs. This neutral atlas sprite is only used as a UV source.
      */
-    private static final Identifier NEUTRAL_UV_SPRITE_ID = Identifier.withDefaultNamespace("block/white_concrete");
+    private static final Identifier NEUTRAL_UV_SPRITE_ID = Identifier.withDefaultNamespace("misc/white");
 
     private RopeSectionMeshDriver() {
     }
@@ -65,7 +65,7 @@ public final class RopeSectionMeshDriver {
             return null;
         try {
             TextureAtlas atlas = mc.getAtlasManager().getAtlasOrThrow(AtlasIds.BLOCKS);
-            return atlas.getSprite(NEUTRAL_UV_SPRITE_ID);
+            return atlas.getTextures().get(NEUTRAL_UV_SPRITE_ID);
         } catch (RuntimeException ignored) {
             return null;
         }

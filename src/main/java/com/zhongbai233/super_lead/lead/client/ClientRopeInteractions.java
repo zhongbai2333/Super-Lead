@@ -17,7 +17,10 @@ import com.zhongbai233.super_lead.lead.client.render.RopeAttachmentRenderer;
 import com.zhongbai233.super_lead.lead.client.sim.RopeSimulation;
 import com.zhongbai233.super_lead.lead.client.sim.RopeTuning;
 import com.zhongbai233.super_lead.lead.physics.RopeSagModel;
+import com.zhongbai233.super_lead.preset.client.PhysicsZonesClient;
+import com.zhongbai233.super_lead.tuning.ClientTuning;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
@@ -390,7 +393,14 @@ final class ClientRopeInteractions {
         dirX *= inv;
         dirY *= inv;
         dirZ *= inv;
-        double maxDistance = SuperLeadNetwork.MAX_LEASH_DISTANCE;
+        double maxDistance = SuperLeadNetwork.maxExtendedLeashDistance();
+        net.minecraft.world.phys.HitResult hitResult = mc.hitResult;
+        if (hitResult != null && hitResult.getType() != net.minecraft.world.phys.HitResult.Type.MISS) {
+            double hitDist = hitResult.getLocation().distanceTo(cameraPos);
+            maxDistance = Math.min(maxDistance, hitDist + ATTACH_PICK_RADIUS);
+        } else if (player != null) {
+            maxDistance = Math.min(maxDistance, player.blockInteractionRange() + 2.0D);
+        }
         double bestDistSqr = ATTACH_PICK_RADIUS * ATTACH_PICK_RADIUS;
         UUID bestId = null;
         double bestT = 0.5D;
@@ -462,7 +472,30 @@ final class ClientRopeInteractions {
     private static boolean isZiplinePickable(LeadConnection connection) {
         LeadKind kind = connection.kind();
         return (kind == LeadKind.NORMAL || kind == LeadKind.REDSTONE)
-                && !connection.physicsPreset().isBlank();
+                && playerZiplineEnabled(connection);
+    }
+
+    private static boolean playerZiplineEnabled(LeadConnection connection) {
+        if (connection.physicsPreset().isBlank() || !PhysicsZonesClient.hasPreset(connection.physicsPreset())) {
+            return false;
+        }
+        return resolveBool(PhysicsZonesClient.overridesForPreset(connection.physicsPreset()),
+                ClientTuning.CONTACT_PLAYER_ZIPLINE);
+    }
+
+    private static boolean resolveBool(Map<String, String> overrides,
+            com.zhongbai233.super_lead.tuning.TuningKey<Boolean> key) {
+        String raw = overrides.get(key.id);
+        if (raw != null) {
+            try {
+                Boolean parsed = key.type.parse(raw);
+                if (key.type.validate(parsed)) {
+                    return parsed;
+                }
+            } catch (RuntimeException ignored) {
+            }
+        }
+        return key.defaultValue;
     }
 
     private static void searchSimZipline(
@@ -540,15 +573,17 @@ final class ClientRopeInteractions {
 
     private static final class ZiplinePickContext {
         final ClientLevel level;
+        final Player player;
         final Vec3 cameraPos;
         final double dirX;
         final double dirY;
         final double dirZ;
         final double maxDistance;
 
-        private ZiplinePickContext(ClientLevel level, Vec3 cameraPos,
+        private ZiplinePickContext(ClientLevel level, Player player, Vec3 cameraPos,
                 double dirX, double dirY, double dirZ, double maxDistance) {
             this.level = level;
+            this.player = player;
             this.cameraPos = cameraPos;
             this.dirX = dirX;
             this.dirY = dirY;
@@ -567,14 +602,17 @@ final class ClientRopeInteractions {
             double dirX = fwd.x(), dirY = fwd.y(), dirZ = fwd.z();
             double inv = 1.0D / Math.sqrt(dirX * dirX + dirY * dirY + dirZ * dirZ);
             double maxDistance = ziplineMaxDistance(mc, cameraPos);
-            return new ZiplinePickContext(level, cameraPos, dirX * inv, dirY * inv, dirZ * inv, maxDistance);
+            return new ZiplinePickContext(level, player, cameraPos, dirX * inv, dirY * inv, dirZ * inv, maxDistance);
         }
 
         private static double ziplineMaxDistance(Minecraft mc, Vec3 cameraPos) {
-            double maxDistance = SuperLeadNetwork.MAX_LEASH_DISTANCE;
+            double maxDistance = SuperLeadNetwork.maxExtendedLeashDistance();
             net.minecraft.world.phys.HitResult hit = mc.hitResult;
             if (hit != null && hit.getType() != net.minecraft.world.phys.HitResult.Type.MISS) {
                 return Math.min(maxDistance, hit.getLocation().distanceTo(cameraPos) + ZIPLINE_PICK_RADIUS);
+            }
+            if (mc.player != null) {
+                return Math.min(maxDistance, mc.player.blockInteractionRange() + 2.0D);
             }
             return maxDistance;
         }
@@ -612,6 +650,9 @@ final class ClientRopeInteractions {
         }
 
         private boolean isBetter(ZiplinePickContext context, double px, double py, double pz) {
+            if (!ZiplineController.canReachStartPoint(context.player, px, py, pz)) {
+                return false;
+            }
             double distanceSqr = RopePickMath.distancePointToRaySqr(px, py, pz,
                     context.cameraPos.x, context.cameraPos.y, context.cameraPos.z,
                     context.dirX, context.dirY, context.dirZ, context.maxDistance);
@@ -653,10 +694,12 @@ final class ClientRopeInteractions {
         dirX *= inv;
         dirY *= inv;
         dirZ *= inv;
-        double maxDistance = SuperLeadNetwork.MAX_LEASH_DISTANCE;
+        double maxDistance = SuperLeadNetwork.maxExtendedLeashDistance();
         net.minecraft.world.phys.HitResult hit = mc.hitResult;
         if (hit != null && hit.getType() != net.minecraft.world.phys.HitResult.Type.MISS) {
             maxDistance = Math.min(maxDistance, hit.getLocation().distanceTo(cameraPos) + (removalMode ? 2.0D : 0.6D));
+        } else if (mc.player != null) {
+            maxDistance = Math.min(maxDistance, mc.player.blockInteractionRange() + 2.0D);
         }
         double bestDistSqr = (removalMode ? 1.20D : 0.6D) * (removalMode ? 1.20D : 0.6D);
         UUID bestConnId = null;

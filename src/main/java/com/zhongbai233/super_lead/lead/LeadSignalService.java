@@ -84,15 +84,35 @@ final class LeadSignalService {
             }
 
             final int componentPower = power;
+
+            // Collect connections whose power actually changed before updating,
+            // so we can rebuild the REDSTONE_POS_INDEX with fresh data before
+            // notifying neighbors. Otherwise getSignal() queries inside
+            // updateNeighborsAt would read stale LeadConnection objects from
+            // the index and return the old (non-zero) power, causing the
+            // signal to "stick" until the next block update.
+            List<LeadConnection> changedInComponent = new ArrayList<>();
             for (int index : component) {
                 LeadConnection connection = redstoneConnections.get(index);
                 if (connection.power() == componentPower) {
                     continue;
                 }
 
+                LeadConnection updated = connection.withPower(componentPower);
                 changed |= data.update(connection.id(), oldConnection -> oldConnection.withPower(componentPower),
                         false);
-                notifyRedstoneChange(level, connection.withPower(componentPower));
+                changedInComponent.add(updated);
+            }
+
+            if (!changedInComponent.isEmpty()) {
+                // Rebuild the pos index so leadSignalServer returns the new
+                // power when neighbor blocks re-evaluate during
+                // notifyRedstoneChange below.
+                rebuildRedstonePosIndex(level, data.connectionsOfKindFast(LeadKind.REDSTONE));
+
+                for (LeadConnection updated : changedInComponent) {
+                    notifyRedstoneChange(level, updated);
+                }
             }
         }
 
@@ -213,32 +233,143 @@ final class LeadSignalService {
 
     private static void transferEnergyComponent(ServerLevel level, List<Integer> component,
             List<LeadConnection> energyConnections, Set<UUID> transferredIds, EnergyHandlerCache energyHandlers) {
-        List<EnergyEndpoint> endpoints = new ArrayList<>();
+        // --- determine mode and build endpoint lists ---
+        // Directional mode: at least one connection has extractAnchor != 0.
+        // In that mode energy only flows from extractSource -> extractTarget.
+        // Equalization mode (legacy): all endpoints participate, flow from
+        // fuller to emptier.
+        boolean directional = false;
+        for (int index : component) {
+            if (energyConnections.get(index).extractAnchor() != 0) {
+                directional = true;
+                break;
+            }
+        }
+
+        List<EnergyEndpoint> sources = new ArrayList<>();
+        List<EnergyEndpoint> targets = new ArrayList<>();
         Set<LeadAnchor> seenAnchors = new HashSet<>();
-        int componentRate = 0;
+
+        long componentRate = 0;
         long base = Config.energyBaseTransfer();
         for (int index : component) {
             LeadConnection connection = energyConnections.get(index);
             int tier = Math.min(30, connection.tier());
             long rate = base << tier;
-            componentRate = (int) Math.min(Integer.MAX_VALUE, (long) componentRate + rate);
-            addEnergyEndpoint(level, connection.from(), endpoints, seenAnchors, energyHandlers);
-            addEnergyEndpoint(level, connection.to(), endpoints, seenAnchors, energyHandlers);
+            componentRate = Math.min(Integer.MAX_VALUE, componentRate + rate);
+
+            if (directional) {
+                LeadAnchor src = connection.extractSource();
+                if (src != null && seenAnchors.add(src)) {
+                    EnergyHandler handler = energyHandlers.get(level, src);
+                    if (handler != null && handler.getCapacityAsLong() > 0L) {
+                        sources.add(new EnergyEndpoint(src, handler));
+                    }
+                }
+                LeadAnchor tgt = connection.extractTarget();
+                if (tgt != null && seenAnchors.add(tgt)) {
+                    EnergyHandler handler = energyHandlers.get(level, tgt);
+                    if (handler != null && handler.getCapacityAsLong() > 0L) {
+                        targets.add(new EnergyEndpoint(tgt, handler));
+                    }
+                }
+            } else {
+                addEnergyEndpoint(level, connection.from(), targets, seenAnchors, energyHandlers);
+                addEnergyEndpoint(level, connection.to(), targets, seenAnchors, energyHandlers);
+            }
         }
 
-        int epCount = endpoints.size();
-        if (epCount < 2 || componentRate <= 0) {
+        long remaining = componentRate;
+        if (remaining <= 0) {
             return;
         }
 
-        // Sort by fill ratio descending: energy flows from fuller to emptier.
-        // This reduces the O(n²) naive pairwise loop to O(n log n + n).
+        boolean componentMoved;
+        if (directional) {
+            componentMoved = transferDirectional(sources, targets, remaining);
+        } else {
+            componentMoved = transferEqualizing(targets, remaining);
+        }
+
+        if (componentMoved) {
+            for (int index : component) {
+                transferredIds.add(energyConnections.get(index).id());
+            }
+        }
+    }
+
+    /**
+     * Directional transfer: move energy from source endpoints to target endpoints.
+     * Sources are drained completely (subject to the per-tick rate cap).
+     * Targets only receive; they never send energy back.
+     */
+    private static boolean transferDirectional(List<EnergyEndpoint> sources, List<EnergyEndpoint> targets,
+            long rateCap) {
+        if (sources.isEmpty() || targets.isEmpty()) {
+            return false;
+        }
+
+        // Sources sorted by fill ratio descending (fullest first).
+        sources.sort((x, y) -> Double.compare(energyFillRatio(y.handler()), energyFillRatio(x.handler())));
+        // Targets sorted by fill ratio ascending (emptiest first).
+        targets.sort((x, y) -> Double.compare(energyFillRatio(x.handler()), energyFillRatio(y.handler())));
+
+        long remaining = rateCap;
+        boolean moved = false;
+        int si = 0;
+        int ti = 0;
+
+        while (si < sources.size() && ti < targets.size() && remaining > 0) {
+            EnergyEndpoint source = sources.get(si);
+            double srcFill = energyFillRatio(source.handler());
+            if (srcFill <= 0.0D) {
+                si++;
+                continue;
+            }
+
+            EnergyEndpoint target = targets.get(ti);
+            double tgtFill = energyFillRatio(target.handler());
+            if (tgtFill >= 1.0D) {
+                ti++;
+                continue;
+            }
+
+            int maxAmount = remaining > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) remaining;
+            int transferred = transferEnergy(source.handler(), target.handler(), maxAmount);
+            if (transferred > 0) {
+                remaining -= transferred;
+                moved = true;
+            }
+
+            // Re-evaluate fill after transfer
+            if (energyFillRatio(source.handler()) <= 0.0D || transferred == 0) {
+                si++;
+            }
+            if (energyFillRatio(target.handler()) >= 1.0D || transferred == 0) {
+                ti++;
+            }
+        }
+        return moved;
+    }
+
+    /**
+     * Equalization mode (legacy): energy flows from fuller to emptier across all
+     * endpoints, respecting the per-tick rate cap.
+     */
+    private static boolean transferEqualizing(List<EnergyEndpoint> endpoints, long rateCap) {
+        int epCount = endpoints.size();
+        if (epCount < 2) {
+            return false;
+        }
+
         endpoints.sort((x, y) -> Double.compare(energyFillRatio(y.handler()), energyFillRatio(x.handler())));
 
-        boolean componentMoved = false;
+        long remaining = rateCap;
+        boolean moved = false;
         int lo = 0;
         int hi = epCount - 1;
-        while (lo < hi) {
+
+        while (lo < hi && remaining > 0) {
             EnergyEndpoint full = endpoints.get(lo);
             double fillFull = energyFillRatio(full.handler());
             if (fillFull <= 0.0D) {
@@ -252,23 +383,20 @@ final class LeadSignalService {
             if (fillFull <= fillEmpty + 1.0e-6D) {
                 break;
             }
-            int moved = transferEnergy(full.handler(), empty.handler(), componentRate);
-            if (moved > 0) {
-                componentMoved = true;
+            int maxAmount = remaining > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) remaining;
+            int transferred = transferEnergy(full.handler(), empty.handler(), maxAmount);
+            if (transferred > 0) {
+                remaining -= transferred;
+                moved = true;
             }
-            // Advance pointers: full side if still has energy, empty side if satiated
-            if (energyFillRatio(full.handler()) <= 0.0D || moved == 0) {
+            if (energyFillRatio(full.handler()) <= 0.0D || transferred == 0) {
                 lo++;
             }
-            if (energyFillRatio(empty.handler()) >= 1.0D || moved == 0) {
+            if (energyFillRatio(empty.handler()) >= 1.0D || transferred == 0) {
                 hi--;
             }
         }
-        if (componentMoved) {
-            for (int index : component) {
-                transferredIds.add(energyConnections.get(index).id());
-            }
-        }
+        return moved;
     }
 
     private static void addEnergyEndpoint(ServerLevel level, LeadAnchor anchor, List<EnergyEndpoint> endpoints,

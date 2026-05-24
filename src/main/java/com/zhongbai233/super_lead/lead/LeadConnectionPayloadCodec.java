@@ -23,6 +23,7 @@ final class LeadConnectionPayloadCodec {
         buffer.writeVarInt(connection.power());
         buffer.writeVarInt(connection.tier());
         buffer.writeVarInt(connection.extractAnchor());
+        buffer.writeVarInt(connection.lengthUnits());
         buffer.writeUtf(connection.physicsPreset(), 64);
         buffer.writeUtf(connection.manualPhysicsPreset(), 64);
         buffer.writeBoolean(connection.adventurePlaced());
@@ -43,6 +44,7 @@ final class LeadConnectionPayloadCodec {
         int power = buffer.readVarInt();
         int tier = buffer.readVarInt();
         int extract = buffer.readVarInt();
+        int lengthUnits = buffer.readVarInt();
         String physicsPreset = buffer.readUtf(64);
         String manualPhysicsPreset = buffer.readUtf(64);
         UUID adventureOwner = buffer.readBoolean()
@@ -53,7 +55,7 @@ final class LeadConnectionPayloadCodec {
         for (int j = 0; j < attachCount; j++) {
             attachments.add(RopeAttachment.STREAM_CODEC.decode(buffer));
         }
-        return new LeadConnection(id, from, to, kind, power, tier, extract, attachments, physicsPreset,
+        return new LeadConnection(id, from, to, kind, power, tier, extract, lengthUnits, attachments, physicsPreset,
                 manualPhysicsPreset, adventureOwner);
     }
 

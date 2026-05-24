@@ -259,8 +259,6 @@ public final class SuperLeadPayloads {
             if (opt.isEmpty())
                 return;
             LeadConnection connection = opt.get();
-            if (!SuperLeadNetwork.canTouchConnectionForAttachment(level, player, connection))
-                return;
             SuperLeadNetwork.addAttachment(level, connection, payload.t(), stack.copyWithCount(1),
                     payload.frontSide());
             if (!creative) {
@@ -278,8 +276,6 @@ public final class SuperLeadPayloads {
             if (opt.isEmpty())
                 return;
             LeadConnection connection = opt.get();
-            if (!SuperLeadNetwork.canTouchConnectionForAttachmentRemoval(level, player, connection))
-                return;
             // Snapshot world position before removal so the particle lands where the item
             // was.
             net.minecraft.world.phys.Vec3 particlePos = null;
@@ -316,8 +312,6 @@ public final class SuperLeadPayloads {
             if (opt.isEmpty())
                 return;
             LeadConnection connection = opt.get();
-            if (!SuperLeadNetwork.canTouchConnectionForAttachment(level, player, connection))
-                return;
             SuperLeadNetwork.toggleAttachmentForm(level, connection, payload.attachmentId());
         });
     }
@@ -331,8 +325,6 @@ public final class SuperLeadPayloads {
                 return;
             LeadConnection connection = opt.get();
             if (connection.kind() != LeadKind.AE_NETWORK)
-                return;
-            if (!SuperLeadNetwork.canTouchConnectionForAttachment(level, player, connection))
                 return;
             for (RopeAttachment attachment : connection.attachments()) {
                 if (!attachment.id().equals(payload.attachmentId()))
@@ -356,8 +348,6 @@ public final class SuperLeadPayloads {
             if (opt.isEmpty())
                 return;
             LeadConnection connection = opt.get();
-            if (!SuperLeadNetwork.canTouchConnectionForAttachment(level, player, connection))
-                return;
             SuperLeadNetwork.updateAttachmentSignText(level, connection, payload.attachmentId(),
                     payload.frontText(), payload.lines());
         });
@@ -372,8 +362,6 @@ public final class SuperLeadPayloads {
             if (opt.isEmpty())
                 return;
             LeadConnection connection = opt.get();
-            if (!SuperLeadNetwork.canTouchConnectionForAttachment(level, player, connection))
-                return;
             if (payload.operation() == UpdateSignAttachmentAppearance.OP_GLOW) {
                 SuperLeadNetwork.applySignGlow(level, connection, payload.attachmentId(), payload.frontText());
             } else if (payload.operation() == UpdateSignAttachmentAppearance.OP_DYE) {
@@ -436,11 +424,6 @@ public final class SuperLeadPayloads {
             LeadConnection connection = opt.get();
             if (!action.canTarget(connection))
                 return;
-
-            if (!SuperLeadNetwork.canUseClientPickedConnection(level, player, connection,
-                    payload.hitPoint(), payload.hitT())) {
-                return;
-            }
 
             if (action.applyTo(level, player, connection, payload.hitPoint(), payload.hitT())) {
                 action.consumeSuccessfulUse(stack, player, hand);

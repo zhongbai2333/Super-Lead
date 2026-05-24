@@ -15,13 +15,15 @@ import net.minecraft.world.entity.MoverType;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
+import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import net.neoforged.neoforge.network.PacketDistributor;
 
 /** Server-authoritative zipline riding for sync-zone normal/redstone ropes. */
 public final class ZiplineController {
     // Pendulum-like 1D physics along the curve: signed velocity along arc-length,
-    // gravity projected onto local tangent, plus drag. Lets riders coast through dips
+    // gravity projected onto local tangent, plus drag. Lets riders coast through
+    // dips
     // and convert kinetic energy into climbing gentle uphills naturally.
     private static final double START_SPEED = 0.18D;
     private static final double MAX_NORMAL_SPEED = 0.82D;
@@ -42,11 +44,14 @@ public final class ZiplineController {
     private static final double HIGH_SPEED_CORRECTION_SCALE = 0.55D;
     private static final double HIGH_SPEED_CORRECTION_CAP = 0.78D;
     private static final double HARD_SNAP_DISTANCE_SQR = 2.25D;
+    private static final double COLLISION_SWEEP_STEP = 0.20D;
     private static final double KNOT_CLEARANCE_BLOCKS = 1.10D;
     private static final double IRON_BARS_KNOT_CLEARANCE_BLOCKS = 0.10D;
     private static final double MAX_KNOT_CLEARANCE_T = 0.42D;
     private static final double KNOT_SPEED_RETAIN = 0.98D;
     private static final double KNOT_FACING_TIE_EPSILON = 0.06D;
+    public static final double START_ATTACH_DISTANCE = 3.0D;
+    private static final double START_ATTACH_DISTANCE_SQR = START_ATTACH_DISTANCE * START_ATTACH_DISTANCE;
 
     private static final Map<NetworkKey, Map<UUID, RiderState>> STATES = new HashMap<>();
     private static final Map<NetworkKey, Integer> LAST_SENT_COUNT = new HashMap<>();
@@ -67,7 +72,8 @@ public final class ZiplineController {
         if (!Config.allowOpVisualPresets()) {
             return false;
         }
-        return ServerPhysicsTuning.loadServerPhysicsTuning(level, connection.physicsPreset()).physicsEnabled();
+        ServerPhysicsTuning tuning = ServerPhysicsTuning.loadServerPhysicsTuning(level, connection.physicsPreset());
+        return tuning.physicsEnabled() && tuning.playerZiplineEnabled();
     }
 
     public static boolean start(ServerLevel level, ServerPlayer player, LeadConnection connection,
@@ -84,13 +90,17 @@ public final class ZiplineController {
         if (!canRideConnection(level, connection)) {
             return false;
         }
+        if (!canReachStartPoint(player, hitPoint.x, hitPoint.y, hitPoint.z)) {
+            return false;
+        }
         if (!SuperLeadNetwork.canUseClientPickedConnection(level, player, connection, hitPoint, hitT)) {
             return false;
         }
 
         Curve curve = curve(level, connection, clamp(hitT, END_MARGIN, 1.0D - END_MARGIN));
         int direction = initialDirection(player, connection, curve);
-        // Project the player's current motion onto the chosen direction so a running jump
+        // Project the player's current motion onto the chosen direction so a running
+        // jump
         // keeps its momentum instead of being clamped to START_SPEED.
         double alongSpeed = player.getDeltaMovement().dot(curve.tangent().scale(direction));
         double maxV = maxSpeed(level, connection);
@@ -173,6 +183,37 @@ public final class ZiplineController {
                 || stack.is(Items.COPPER_CHAIN.waxedOxidized());
     }
 
+    public static boolean canReachStartPoint(Player player, double x, double y, double z) {
+        return player != null
+                && Double.isFinite(x)
+                && Double.isFinite(y)
+                && Double.isFinite(z)
+                && distancePointToBoxSqr(player.getBoundingBox(), x, y, z) <= START_ATTACH_DISTANCE_SQR;
+    }
+
+    public static boolean canReachConnectionStart(ServerLevel level, Player player, LeadConnection connection) {
+        if (level == null || player == null || connection == null) {
+            return false;
+        }
+        LeadEndpointLayout.Endpoints endpoints = LeadEndpointLayout.endpoints(level, connection,
+                SuperLeadNetwork.connections(level));
+        Vec3 a = endpoints.from();
+        Vec3 b = endpoints.to();
+        if (a == null || b == null) {
+            return false;
+        }
+        ServerRopeCurve.Shape shape = ServerRopeCurve.from(level, connection, a, b);
+        int samples = Math.max(8, (int) Math.ceil(shape.length() * 2.0D));
+        samples = Math.min(samples, 96);
+        for (int i = 0; i <= samples; i++) {
+            Vec3 point = ServerRopeCurve.point(shape, i / (double) samples);
+            if (canReachStartPoint(player, point.x, point.y, point.z)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private static boolean tickOne(ServerLevel level, ServerPlayer player, RiderState state) {
         if (!player.isAlive() || player.isSpectator() || !hasChain(player)) {
             finish(player, state, currentVelocity(level, state));
@@ -204,10 +245,14 @@ public final class ZiplineController {
         Vec3 tangent = curve.tangent();
         double maxV = maxSpeed(level, connection);
 
-        // Acceleration along the curve. Gravity acts in world -Y; its component along the
-        // unit tangent (which points from->to) is -G * tangent.y. This naturally produces
-        // the right sign: on a downhill in the +t direction tangent.y < 0 so a > 0 (speeds
-        // up forward motion); past the lowest point of a sag tangent.y > 0 so a < 0 (slows
+        // Acceleration along the curve. Gravity acts in world -Y; its component along
+        // the
+        // unit tangent (which points from->to) is -G * tangent.y. This naturally
+        // produces
+        // the right sign: on a downhill in the +t direction tangent.y < 0 so a > 0
+        // (speeds
+        // up forward motion); past the lowest point of a sag tangent.y > 0 so a < 0
+        // (slows
         // forward motion or speeds up reverse motion). No more direction flipping.
         double aGrav = -GRAVITY_ALONG_CURVE * tangent.y;
         double aPower = 0.0D;
@@ -241,7 +286,9 @@ public final class ZiplineController {
                 if (nextConnection.isPresent()) {
                     Curve nextCurve = curve(level, nextConnection.get(), state.t);
                     Vec3 nextMotion = nextCurve.tangent().scale(state.velocity);
-                    moveRider(player, state, nextCurve, nextMotion);
+                    if (!moveRider(player, state, nextCurve, nextMotion)) {
+                        return false;
+                    }
                 }
                 return true;
             }
@@ -252,17 +299,22 @@ public final class ZiplineController {
         state.t = clamp(nextT, END_MARGIN, 1.0D - END_MARGIN);
         curve = curve(level, connection, state.t);
         Vec3 motion = curve.tangent().scale(state.velocity);
-        moveRider(player, state, curve, motion);
-        return true;
+        return moveRider(player, state, curve, motion);
     }
 
-    private static void moveRider(ServerPlayer player, RiderState state, Curve curve, Vec3 motion) {
+    private static boolean moveRider(ServerPlayer player, RiderState state, Curve curve, Vec3 motion) {
         Vec3 feet = curve.point().add(0.0D, -HANG_HEIGHT, 0.0D);
         Vec3 desiredMotion = smoothRideMotion(player.position(), feet, motion, correctionLimit(state));
+        boolean snap = state.forceSnap || player.position().distanceToSqr(feet) > HARD_SNAP_DISTANCE_SQR
+                || state.age <= 1;
+        Vec3 travel = snap ? feet.subtract(player.position()) : desiredMotion;
+        if (!canMoveRider(player, travel)) {
+            return false;
+        }
         player.noPhysics = true;
         player.setOnGround(false);
         player.resetFallDistance();
-        if (state.forceSnap || player.position().distanceToSqr(feet) > HARD_SNAP_DISTANCE_SQR || state.age <= 1) {
+        if (snap) {
             player.teleportTo(feet.x, feet.y, feet.z);
             desiredMotion = motion;
             state.forceSnap = false;
@@ -272,6 +324,27 @@ public final class ZiplineController {
         player.setDeltaMovement(desiredMotion);
         player.hurtMarked = true;
         player.connection.send(new ClientboundSetEntityMotionPacket(player));
+        return true;
+    }
+
+    private static boolean canMoveRider(ServerPlayer player, Vec3 travel) {
+        if (!(player.level() instanceof ServerLevel level)) {
+            return false;
+        }
+        double distance = travel.length();
+        if (distance < 1.0e-7D) {
+            return level.noCollision(player, player.getBoundingBox());
+        }
+        int steps = Math.max(1, (int) Math.ceil(distance / COLLISION_SWEEP_STEP));
+        AABB start = player.getBoundingBox();
+        for (int i = 1; i <= steps; i++) {
+            double t = i / (double) steps;
+            AABB box = start.move(travel.x * t, travel.y * t, travel.z * t);
+            if (!level.noCollision(player, box)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static double correctionLimit(RiderState state) {
@@ -499,6 +572,23 @@ public final class ZiplineController {
 
     private static double clamp(double value, double min, double max) {
         return value < min ? min : (value > max ? max : value);
+    }
+
+    private static double distancePointToBoxSqr(AABB box, double x, double y, double z) {
+        double dx = axisDistance(x, box.minX, box.maxX);
+        double dy = axisDistance(y, box.minY, box.maxY);
+        double dz = axisDistance(z, box.minZ, box.maxZ);
+        return dx * dx + dy * dy + dz * dz;
+    }
+
+    private static double axisDistance(double value, double min, double max) {
+        if (value < min) {
+            return min - value;
+        }
+        if (value > max) {
+            return value - max;
+        }
+        return 0.0D;
     }
 
     private static final class RiderState {

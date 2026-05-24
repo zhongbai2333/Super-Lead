@@ -8,6 +8,7 @@ import net.minecraft.resources.Identifier;
 
 /** S->C lock state for the rope trip/crawl preset effect. */
 public record SyncRopeTripState(
+        int entityId,
         boolean active,
         int remainingTicks,
         double startX,
@@ -21,14 +22,14 @@ public record SyncRopeTripState(
     public static final StreamCodec<RegistryFriendlyByteBuf, SyncRopeTripState> STREAM_CODEC = CustomPacketPayload
             .codec(SyncRopeTripState::write, SyncRopeTripState::read);
 
-    public static SyncRopeTripState active(int remainingTicks, double startX, double startZ, double lockX, double lockZ,
-            int fallTicks) {
-        return new SyncRopeTripState(true, Math.max(1, remainingTicks), startX, startZ, lockX, lockZ,
+    public static SyncRopeTripState active(int entityId, int remainingTicks, double startX, double startZ, double lockX,
+            double lockZ, int fallTicks) {
+        return new SyncRopeTripState(entityId, true, Math.max(1, remainingTicks), startX, startZ, lockX, lockZ,
                 Math.max(0, fallTicks));
     }
 
-    public static SyncRopeTripState inactive() {
-        return new SyncRopeTripState(false, 0, 0.0D, 0.0D, 0.0D, 0.0D, 0);
+    public static SyncRopeTripState inactive(int entityId) {
+        return new SyncRopeTripState(entityId, false, 0, 0.0D, 0.0D, 0.0D, 0.0D, 0);
     }
 
     @Override
@@ -37,6 +38,7 @@ public record SyncRopeTripState(
     }
 
     private void write(RegistryFriendlyByteBuf buffer) {
+        buffer.writeVarInt(entityId);
         buffer.writeBoolean(active);
         buffer.writeVarInt(remainingTicks);
         buffer.writeDouble(startX);
@@ -48,6 +50,7 @@ public record SyncRopeTripState(
 
     private static SyncRopeTripState read(RegistryFriendlyByteBuf buffer) {
         return new SyncRopeTripState(
+                buffer.readVarInt(),
                 buffer.readBoolean(),
                 buffer.readVarInt(),
                 buffer.readDouble(),

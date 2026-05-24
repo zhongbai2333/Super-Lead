@@ -3,12 +3,15 @@ package com.zhongbai233.super_lead.lead.client;
 import com.zhongbai233.super_lead.Super_lead;
 import com.zhongbai233.super_lead.lead.ClientRopeTripWakeRequest;
 import com.zhongbai233.super_lead.lead.SyncRopeTripState;
+import java.util.HashMap;
+import java.util.Map;
 import net.minecraft.client.CameraType;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.world.entity.Pose;
 import net.minecraft.world.entity.player.Input;
+import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.Vec3;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.SubscribeEvent;
@@ -21,16 +24,17 @@ import net.neoforged.neoforge.client.network.ClientPacketDistributor;
 /**
  * Client-side half of the rope trip lock: keep crawling visual and suppress
  * local movement.
+ *
+ * <p>
+ * Maintains per-entity trip state keyed by entity ID so that every nearby
+ * player sees the fall-forward animation, not just the tripped player.
  */
 @EventBusSubscriber(modid = Super_lead.MODID, value = Dist.CLIENT)
 public final class RopeTripClientState {
-    private static long activeUntilTick;
-    private static long fallStartTick;
-    private static int fallTicks;
-    private static double startX;
-    private static double startZ;
-    private static double lockX;
-    private static double lockZ;
+    /** Per-entity trip state keyed by entity ID. */
+    private static final Map<Integer, TripEntry> TRIPS = new HashMap<>();
+
+    /** Local-player-only state (camera, wake, movement lock). */
     private static boolean impactParticlesSpawned;
     private static boolean wakeRequested;
     private static boolean movementWakeArmed;
@@ -44,33 +48,44 @@ public final class RopeTripClientState {
     public static void apply(SyncRopeTripState payload) {
         Minecraft minecraft = Minecraft.getInstance();
         if (!payload.active()) {
-            clear(minecraft.player);
+            TRIPS.remove(payload.entityId());
+            if (isLocal(payload.entityId())) {
+                clearLocal(minecraft.player);
+            }
             return;
         }
         long now = minecraft.level == null ? 0L : minecraft.level.getGameTime();
-        activeUntilTick = now + Math.max(1, payload.remainingTicks()) + 2L;
-        fallStartTick = now;
-        fallTicks = Math.max(0, payload.fallTicks());
-        startX = payload.startX();
-        startZ = payload.startZ();
-        lockX = payload.lockX();
-        lockZ = payload.lockZ();
-        impactParticlesSpawned = false;
-        wakeRequested = false;
-        movementWakeArmed = minecraft.player == null || minecraft.player.input == null
-                || !hasMovementInput(minecraft.player.input.keyPresses);
-        lockedBodyRot = minecraft.player == null ? 0.0F : minecraft.player.getYRot();
-        switchToTripCamera(minecraft);
-        enforce(minecraft.player);
+        TripEntry entry = new TripEntry(
+                now + Math.max(1, payload.remainingTicks()) + 2L,
+                now,
+                Math.max(0, payload.fallTicks()),
+                payload.startX(),
+                payload.startZ(),
+                payload.lockX(),
+                payload.lockZ());
+        TRIPS.put(payload.entityId(), entry);
+
+        if (isLocal(payload.entityId())) {
+            impactParticlesSpawned = false;
+            wakeRequested = false;
+            movementWakeArmed = minecraft.player == null || minecraft.player.input == null
+                    || !hasMovementInput(minecraft.player.input.keyPresses);
+            lockedBodyRot = minecraft.player == null ? 0.0F : minecraft.player.getYRot();
+            switchToTripCamera(minecraft);
+            enforceLocal(minecraft.player, entry);
+        }
     }
 
     @SubscribeEvent
     public static void onMovementInput(MovementInputUpdateEvent event) {
-        if (!isActive()) {
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft.player == null)
             return;
-        }
+        TripEntry entry = TRIPS.get(minecraft.player.getId());
+        if (entry == null || minecraft.level == null || !entry.isActive(minecraft.level))
+            return;
         requestWakeIfInput(event.getInput().keyPresses);
-        if (isActive()) {
+        if (TRIPS.containsKey(minecraft.player.getId())) {
             event.getInput().keyPresses = Input.EMPTY;
             if (event.getEntity() instanceof LocalPlayer player) {
                 player.xxa = 0.0F;
@@ -82,71 +97,80 @@ public final class RopeTripClientState {
     @SubscribeEvent
     public static void onClientTick(ClientTickEvent.Post event) {
         Minecraft minecraft = Minecraft.getInstance();
-        if (!isActive()) {
-            clear(minecraft.player);
+        if (minecraft.player == null || minecraft.level == null)
+            return;
+
+        long now = minecraft.level.getGameTime();
+        TRIPS.entrySet().removeIf(e -> now > e.getValue().activeUntilTick);
+
+        TripEntry localEntry = TRIPS.get(minecraft.player.getId());
+        if (localEntry == null) {
+            clearLocal(minecraft.player);
             return;
         }
-        enforce(minecraft.player);
+        enforceLocal(minecraft.player, localEntry);
     }
 
     @SubscribeEvent
     public static void onRenderPlayer(RenderPlayerEvent.Pre<?> event) {
         Minecraft minecraft = Minecraft.getInstance();
-        LocalPlayer player = minecraft.player;
-        if (player == null || !isActive() || event.getRenderState().id != player.getId()) {
+        int entityId = event.getRenderState().id;
+        TripEntry entry = TRIPS.get(entityId);
+        if (entry == null || minecraft.level == null || !entry.isActive(minecraft.level)) {
+            if (entry != null) {
+                TRIPS.remove(entityId);
+            }
             return;
         }
-        Vec3 visual = visualPosition(event.getPartialTick());
+
+        Vec3 visual = entry.visualPosition(minecraft.level, event.getPartialTick());
         event.getRenderState().x = visual.x;
         event.getRenderState().z = visual.z;
         event.getRenderState().pose = Pose.STANDING;
         event.getRenderState().isCrouching = false;
         event.getRenderState().isVisuallySwimming = false;
         event.getRenderState().isInWater = false;
-        event.getRenderState().swimAmount = renderFallAmount(event.getPartialTick());
+        event.getRenderState().swimAmount = entry.renderFallAmount(minecraft.level, event.getPartialTick());
         event.getRenderState().walkAnimationSpeed = 0.0F;
         event.getRenderState().walkAnimationPos = 0.0F;
-        event.getRenderState().bodyRot = lockedBodyRot;
+
+        if (isLocal(entityId)) {
+            event.getRenderState().bodyRot = lockedBodyRot;
+        }
         event.getRenderState().yRot = 0.0F;
         event.getRenderState().xRot = 0.0F;
     }
 
-    private static boolean isActive() {
-        Minecraft minecraft = Minecraft.getInstance();
-        if (minecraft.level == null || minecraft.player == null) {
-            activeUntilTick = 0L;
-            return false;
-        }
-        if (minecraft.level.getGameTime() > activeUntilTick) {
-            activeUntilTick = 0L;
-            return false;
-        }
-        return true;
-    }
+    // ---- public query helpers ----
 
     public static boolean isTripping(int entityId) {
         Minecraft minecraft = Minecraft.getInstance();
-        return minecraft.player != null && minecraft.player.getId() == entityId && isActive();
+        TripEntry entry = TRIPS.get(entityId);
+        return entry != null && minecraft.level != null && entry.isActive(minecraft.level);
     }
 
-    public static float fallProgress(float partialTick) {
+    public static float fallProgress(int entityId, float partialTick) {
         Minecraft minecraft = Minecraft.getInstance();
-        if (minecraft.level == null || fallTicks <= 0) {
+        TripEntry entry = TRIPS.get(entityId);
+        if (entry == null || minecraft.level == null || entry.fallTicks <= 0) {
             return 1.0F;
         }
-        double elapsed = minecraft.level.getGameTime() - fallStartTick + partialTick;
-        return (float) Math.max(0.0D, Math.min(1.0D, elapsed / fallTicks));
+        double elapsed = minecraft.level.getGameTime() - entry.fallStartTick + partialTick;
+        return (float) Math.max(0.0D, Math.min(1.0D, elapsed / entry.fallTicks));
     }
 
-    public static float renderFallAmount(float partialTick) {
-        float raw = fallProgress(partialTick);
+    public static float renderFallAmount(int entityId, float partialTick) {
+        float raw = fallProgress(entityId, partialTick);
         return raw * raw * (3.0F - 2.0F * raw);
     }
 
     public static void requestWakeIfInput(Input input) {
-        if (!isWakeable() || input == null) {
+        if (input == null)
             return;
-        }
+        Minecraft minecraft = Minecraft.getInstance();
+        TripEntry entry = minecraft.player == null ? null : TRIPS.get(minecraft.player.getId());
+        if (entry == null || minecraft.level == null || !entry.isWakeable(minecraft.level))
+            return;
         if (!hasMovementInput(input)) {
             movementWakeArmed = true;
             return;
@@ -156,20 +180,27 @@ public final class RopeTripClientState {
         }
     }
 
-    private static void enforce(LocalPlayer player) {
-        if (player == null) {
+    // ---- local-player-only helpers ----
+
+    private static boolean isLocal(int entityId) {
+        Minecraft minecraft = Minecraft.getInstance();
+        return minecraft.player != null && minecraft.player.getId() == entityId;
+    }
+
+    private static void enforceLocal(LocalPlayer player, TripEntry entry) {
+        if (player == null)
             return;
-        }
         player.setForcedPose(Pose.SWIMMING);
         player.setSprinting(false);
         Vec3 motion = player.getDeltaMovement();
         player.setDeltaMovement(0.0D, Math.min(motion.y, 0.0D), 0.0D);
-        Vec3 target = visualPosition(0.0F);
+        Minecraft minecraft = Minecraft.getInstance();
+        Vec3 target = entry.visualPosition(minecraft.level, 0.0F);
         double targetX = target.x;
         double targetZ = target.z;
-        boolean falling = isFalling();
+        boolean falling = entry.isFalling(minecraft.level);
         if (falling) {
-            Vec3 previous = visualPosition(-1.0F);
+            Vec3 previous = entry.visualPosition(minecraft.level, -1.0F);
             player.xo = previous.x;
             player.xOld = previous.x;
             player.zo = previous.z;
@@ -185,42 +216,13 @@ public final class RopeTripClientState {
         }
     }
 
-    private static Vec3 visualPosition(float partialTick) {
-        Minecraft minecraft = Minecraft.getInstance();
-        if (minecraft.level == null || fallTicks <= 0) {
-            return new Vec3(lockX, 0.0D, lockZ);
-        }
-        double elapsed = minecraft.level.getGameTime() - fallStartTick + partialTick;
-        double progress = Math.max(0.0D, Math.min(1.0D, elapsed / fallTicks));
-        progress = progress * progress * (3.0D - 2.0D * progress);
-        double x = startX + (lockX - startX) * progress;
-        double z = startZ + (lockZ - startZ) * progress;
-        return new Vec3(x, 0.0D, z);
-    }
-
-    private static boolean isFalling() {
-        Minecraft minecraft = Minecraft.getInstance();
-        return minecraft.level != null
-                && fallTicks > 0
-                && minecraft.level.getGameTime() - fallStartTick < fallTicks;
-    }
-
-    private static boolean isWakeable() {
-        return isActive() && !isFalling();
-    }
-
-    private static boolean hasMovementInput(Input input) {
-        return input != null && (input.forward() || input.backward() || input.left() || input.right()
-                || input.jump() || input.shift() || input.sprint());
-    }
-
     private static void requestWake() {
         if (wakeRequested) {
             return;
         }
         wakeRequested = true;
         ClientPacketDistributor.sendToServer(ClientRopeTripWakeRequest.INSTANCE);
-        clear(Minecraft.getInstance().player);
+        clearLocal(Minecraft.getInstance().player);
     }
 
     private static void switchToTripCamera(Minecraft minecraft) {
@@ -259,16 +261,78 @@ public final class RopeTripClientState {
         }
     }
 
-    private static void clear(LocalPlayer player) {
-        activeUntilTick = 0L;
-        fallStartTick = 0L;
-        fallTicks = 0;
+    private static void clearLocal(LocalPlayer player) {
         impactParticlesSpawned = false;
         wakeRequested = false;
         movementWakeArmed = false;
         restoreCamera(Minecraft.getInstance());
         if (player != null && player.getForcedPose() == Pose.SWIMMING) {
             player.setForcedPose(null);
+        }
+    }
+
+    private static boolean hasMovementInput(Input input) {
+        return input != null && (input.forward() || input.backward() || input.left() || input.right()
+                || input.jump() || input.shift() || input.sprint());
+    }
+
+    // ---- per-entity trip state ----
+
+    private static final class TripEntry {
+        final long activeUntilTick;
+        final long fallStartTick;
+        final int fallTicks;
+        final double startX;
+        final double startZ;
+        final double lockX;
+        final double lockZ;
+
+        TripEntry(long activeUntilTick, long fallStartTick, int fallTicks,
+                double startX, double startZ, double lockX, double lockZ) {
+            this.activeUntilTick = activeUntilTick;
+            this.fallStartTick = fallStartTick;
+            this.fallTicks = fallTicks;
+            this.startX = startX;
+            this.startZ = startZ;
+            this.lockX = lockX;
+            this.lockZ = lockZ;
+        }
+
+        boolean isActive(Level level) {
+            return level != null && level.getGameTime() <= activeUntilTick;
+        }
+
+        boolean isFalling(Level level) {
+            return level != null && fallTicks > 0 && level.getGameTime() - fallStartTick < fallTicks;
+        }
+
+        boolean isWakeable(Level level) {
+            return isActive(level) && !isFalling(level);
+        }
+
+        float fallProgress(Level level, float partialTick) {
+            if (level == null || fallTicks <= 0) {
+                return 1.0F;
+            }
+            double elapsed = level.getGameTime() - fallStartTick + partialTick;
+            return (float) Math.max(0.0D, Math.min(1.0D, elapsed / fallTicks));
+        }
+
+        float renderFallAmount(Level level, float partialTick) {
+            float raw = fallProgress(level, partialTick);
+            return raw * raw * (3.0F - 2.0F * raw);
+        }
+
+        Vec3 visualPosition(Level level, float partialTick) {
+            if (level == null || fallTicks <= 0) {
+                return new Vec3(lockX, 0.0D, lockZ);
+            }
+            double elapsed = level.getGameTime() - fallStartTick + partialTick;
+            double progress = Math.max(0.0D, Math.min(1.0D, elapsed / fallTicks));
+            progress = progress * progress * (3.0D - 2.0D * progress);
+            double x = startX + (lockX - startX) * progress;
+            double z = startZ + (lockZ - startZ) * progress;
+            return new Vec3(x, 0.0D, z);
         }
     }
 }

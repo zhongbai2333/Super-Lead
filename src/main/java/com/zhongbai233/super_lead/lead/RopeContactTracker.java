@@ -47,7 +47,7 @@ public final class RopeContactTracker {
     // perch.
     private static final double CONTACT_TOP_JUMP_SPEED = 0.42D;
     private static final double CONTACT_SIDE_HARD_DEPTH_FRACTION = 0.65D;
-    private static final double CONTACT_EXIT_INPUT_DOT = 0.05D;
+    private static final double CONTACT_EXIT_INPUT_DOT = -0.50D;
     private static final double NORMAL_EPSILON = 1.0e-5D;
     private static final long CLIENT_CONTACT_TTL_TICKS = 5L;
 
@@ -122,7 +122,7 @@ public final class RopeContactTracker {
         if (a == null || b == null)
             return;
         double dist = a.distanceTo(b);
-        if (dist < 1.0e-3D || dist > Config.maxLeashDistance() + 1.0D)
+        if (dist < 1.0e-3D || dist > SuperLeadNetwork.maxLeashDistance(connection) + 1.0D)
             return;
 
         // Gameplay collision is deliberately limited to the synced physics-zone path.
@@ -302,13 +302,16 @@ public final class RopeContactTracker {
             return AppliedPush.NONE;
 
         double vn = v.x * n.x + v.z * n.z;
-        double correctionMag = Math.max(0.0D, depth - hardDepth) + 1.0e-3D;
-        player.move(MoverType.SELF, new Vec3(n.x * correctionMag, 0.0D, n.z * correctionMag));
         double inputDot = inputX * n.x + inputZ * n.z;
+        // Let the player escape if they have any input away from the rope or are
+        // already moving away — don't fight their intent with position pushes.
         if (vn >= 0.0D || inputDot > CONTACT_EXIT_INPUT_DOT) {
             player.hurtMarked = true;
             return new AppliedPush(0.0F, 0.0F, 0.0F, (float) depthRatio);
         }
+
+        double correctionMag = Math.max(0.0D, depth - hardDepth) + 1.0e-3D;
+        player.move(MoverType.SELF, new Vec3(n.x * correctionMag, 0.0D, n.z * correctionMag));
 
         // Side blocking is a horizontal rigid constraint: cancel the full inward
         // horizontal normal velocity and preserve vertical/tangential motion.

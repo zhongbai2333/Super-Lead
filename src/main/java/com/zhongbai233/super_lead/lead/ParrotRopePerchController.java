@@ -617,7 +617,8 @@ public final class ParrotRopePerchController {
         if (connection == null || connection.physicsPreset().isBlank()) {
             return false;
         }
-        return ServerPhysicsTuning.loadServerPhysicsTuning(level, connection.physicsPreset()).physicsEnabled();
+        ServerPhysicsTuning tuning = ServerPhysicsTuning.loadServerPhysicsTuning(level, connection.physicsPreset());
+        return tuning.physicsEnabled() && tuning.parrotPathfindingEnabled();
     }
 
     private static boolean hasPerchClearance(ServerLevel level, Parrot parrot, Vec3 feet) {

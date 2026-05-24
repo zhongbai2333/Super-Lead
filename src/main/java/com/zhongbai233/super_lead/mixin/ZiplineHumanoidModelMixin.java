@@ -57,7 +57,7 @@ public abstract class ZiplineHumanoidModelMixin {
     }
 
     private void superLead$tripPose(HumanoidRenderState state, AvatarRenderState avatar) {
-        float fall = RopeTripClientState.renderFallAmount(state.partialTick);
+        float fall = RopeTripClientState.renderFallAmount(avatar.id, state.partialTick);
         float slap = Mth.sin(fall * (float) Math.PI) * 0.08F;
 
         this.body.xRot = Mth.lerp(fall, 0.0F, -0.08F) - slap * 0.2F;

@@ -46,20 +46,17 @@ import net.minecraft.world.phys.shapes.VoxelShape;
  */
 public final class SuperLeadNetwork {
     public static final double MAX_LEASH_DISTANCE = 12.0D;
-    private static final double SERVER_CONFIRMED_PICK_RADIUS = 0.95D;
-    /**
-     * Wider envelope for attachment removal so multi-rope stacks don't foil the
-     * server check.
-     */
+    public static final int MAX_LENGTH_UNITS = LeadConnection.MAX_LENGTH_UNITS;
     private static final double SERVER_CONFIRMED_ATTACH_REMOVAL_RADIUS = 2.50D;
-    private static final double SERVER_CONFIRMED_PICK_REACH = MAX_LEASH_DISTANCE + 1.5D;
+    private static final double SERVER_CONFIRMED_PICK_REACH_SLACK = 1.5D;
     private static final int SERVER_CONFIRMED_CURVE_SAMPLES = 12;
     private static final double SERVER_CONFIRMED_CURVE_SAG_PER_BLOCK = 0.065D;
     private static final double SERVER_CONFIRMED_CURVE_MAX_SAG = 0.70D;
-    private static final double SERVER_CLAIM_RAY_RADIUS = 1.15D;
-    private static final double SERVER_CLAIM_ROPE_RADIUS = 1.35D;
-    private static final double SERVER_CLAIM_T_SLACK = 0.35D;
-    private static final double SERVER_CLAIM_BLOCK_SLACK = 1.10D;
+    /** Max distance² from claimed hit to rope chord/curve before rejection. */
+    private static final double SERVER_CLAIM_PROXIMITY_SQR = 2.75D * 2.75D;
+    /** Per-block T-slack factor: a 40-block rope gets 40×0.025 = 1.0 slack. */
+    private static final double SERVER_CLAIM_T_SLACK_PER_BLOCK = 0.025D;
+    private static final double SERVER_CLAIM_T_SLACK_MAX = 0.60D;
     private static final Map<UUID, Long> INTERIOR_BLOCKED_SINCE = new HashMap<>();
     /**
      * Round-robin cursor keyed by (BlockPos, kind ordinal) for per-click cycling.
@@ -78,6 +75,29 @@ public final class SuperLeadNetwork {
 
     public static boolean canModifyRopes(Player player) {
         return player != null && player.mayBuild();
+    }
+
+    public static double baseLeashDistance() {
+        return Config.maxLeashDistance();
+    }
+
+    public static double maxLeashDistanceForUnits(int lengthUnits) {
+        int normalized = Math.max(LeadConnection.MIN_LENGTH_UNITS,
+                Math.min(LeadConnection.MAX_LENGTH_UNITS, lengthUnits));
+        return baseLeashDistance() * normalized;
+    }
+
+    public static double maxLeashDistance(LeadConnection connection) {
+        return maxLeashDistanceForUnits(connection == null ? LeadConnection.MIN_LENGTH_UNITS
+                : connection.lengthUnits());
+    }
+
+    public static double maxExtendedLeashDistance() {
+        return maxLeashDistanceForUnits(LeadConnection.MAX_LENGTH_UNITS);
+    }
+
+    private static double serverConfirmedPickReach() {
+        return maxExtendedLeashDistance() + SERVER_CONFIRMED_PICK_REACH_SLACK;
     }
 
     public static boolean canStartRopePlacement(Level level, Player player, LeadAnchor anchor) {
@@ -114,6 +134,14 @@ public final class SuperLeadNetwork {
         return LeadPlacementState.pendingKind(player);
     }
 
+    public static int pendingLengthUnits(Player player) {
+        return LeadPlacementState.pendingLengthUnits(player).orElse(LeadConnection.MIN_LENGTH_UNITS);
+    }
+
+    public static boolean extendPendingLength(Player player) {
+        return LeadPlacementState.extendPendingLength(player);
+    }
+
     public static void setPendingAnchor(Player player, LeadAnchor anchor) {
         setPendingAnchor(player, anchor, LeadKind.NORMAL);
     }
@@ -135,6 +163,11 @@ public final class SuperLeadNetwork {
     }
 
     public static LeadConnection connect(Level level, LeadAnchor from, LeadAnchor to, LeadKind kind, Player player) {
+        return connect(level, from, to, kind, player, LeadConnection.MIN_LENGTH_UNITS);
+    }
+
+    public static LeadConnection connect(Level level, LeadAnchor from, LeadAnchor to, LeadKind kind, Player player,
+            int lengthUnits) {
         if (!level.isClientSide() && level instanceof ServerLevel serverLevel) {
             if (countConnectionsAtAnchor(serverLevel, from) >= Config.maxRopesPerBlockFace()
                     || countConnectionsAtAnchor(serverLevel, to) >= Config.maxRopesPerBlockFace()) {
@@ -142,7 +175,7 @@ public final class SuperLeadNetwork {
                         .maxRopesPerBlockFace() ? from : to);
                 return null;
             }
-            LeadConnection connection = LeadConnection.create(from, to, kind);
+            LeadConnection connection = LeadConnection.create(from, to, kind).withLengthUnits(lengthUnits);
             connection = connection.withPhysicsPreset(
                     PresetServerManager.resolvePresetForConnection(serverLevel, connection));
             if (player != null && !canModifyRopes(player)) {
@@ -161,7 +194,7 @@ public final class SuperLeadNetwork {
         // actual rope must arrive from the server via SyncRopeChunk; otherwise the
         // client creates
         // a random-UUID prediction that cannot be removed or saved.
-        return LeadConnection.create(from, to, kind);
+        return LeadConnection.create(from, to, kind).withLengthUnits(lengthUnits);
     }
 
     public static List<LeadConnection> connections(Level level) {
@@ -258,7 +291,7 @@ public final class SuperLeadNetwork {
         LeadEndpointLayout.Endpoints endpoints = endpoints(level, connection);
         return level.getBlockState(connection.from().pos()).isAir()
                 || level.getBlockState(connection.to().pos()).isAir()
-                || endpoints.from().distanceTo(endpoints.to()) > MAX_LEASH_DISTANCE;
+                || endpoints.from().distanceTo(endpoints.to()) > maxLeashDistance(connection);
     }
 
     public static void tickStuckBreaks(ServerLevel level) {
@@ -435,6 +468,10 @@ public final class SuperLeadNetwork {
         return toggleExtractAt(level, pos, LeadKind.PRESSURIZED);
     }
 
+    public static boolean toggleEnergyExtractAt(Level level, BlockPos pos) {
+        return toggleExtractAt(level, pos, LeadKind.ENERGY);
+    }
+
     private static boolean toggleExtractAt(Level level, BlockPos pos, LeadKind kind) {
         if (level.isClientSide() || !(level instanceof ServerLevel serverLevel)) {
             return false;
@@ -551,20 +588,19 @@ public final class SuperLeadNetwork {
      * interaction.
      */
     public static boolean canUseClientPickedConnection(ServerLevel level, Player player, LeadConnection connection) {
-        return canAimAtConnectionEnvelope(level, player, connection);
+        return isPlayerNearRope(level, player, connection, serverConfirmedPickReach());
     }
 
     /**
      * Server-side validation for a client-confirmed rope target.
      *
-     * The client picks against the rendered rope simulation, which can sag or be
-     * pushed by blocks.
-     * The packet therefore carries the exact rendered hit point and an approximate
-     * rope parameter.
-     * The server verifies that the hit is still in the player's view ray and inside
-     * a generous
-     * capsule/envelope around the same rope instead of doing a fresh nearest-rope
-     * pick.
+     * <p>
+     * The client already did precise hit detection against the rendered physics
+     * rope. The server only verifies the player is reasonably close to the rope
+     * and the claimed hit point is in front of the player. This replaces the
+     * old 7-layer ray-re-trace that frequently rejected legitimate actions
+     * because the server's straight-chord + half-sine sag model didn't match
+     * the client's full Verlet simulation.
      */
     public static boolean canUseClientPickedConnection(ServerLevel level, Player player,
             LeadConnection connection, Vec3 claimedHitPoint, double claimedT) {
@@ -573,159 +609,96 @@ public final class SuperLeadNetwork {
         }
 
         Vec3 origin = player.getEyePosition(1.0F);
-        Vec3 direction = player.getViewVector(1.0F).normalize();
         LeadEndpointLayout.Endpoints endpoints = endpoints(level, connection);
         Vec3 a = endpoints.from();
         Vec3 b = endpoints.to();
-        double reach = clippedAimReach(level, player, origin, direction,
-                SERVER_CONFIRMED_PICK_REACH, SERVER_CLAIM_BLOCK_SLACK);
 
-        Vec3 originToHit = claimedHitPoint.subtract(origin);
-        double along = originToHit.dot(direction);
-        if (along < -0.25D || along > reach) {
+        // 1. Hit point must be in front of player, and player must be within
+        // reasonable distance of at least one rope endpoint.
+        Vec3 toHit = claimedHitPoint.subtract(origin);
+        if (toHit.dot(player.getViewVector(1.0F)) < -0.5D) {
+            return false;
+        }
+        double maxReach = serverConfirmedPickReach();
+        if (origin.distanceToSqr(a) > maxReach * maxReach
+                && origin.distanceToSqr(b) > maxReach * maxReach) {
             return false;
         }
 
-        Vec3 rayPoint = origin.add(direction.scale(Math.max(0.0D, along)));
-        if (claimedHitPoint.distanceToSqr(rayPoint) > SERVER_CLAIM_RAY_RADIUS * SERVER_CLAIM_RAY_RADIUS) {
-            return false;
-        }
-
-        return isClaimedHitNearConnection(level, connection, a, b, claimedHitPoint, clamp01(claimedT));
+        // 2. Hit point must be near the rope chord or physics curve.
+        return isHitNearRope(level, connection, a, b, claimedHitPoint, clamp01(claimedT));
     }
 
     /**
-     * Looser variant of {@link #canUseClientPickedConnection} for attachment
-     * placement /
-     * removal / form-toggle. The client physics rope can sag noticeably below the
-     * chord
-     * while the server's straight-line + half-sine approximation cannot (server's
-     * max sag
-     * ~0.7 blocks, client up to several blocks for long, mostly-horizontal ropes).
-     * The
-     * precise hit position {@code t} is computed by the client picker on the actual
-     * simulated polyline, so the server only needs a coarse "ray points at the
-     * rope's
-     * bounding envelope within reach" anti-cheese gate. We therefore intersect the
-     * player's
-     * view ray with an AABB that contains the chord plus the worst-case sagged
-     * shape.
+     * Attachment placement / removal / form-toggle.
+     *
+     * <p>
+     * Uses the same simplified proximity test as rope cutting/upgrade.
+     * The wider envelope for removal handles multi-rope stacks on the same face.
      */
     public static boolean canTouchConnectionForAttachment(ServerLevel level, Player player, LeadConnection connection) {
-        Vec3 origin = player.getEyePosition(1.0F);
-        Vec3 direction = player.getViewVector(1.0F).normalize();
-        LeadEndpointLayout.Endpoints endpoints = endpoints(level, connection);
-        Vec3 a = endpoints.from();
-        Vec3 b = endpoints.to();
-        net.minecraft.world.phys.AABB envelope = connectionEnvelope(a, b, SERVER_CONFIRMED_PICK_RADIUS);
-        Vec3 reachEnd = origin.add(direction.scale(SERVER_CONFIRMED_PICK_REACH));
-        return envelope.clip(origin, reachEnd).isPresent();
+        return isPlayerNearRope(level, player, connection, serverConfirmedPickReach());
+    }
+
+    /** Wider-envelope variant for attachment removal (multi-rope stacks). */
+    public static boolean canTouchConnectionForAttachmentRemoval(ServerLevel level, Player player,
+            LeadConnection connection) {
+        return isPlayerNearRope(level, player, connection, serverConfirmedPickReach());
     }
 
     /**
-     * Much wider envelope for attachment removal. When multiple ropes stack on the
-     * same block face the envelope of a single rope may be too narrow for the
-     * server's ray-vs-AABB test even though the client picker already confirmed
-     * the player's aim. This version accepts a larger surrounding box so the
-     * server doesn't veto a removal that the client already highlighted.
+     * Returns true when the player is within reasonable distance of the rope.
+     * Uses the same endpoint-distance gate as the 4-parameter hit validation
+     * (which works reliably for cutting/upgrade actions). For the proximity
+     * check we simply test whether the player's eye is inside the rope's
+     * generously-sized envelope — no fragile ray-clip needed.
      */
-    public static boolean canTouchConnectionForAttachmentRemoval(ServerLevel level, Player player,
-            LeadConnection connection) {
+    private static boolean isPlayerNearRope(ServerLevel level, Player player, LeadConnection connection,
+            double maxReach) {
         Vec3 origin = player.getEyePosition(1.0F);
-        Vec3 direction = player.getViewVector(1.0F).normalize();
         LeadEndpointLayout.Endpoints endpoints = endpoints(level, connection);
         Vec3 a = endpoints.from();
         Vec3 b = endpoints.to();
-        net.minecraft.world.phys.AABB envelope = connectionEnvelope(a, b, SERVER_CONFIRMED_ATTACH_REMOVAL_RADIUS);
-        Vec3 reachEnd = origin.add(direction.scale(SERVER_CONFIRMED_PICK_REACH));
-        return envelope.clip(origin, reachEnd).isPresent();
-    }
 
-    private static boolean canAimAtConnectionEnvelope(ServerLevel level, Player player, LeadConnection connection) {
-        Vec3 origin = player.getEyePosition(1.0F);
-        Vec3 direction = player.getViewVector(1.0F).normalize();
-        LeadEndpointLayout.Endpoints endpoints = endpoints(level, connection);
-        Vec3 a = endpoints.from();
-        Vec3 b = endpoints.to();
-        double reach = clippedAimReach(level, player, origin, direction,
-                SERVER_CONFIRMED_PICK_REACH, SERVER_CLAIM_BLOCK_SLACK);
-        return connectionEnvelope(a, b, SERVER_CLAIM_ROPE_RADIUS)
-                .clip(origin, origin.add(direction.scale(reach)))
-                .isPresent();
-    }
-
-    private static double clippedAimReach(ServerLevel level, Player player, Vec3 origin, Vec3 direction,
-            double baseReach, double blockSlack) {
-        Vec3 reachEnd = origin.add(direction.scale(baseReach));
-        net.minecraft.world.level.ClipContext clip = new net.minecraft.world.level.ClipContext(
-                origin, reachEnd,
-                net.minecraft.world.level.ClipContext.Block.OUTLINE,
-                net.minecraft.world.level.ClipContext.Fluid.NONE,
-                player);
-        net.minecraft.world.phys.BlockHitResult blockHit = level.clip(clip);
-        if (blockHit.getType() == net.minecraft.world.phys.HitResult.Type.MISS) {
-            return baseReach;
+        if (origin.distanceToSqr(a) > maxReach * maxReach
+                && origin.distanceToSqr(b) > maxReach * maxReach) {
+            return false;
         }
-        return Math.min(baseReach, blockHit.getLocation().distanceTo(origin) + blockSlack);
+        // Player eye is inside the rope's AABB envelope (with generous sag margin).
+        return connectionEnvelope(a, b, SERVER_CONFIRMED_ATTACH_REMOVAL_RADIUS)
+                .inflate(1.0D)
+                .contains(origin);
     }
 
-    private static boolean isClaimedHitNearConnection(ServerLevel level, LeadConnection connection,
+    /**
+     * Simple proximity check: is the hit point within a generous distance of
+     * the rope chord (or physics curve when a preset is active)?
+     */
+    private static boolean isHitNearRope(ServerLevel level, LeadConnection connection,
             Vec3 a, Vec3 b, Vec3 hit, double hitT) {
-        double radiusSqr = SERVER_CLAIM_ROPE_RADIUS * SERVER_CLAIM_ROPE_RADIUS;
-        if (distancePointToSegmentSqr(hit, a, b) <= radiusSqr) {
+        if (distancePointToSegmentSqr(hit, a, b) <= SERVER_CLAIM_PROXIMITY_SQR) {
             return true;
         }
         if (!connection.physicsPreset().isBlank()) {
             double[] closest = new double[4];
-            if (ServerRopeCurve.distancePointToCurveSqr(ServerRopeCurve.from(level, connection, a, b), hit,
-                    closest) <= radiusSqr) {
+            if (ServerRopeCurve.distancePointToCurveSqr(
+                    ServerRopeCurve.from(level, connection, a, b), hit, closest) <= SERVER_CLAIM_PROXIMITY_SQR) {
                 return true;
             }
         }
-        if (distancePointToApproximateSaggedCurveSqr(hit, a, b) <= radiusSqr) {
+        if (distancePointToApproximateSaggedCurveSqr(hit, a, b) <= SERVER_CLAIM_PROXIMITY_SQR) {
             return true;
         }
-        if (!connectionEnvelope(a, b, SERVER_CLAIM_ROPE_RADIUS).contains(hit)) {
-            return false;
+        // Last resort: scale T-slack with rope length so long-rope end-clicks pass.
+        double tSlack = tSlackFor(a.distanceTo(b));
+        if (Math.abs(closestSegmentParameter(a, b, hit) - hitT) <= tSlack) {
+            return connectionEnvelope(a, b, Math.sqrt(SERVER_CLAIM_PROXIMITY_SQR)).contains(hit);
         }
-        return isInsideProjectedRopeTube(a, b, hit, hitT, SERVER_CLAIM_ROPE_RADIUS);
+        return false;
     }
 
-    private static boolean isInsideProjectedRopeTube(Vec3 a, Vec3 b, Vec3 hit, double hitT, double radius) {
-        double dx = b.x - a.x;
-        double dz = b.z - a.z;
-        double horizontalLenSqr = dx * dx + dz * dz;
-        double projectionT;
-        double sideSqr;
-        if (horizontalLenSqr > 1.0e-8D) {
-            projectionT = ((hit.x - a.x) * dx + (hit.z - a.z) * dz) / horizontalLenSqr;
-            projectionT = clamp01(projectionT);
-            double cx = a.x + dx * projectionT;
-            double cz = a.z + dz * projectionT;
-            double sideX = hit.x - cx;
-            double sideZ = hit.z - cz;
-            sideSqr = sideX * sideX + sideZ * sideZ;
-        } else {
-            projectionT = closestSegmentParameter(a, b, hit);
-            double sideX = hit.x - a.x;
-            double sideZ = hit.z - a.z;
-            sideSqr = sideX * sideX + sideZ * sideZ;
-        }
-        if (sideSqr > radius * radius) {
-            return false;
-        }
-
-        if (Math.abs(projectionT - hitT) > SERVER_CLAIM_T_SLACK) {
-            double endpointRadius = radius + 0.35D;
-            double endpointRadiusSqr = endpointRadius * endpointRadius;
-            if (hit.distanceToSqr(a) > endpointRadiusSqr && hit.distanceToSqr(b) > endpointRadiusSqr) {
-                return false;
-            }
-        }
-
-        double sagDown = broadSagDown(a, b, radius);
-        return hit.y >= Math.min(a.y, b.y) - sagDown
-                && hit.y <= Math.max(a.y, b.y) + radius;
+    private static double tSlackFor(double chordLength) {
+        return Math.min(chordLength * SERVER_CLAIM_T_SLACK_PER_BLOCK, SERVER_CLAIM_T_SLACK_MAX);
     }
 
     private static net.minecraft.world.phys.AABB connectionEnvelope(Vec3 a, Vec3 b, double radius) {
@@ -776,6 +749,12 @@ public final class SuperLeadNetwork {
             return false;
         int totalCost = 1 << Math.min(maxTier, connection.tier());
         int extraCost = totalCost - 1;
+        // Extended ropes cost more to upgrade:
+        // lengthUnits=2 → 2×, 3 → 4×, 4 → 6×
+        if (connection.lengthUnits() > 1) {
+            int mult = 2 * (connection.lengthUnits() - 1);
+            extraCost *= mult;
+        }
         if (!player.isCreative() && extraCost > 0 && !consumeMatchingFromInventory(player, costMatcher, extraCost)) {
             return false;
         }
@@ -1081,6 +1060,10 @@ public final class SuperLeadNetwork {
         LeadConnection target = pick.get().connection();
         int totalCost = 1 << Math.min(maxTier, target.tier());
         int extraCost = totalCost - 1;
+        if (target.lengthUnits() > 1) {
+            int mult = 2 * (target.lengthUnits() - 1);
+            extraCost *= mult;
+        }
         if (!player.isCreative() && extraCost > 0 && !consumeMatchingFromInventory(player, costMatcher, extraCost)) {
             return false;
         }
@@ -1248,7 +1231,7 @@ public final class SuperLeadNetwork {
             Predicate<LeadConnection> predicate) {
         Vec3 origin = player.getEyePosition(1.0F);
         Vec3 direction = player.getViewVector(1.0F).normalize();
-        double maxDistance = MAX_LEASH_DISTANCE;
+        double maxDistance = maxExtendedLeashDistance();
         double radiusSqr = radius * radius;
         ConnectionPick best = null;
 
@@ -1567,7 +1550,7 @@ public final class SuperLeadNetwork {
 
     private static void dropConnectionDrops(ServerLevel level, LeadConnection connection, Vec3 leadDropPoint,
             Player player) {
-        dropLeads(level, leadDropPoint, player, 1);
+        dropLeads(level, leadDropPoint, player, connection.lengthUnits());
         dropAttachments(level, connection, player);
     }
 

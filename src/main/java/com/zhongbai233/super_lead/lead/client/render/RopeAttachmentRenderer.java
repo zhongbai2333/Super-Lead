@@ -109,7 +109,7 @@ public final class RopeAttachmentRenderer {
 
             renderOne(collector, cameraPos, level, mc, player, attachment.stack(),
                     attachment.displayAsBlock(), redstonePowered,
-                    attachment.frontSide(), px, py, pz, frame, lightPos, packedLight, 0, 1.0F, false);
+                    attachment.frontSide(), px, py, pz, frame, lightPos, packedLight, 0, 1.0F);
         }
     }
 
@@ -129,7 +129,7 @@ public final class RopeAttachmentRenderer {
             renderOne(collector, cameraPos, level, mc, player, attachment.stack(),
                     attachment.displayAsBlock(), attachment.redstonePowered(),
                     attachment.frontSide(), attachment.px(), attachment.py(), attachment.pz(), frame, lightPos,
-                    packedLight, 0, 1.0F, false);
+                    packedLight, 0, 1.0F);
         }
     }
 
@@ -210,10 +210,15 @@ public final class RopeAttachmentRenderer {
         Minecraft mc = Minecraft.getInstance();
         boolean asBlock = com.zhongbai233.super_lead.lead.RopeAttachmentItems.isBlockItem(stack)
                 || com.zhongbai233.super_lead.lead.RopeAttachmentItems.isPanelLikeItem(stack);
+        int frontSide = viewerFrontSide(frame, px, py, pz, cameraPos);
+
+        // Render the attachment normally at the preview position — full block/item
+        // model, fully opaque, correct colours. The lack of suspension strings and
+        // the floating position already make it clear this is a placement preview.
         renderOne(collector, cameraPos, level, mc, mc.player, stack,
-                asBlock, false, viewerFrontSide(frame, px, py, pz, cameraPos),
+                asBlock, false, frontSide,
                 px, py, pz, frame, lightPos, packedLight,
-                0xFFFFFFFF, 1.02F, true);
+                0, 1.02F);
     }
 
     private static int packedLight(ClientLevel level, BlockPos lightPos) {
@@ -236,7 +241,7 @@ public final class RopeAttachmentRenderer {
             int frontSide,
             double px, double py, double pz, HangFrame frame,
             BlockPos lightPos, int packedLight,
-            int tintColor, float scaleMul, boolean ghost) {
+            int tintColor, float scaleMul) {
         BlockProperty attachmentProperty = propertyForStack(stack);
         boolean asPanelItem = com.zhongbai233.super_lead.lead.RopeAttachmentItems.isPanelLikeItem(stack);
         boolean asBlockItem = shouldRenderAsBlock(stack, displayAsBlock, attachmentProperty);
@@ -289,9 +294,6 @@ public final class RopeAttachmentRenderer {
         // deferred batching, so reusing one instance can cause every entry to render
         // with the last item's state.
         ItemStackRenderState renderState = new ItemStackRenderState();
-        // For BlockItems we display as block-form but couldn't go through
-        // submitMovingBlock
-        // (BlockEntity blocks like signs), use FIXED so the full item model is shown.
         ItemDisplayContext context = (asPanelItem || (asBlockItem && needsItemFallback(stack)))
                 ? ItemDisplayContext.FIXED
                 : ItemDisplayContext.GROUND;
@@ -303,14 +305,6 @@ public final class RopeAttachmentRenderer {
         pose.translate(cx - cameraPos.x, cy - cameraPos.y, cz - cameraPos.z);
         pose.mulPose(frame.tilt);
         pose.scale(scale, scale, scale);
-        // BlockEntity blocks (furnace, dispenser, mod generators, ...) render via the
-        // item
-        // model in FIXED context. That path uses the block's DEFAULT state
-        // (FACING=NORTH),
-        // so orientBlockState's FACING is ignored. Manually rotate around the model's
-        // local
-        // Y axis to bring the default visual front (model -Z) onto the player-selected
-        // side.
         if (context == ItemDisplayContext.FIXED) {
             float yawDeg = itemModelYaw(frontSide);
             if (yawDeg != 0.0F) {

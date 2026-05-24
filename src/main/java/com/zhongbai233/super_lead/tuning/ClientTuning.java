@@ -62,7 +62,7 @@ public final class ClientTuning {
             "XPBD distance-constraint compliance. Lower values are stiffer.");
 
     public static final TuningKey<Boolean> CONTACT_PUSHBACK = registerB(
-            "contact.pushback", "physics.contact", Boolean.TRUE,
+            "contact.pushback", "physics.contact", Boolean.FALSE,
             "Enable server-side player push-back when walking into synced physics-zone ropes.");
     public static final TuningKey<Double> CONTACT_RADIUS = registerD(
             "contact.radius", "physics.contact", 0.18D, 0.02D, 0.60D,
@@ -95,10 +95,10 @@ public final class ClientTuning {
             "contact.pushbackEnableDepth", "physics.contact", 0.001D, 0.0D, 0.50D,
             "Minimum penetration depth in blocks before rope push-back activates. Set to 0 to always push back.");
     public static final TuningKey<Boolean> CONTACT_PARROT_PATHFINDING = registerB(
-            "contact.parrotPathfinding", "physics.contact", Boolean.TRUE,
+            "contact.parrotPathfinding", "physics.contact", Boolean.FALSE,
             "Whether parrots can pathfind to ropes in this zone.");
     public static final TuningKey<Boolean> CONTACT_PLAYER_ZIPLINE = registerB(
-            "contact.playerZipline", "physics.contact", Boolean.TRUE,
+            "contact.playerZipline", "physics.contact", Boolean.FALSE,
             "Whether players can use ropes in this zone as ziplines.");
     public static final TuningKey<Boolean> CONTACT_TRIP_ENABLED = registerB(
             "contact.trip.enabled", "physics.contact", Boolean.FALSE,
@@ -319,11 +319,11 @@ public final class ClientTuning {
     // Physics settle (physics.settle)
     // ====================================================================================
     public static final TuningKey<Integer> SETTLE_THRESHOLD_TICKS = registerI(
-            "settleThresholdTicks", "physics.settle", 4, 1, 20,
+            "settleThresholdTicks", "physics.settle", 3, 1, 20,
             "Number of consecutive low-motion ticks before a rope is considered settled.");
     public static final TuningKey<Double> SETTLE_MOTION_SQR = registerD(
-            "settleMotionSqr", "physics.settle", 1.0e-5D, 1.0e-10D, 1.0e-2D,
-            "Squared motion threshold for settle detection.");
+            "settleMotionSqr", "physics.settle", 5.0e-4D, 1.0e-8D, 1.0e-2D,
+            "Squared motion threshold for settle detection.  Larger = sleeps more aggressively.");
     public static final TuningKey<Double> ENDPOINT_WAKE_DISTANCE_SQR = registerD(
             "endpointWakeDistanceSqr", "physics.settle", 1.0e-5D, 1.0e-10D, 1.0e-2D,
             "Squared endpoint movement threshold for wake-up.");

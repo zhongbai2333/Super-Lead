@@ -114,7 +114,7 @@ public enum LeadConnectionAction {
 
         @Override
         public boolean canTarget(LeadConnection connection) {
-            return connection.kind() != LeadKind.ENERGY;
+            return true;
         }
 
         @Override
@@ -124,7 +124,27 @@ public enum LeadConnectionAction {
 
         @Override
         public boolean applyTo(ServerLevel level, Player player, LeadConnection connection) {
-            return SuperLeadNetwork.upgradeConnectionKind(level, connection, LeadKind.ENERGY);
+            if (connection.kind() != LeadKind.ENERGY) {
+                return SuperLeadNetwork.upgradeConnectionKind(level, connection, LeadKind.ENERGY);
+            }
+            return false;
+        }
+
+        @Override
+        public boolean applyTo(ServerLevel level, Player player, LeadConnection connection,
+                net.minecraft.world.phys.Vec3 hitPoint, double hitT) {
+            if (connection.kind() != LeadKind.ENERGY) {
+                return applyTo(level, player, connection);
+            }
+            // Already an ENERGY rope: toggle the extract anchor at the end closer to the
+            // hit.
+            int newExtract;
+            if (hitT < 0.5D) {
+                newExtract = connection.extractAnchor() == 1 ? 0 : 1;
+            } else {
+                newExtract = connection.extractAnchor() == 2 ? 0 : 2;
+            }
+            return SuperLeadNetwork.updateConnectionExtract(level, player, connection, newExtract);
         }
 
         @Override
@@ -544,7 +564,8 @@ public enum LeadConnectionAction {
     /**
      * Variant that receives the client-picked hit point and normalized rope
      * parameter so actions can distinguish which end of the rope was targeted.
-     * Default implementation delegates to {@link #applyTo(ServerLevel, Player, LeadConnection)}.
+     * Default implementation delegates to
+     * {@link #applyTo(ServerLevel, Player, LeadConnection)}.
      */
     public boolean applyTo(ServerLevel level, Player player, LeadConnection connection,
             net.minecraft.world.phys.Vec3 hitPoint, double hitT) {

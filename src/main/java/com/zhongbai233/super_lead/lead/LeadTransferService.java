@@ -278,9 +278,16 @@ final class LeadTransferService {
             return;
         }
 
-        for (int i = 0; i < endpoints.size(); i++) {
-            for (int j = i + 1; j < endpoints.size(); j++) {
-                heatHandlers.balance(level, endpoints.get(i), endpoints.get(j), componentRate);
+        // Apply componentRate as a per-tick total cap, not per-pair.
+        // Without this N endpoints would allow N*(N-1)/2 × componentRate
+        // heat transfer per tick instead of the intended componentRate total.
+        double remaining = componentRate;
+        for (int i = 0; i < endpoints.size() && remaining > 0.0D; i++) {
+            for (int j = i + 1; j < endpoints.size() && remaining > 0.0D; j++) {
+                double moved = heatHandlers.balance(level, endpoints.get(i), endpoints.get(j), remaining);
+                if (moved > 0.0D) {
+                    remaining -= moved;
+                }
             }
         }
     }

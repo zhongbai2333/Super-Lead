@@ -17,10 +17,12 @@ import net.minecraft.core.UUIDUtil;
  * instance instead of editing fields in place.
  */
 public record LeadConnection(UUID id, LeadAnchor from, LeadAnchor to, LeadKind kind, int power, int tier,
-        int extractAnchor, List<RopeAttachment> attachments, String physicsPreset, String manualPhysicsPreset,
-        UUID adventureOwner) {
+        int extractAnchor, int lengthUnits, List<RopeAttachment> attachments, String physicsPreset,
+        String manualPhysicsPreset, UUID adventureOwner) {
     public static final String NO_PHYSICS_PRESET = "";
     public static final UUID NO_ADVENTURE_OWNER = new UUID(0L, 0L);
+    public static final int MIN_LENGTH_UNITS = 1;
+    public static final int MAX_LENGTH_UNITS = 4;
 
     public static final Codec<LeadConnection> CODEC = RecordCodecBuilder.create(instance -> instance.group(
             UUIDUtil.CODEC.fieldOf("id").forGetter(LeadConnection::id),
@@ -30,6 +32,7 @@ public record LeadConnection(UUID id, LeadAnchor from, LeadAnchor to, LeadKind k
             Codec.INT.optionalFieldOf("power", 0).forGetter(LeadConnection::power),
             Codec.INT.optionalFieldOf("tier", 0).forGetter(LeadConnection::tier),
             Codec.INT.optionalFieldOf("extract", 0).forGetter(LeadConnection::extractAnchor),
+            Codec.INT.optionalFieldOf("lengthUnits", MIN_LENGTH_UNITS).forGetter(LeadConnection::lengthUnits),
             RopeAttachment.CODEC.listOf().optionalFieldOf("attachments", List.of())
                     .forGetter(LeadConnection::attachments),
             Codec.STRING.optionalFieldOf("physicsPreset", NO_PHYSICS_PRESET).forGetter(LeadConnection::physicsPreset),
@@ -38,14 +41,16 @@ public record LeadConnection(UUID id, LeadAnchor from, LeadAnchor to, LeadKind k
             UUIDUtil.CODEC.optionalFieldOf("adventureOwner", NO_ADVENTURE_OWNER)
                     .forGetter(LeadConnection::adventureOwner))
             .apply(instance,
-                    (id, from, to, kind, power, tier, extract, attachments, physicsPreset, manualPhysicsPreset,
-                            adventureOwner) -> new LeadConnection(id, from, to, kind, power, tier, extract, attachments,
-                                    physicsPreset, manualPhysicsPreset, adventureOwner)));
+                    (id, from, to, kind, power, tier, extract, lengthUnits, attachments, physicsPreset,
+                            manualPhysicsPreset, adventureOwner) -> new LeadConnection(id, from, to, kind, power, tier,
+                                    extract, lengthUnits, attachments, physicsPreset, manualPhysicsPreset,
+                                    adventureOwner)));
 
     public LeadConnection {
         power = Math.max(0, Math.min(15, power));
         tier = Math.max(0, tier);
         extractAnchor = Math.max(0, Math.min(2, extractAnchor));
+        lengthUnits = Math.max(MIN_LENGTH_UNITS, Math.min(MAX_LENGTH_UNITS, lengthUnits));
         attachments = attachments == null ? List.of() : List.copyOf(attachments);
         physicsPreset = normalizePhysicsPreset(physicsPreset);
         manualPhysicsPreset = normalizePhysicsPreset(manualPhysicsPreset);
@@ -57,7 +62,8 @@ public record LeadConnection(UUID id, LeadAnchor from, LeadAnchor to, LeadKind k
     }
 
     public static LeadConnection create(LeadAnchor from, LeadAnchor to, LeadKind kind) {
-        return new LeadConnection(UUID.randomUUID(), from, to, kind, 0, 0, 0, List.of(), NO_PHYSICS_PRESET,
+        return new LeadConnection(UUID.randomUUID(), from, to, kind, 0, 0, 0, MIN_LENGTH_UNITS, List.of(),
+                NO_PHYSICS_PRESET,
                 NO_PHYSICS_PRESET,
                 NO_ADVENTURE_OWNER);
     }
@@ -75,30 +81,42 @@ public record LeadConnection(UUID id, LeadAnchor from, LeadAnchor to, LeadKind k
                 || kind == LeadKind.PRESSURIZED || kind == LeadKind.THERMAL || kind == LeadKind.AE_NETWORK;
         int newTier = keepsTier ? tier : 0;
         int newPower = (kind == LeadKind.REDSTONE || kind == LeadKind.ENERGY) ? power : 0;
-        boolean keepsExtract = kind == LeadKind.ITEM || kind == LeadKind.FLUID || kind == LeadKind.PRESSURIZED;
+        boolean keepsExtract = kind == LeadKind.ITEM || kind == LeadKind.FLUID || kind == LeadKind.PRESSURIZED
+                || kind == LeadKind.ENERGY;
         int newExtract = keepsExtract ? extractAnchor : 0;
-        return new LeadConnection(id, from, to, kind, newPower, newTier, newExtract, attachments, physicsPreset,
-                manualPhysicsPreset, adventureOwner);
+        return new LeadConnection(id, from, to, kind, newPower, newTier, newExtract, lengthUnits, attachments,
+                physicsPreset, manualPhysicsPreset, adventureOwner);
     }
 
     public LeadConnection withPower(int power) {
-        return new LeadConnection(id, from, to, kind, power, tier, extractAnchor, attachments, physicsPreset,
+        return new LeadConnection(id, from, to, kind, power, tier, extractAnchor, lengthUnits, attachments,
+                physicsPreset,
                 manualPhysicsPreset, adventureOwner);
     }
 
     public LeadConnection withTier(int tier) {
-        return new LeadConnection(id, from, to, kind, power, tier, extractAnchor, attachments, physicsPreset,
+        return new LeadConnection(id, from, to, kind, power, tier, extractAnchor, lengthUnits, attachments,
+                physicsPreset,
                 manualPhysicsPreset, adventureOwner);
     }
 
     public LeadConnection withExtractAnchor(int extractAnchor) {
-        return new LeadConnection(id, from, to, kind, power, tier, extractAnchor, attachments, physicsPreset,
-                manualPhysicsPreset, adventureOwner);
+        return new LeadConnection(id, from, to, kind, power, tier, extractAnchor, lengthUnits, attachments,
+                physicsPreset, manualPhysicsPreset, adventureOwner);
+    }
+
+    public LeadConnection withLengthUnits(int lengthUnits) {
+        return new LeadConnection(id, from, to, kind, power, tier, extractAnchor, lengthUnits, attachments,
+                physicsPreset, manualPhysicsPreset, adventureOwner);
+    }
+
+    public boolean canExtendLength() {
+        return lengthUnits < MAX_LENGTH_UNITS;
     }
 
     public LeadConnection withAttachments(List<RopeAttachment> attachments) {
-        return new LeadConnection(id, from, to, kind, power, tier, extractAnchor, attachments, physicsPreset,
-                manualPhysicsPreset, adventureOwner);
+        return new LeadConnection(id, from, to, kind, power, tier, extractAnchor, lengthUnits, attachments,
+                physicsPreset, manualPhysicsPreset, adventureOwner);
     }
 
     public LeadConnection withPhysicsPreset(String physicsPreset) {
@@ -106,7 +124,7 @@ public record LeadConnection(UUID id, LeadAnchor from, LeadAnchor to, LeadKind k
         if (normalized.equals(this.physicsPreset)) {
             return this;
         }
-        return new LeadConnection(id, from, to, kind, power, tier, extractAnchor, attachments, normalized,
+        return new LeadConnection(id, from, to, kind, power, tier, extractAnchor, lengthUnits, attachments, normalized,
                 manualPhysicsPreset, adventureOwner);
     }
 
@@ -115,7 +133,8 @@ public record LeadConnection(UUID id, LeadAnchor from, LeadAnchor to, LeadKind k
         if (normalized.equals(this.manualPhysicsPreset)) {
             return this;
         }
-        return new LeadConnection(id, from, to, kind, power, tier, extractAnchor, attachments, physicsPreset,
+        return new LeadConnection(id, from, to, kind, power, tier, extractAnchor, lengthUnits, attachments,
+                physicsPreset,
                 normalized, adventureOwner);
     }
 
@@ -124,8 +143,8 @@ public record LeadConnection(UUID id, LeadAnchor from, LeadAnchor to, LeadKind k
         if (normalized.equals(this.adventureOwner)) {
             return this;
         }
-        return new LeadConnection(id, from, to, kind, power, tier, extractAnchor, attachments, physicsPreset,
-                manualPhysicsPreset, normalized);
+        return new LeadConnection(id, from, to, kind, power, tier, extractAnchor, lengthUnits, attachments,
+                physicsPreset, manualPhysicsPreset, normalized);
     }
 
     public LeadConnection addAttachment(RopeAttachment attachment) {
@@ -175,7 +194,8 @@ public record LeadConnection(UUID id, LeadAnchor from, LeadAnchor to, LeadKind k
      * Returns the resource extraction anchor, or null when extraction is disabled.
      */
     public LeadAnchor extractSource() {
-        if (kind != LeadKind.ITEM && kind != LeadKind.FLUID && kind != LeadKind.PRESSURIZED)
+        if (kind != LeadKind.ITEM && kind != LeadKind.FLUID && kind != LeadKind.PRESSURIZED
+                && kind != LeadKind.ENERGY)
             return null;
         return switch (extractAnchor) {
             case 1 -> from;
@@ -188,7 +208,8 @@ public record LeadConnection(UUID id, LeadAnchor from, LeadAnchor to, LeadKind k
      * Returns the resource insertion anchor, or null when extraction is disabled.
      */
     public LeadAnchor extractTarget() {
-        if (kind != LeadKind.ITEM && kind != LeadKind.FLUID && kind != LeadKind.PRESSURIZED)
+        if (kind != LeadKind.ITEM && kind != LeadKind.FLUID && kind != LeadKind.PRESSURIZED
+                && kind != LeadKind.ENERGY)
             return null;
         return switch (extractAnchor) {
             case 1 -> to;

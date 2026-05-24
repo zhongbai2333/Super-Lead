@@ -29,8 +29,22 @@ final class LeadPlacementState {
         return pendingLead(player).map(PendingLead::kind);
     }
 
+    static Optional<Integer> pendingLengthUnits(Player player) {
+        return pendingLead(player).map(PendingLead::lengthUnits);
+    }
+
     static void setPendingAnchor(Player player, LeadAnchor anchor, LeadKind kind) {
-        PENDING_LEADS.put(PlayerKey.of(player), new PendingLead(anchor, kind));
+        PENDING_LEADS.put(PlayerKey.of(player), new PendingLead(anchor, kind, LeadConnection.MIN_LENGTH_UNITS));
+    }
+
+    static boolean extendPendingLength(Player player) {
+        PlayerKey key = PlayerKey.of(player);
+        PendingLead pending = PENDING_LEADS.get(key);
+        if (pending == null || pending.lengthUnits >= LeadConnection.MAX_LENGTH_UNITS) {
+            return false;
+        }
+        PENDING_LEADS.put(key, new PendingLead(pending.anchor, pending.kind, pending.lengthUnits + 1));
+        return true;
     }
 
     static void clearPendingAnchor(Player player) {
@@ -47,6 +61,6 @@ final class LeadPlacementState {
         }
     }
 
-    private record PendingLead(LeadAnchor anchor, LeadKind kind) {
+    private record PendingLead(LeadAnchor anchor, LeadKind kind, int lengthUnits) {
     }
 }

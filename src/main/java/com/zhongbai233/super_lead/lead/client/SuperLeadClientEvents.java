@@ -64,6 +64,8 @@ import net.neoforged.neoforge.client.event.SubmitCustomGeometryEvent;
 @EventBusSubscriber(modid = Super_lead.MODID, value = net.neoforged.api.distmarker.Dist.CLIENT)
 public final class SuperLeadClientEvents {
     private static final double PICK_RADIUS = 0.30D;
+    /** Max blocks beyond player reach to scan when no vanilla block hit exists. */
+    private static final double PICK_REACH_SLACK = 2.0D;
     private static final int ATTACHMENT_HIGHLIGHT_COLOR = LeashBuilder.DEFAULT_HIGHLIGHT;
     private static final int ATTACHMENT_REMOVAL_HIGHLIGHT_COLOR = 0x66FF6040;
     private static final int ZIPLINE_HIGHLIGHT_COLOR = 0x883FCBFF;
@@ -450,7 +452,7 @@ public final class SuperLeadClientEvents {
             Map<UUID, String> physicsStateByConnection, List<RopeJob> ropeJobs, RenderEntry entry, Vec3 cameraPos,
             float partialTick, long tick, ConnectionHighlight highlight, UUID highlightedConnectionId) {
         UUID connectionId = entry.connection().id();
-        boolean chunkMeshActive = staticRopes.isClaimed(connectionId)
+        boolean chunkMeshActive = staticRopes.isMeshAccepted(connectionId)
                 && !staticRopes.shouldDynamicLinger(connectionId, tick);
         if (chunkMeshActive
                 && (highlightedConnectionId == null || !connectionId.equals(highlightedConnectionId))) {
@@ -667,7 +669,8 @@ public final class SuperLeadClientEvents {
         }
         Vec3 a = anchor.attachmentPoint(level);
         Vec3 b = player.getRopeHoldPosition(partialTick);
-        if (a.distanceTo(b) > SuperLeadNetwork.MAX_LEASH_DISTANCE) {
+        int lengthUnits = SuperLeadNetwork.pendingLengthUnits(player);
+        if (a.distanceTo(b) > SuperLeadNetwork.maxLeashDistanceForUnits(lengthUnits)) {
             return;
         }
         RopeTuning tuning = RopeTuning.forMidpoint(a, b);
@@ -752,7 +755,8 @@ public final class SuperLeadClientEvents {
         Map<String, String> overrides = PhysicsZonesClient.overridesForPreset(connection.physicsPreset());
         boolean normalContactKind = connection.kind() == LeadKind.NORMAL || connection.kind() == LeadKind.REDSTONE;
         boolean tripEnabled = resolveBool(overrides, ClientTuning.CONTACT_TRIP_ENABLED);
-        if (!normalContactKind && !tripEnabled)
+        boolean pushbackEnabled = normalContactKind && resolveBool(overrides, ClientTuning.CONTACT_PUSHBACK);
+        if (!pushbackEnabled && !tripEnabled)
             return;
 
         double radius = resolveDouble(overrides, ClientTuning.CONTACT_RADIUS);
@@ -789,7 +793,6 @@ public final class SuperLeadClientEvents {
         tz /= tLen;
         double topThreshold = resolveDouble(overrides, ClientTuning.CONTACT_TOP_NORMAL_THRESHOLD);
         boolean jumpDown = isJumpKeyDown(player);
-        boolean pushbackEnabled = resolveBool(overrides, ClientTuning.CONTACT_PUSHBACK);
         Vec3 input = playerMoveIntent(player);
         double playerFeetY = player.getY();
         double ropeSurfaceY = contact.y() + radius;
@@ -1003,13 +1006,17 @@ public final class SuperLeadClientEvents {
         // targeted
         // block still gets picked, which makes hopper / chest etc. unable to be placed
         // normally.
-        double maxDistance = SuperLeadNetwork.MAX_LEASH_DISTANCE;
+        double maxDistance = SuperLeadNetwork.maxExtendedLeashDistance();
         net.minecraft.world.phys.HitResult hitResult = minecraft.hitResult;
         if (hitResult != null && hitResult.getType() != net.minecraft.world.phys.HitResult.Type.MISS) {
             double hitDist = hitResult.getLocation().distanceTo(cameraPos);
             // Allow a small slack so a rope just in front of the targeted block still
             // picks.
             maxDistance = Math.min(maxDistance, hitDist + PICK_RADIUS);
+        } else if (player != null) {
+            // No block/entity hit — cap to player reach so we don't scan ropes 48 blocks
+            // away.
+            maxDistance = Math.min(maxDistance, player.blockInteractionRange() + PICK_REACH_SLACK);
         }
         double best = PICK_RADIUS * PICK_RADIUS;
         UUID bestId = null;
@@ -1147,11 +1154,13 @@ public final class SuperLeadClientEvents {
         dirY *= invDir;
         dirZ *= invDir;
 
-        double maxDistance = SuperLeadNetwork.MAX_LEASH_DISTANCE;
+        double maxDistance = SuperLeadNetwork.maxExtendedLeashDistance();
         net.minecraft.world.phys.HitResult hitResult = minecraft.hitResult;
         if (hitResult != null && hitResult.getType() != net.minecraft.world.phys.HitResult.Type.MISS) {
             double hitDist = hitResult.getLocation().distanceTo(cameraPos);
             maxDistance = Math.min(maxDistance, hitDist + PICK_RADIUS);
+        } else if (player != null) {
+            maxDistance = Math.min(maxDistance, player.blockInteractionRange() + PICK_REACH_SLACK);
         }
         double best = PICK_RADIUS * PICK_RADIUS;
         UUID bestId = null;

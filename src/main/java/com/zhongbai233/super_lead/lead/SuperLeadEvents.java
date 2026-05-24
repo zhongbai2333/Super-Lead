@@ -148,7 +148,9 @@ public final class SuperLeadEvents {
         }
         if (event.getLevel() instanceof ServerLevel serverLevel
                 && SuperLeadNetwork.hasClientPickCompatibleConnectionInView(serverLevel, event.getEntity(),
-                        connection -> ZiplineController.canRideConnection(serverLevel, connection))) {
+                        connection -> ZiplineController.canRideConnection(serverLevel, connection)
+                                && ZiplineController.canReachConnectionStart(serverLevel, event.getEntity(),
+                                        connection))) {
             event.setCanceled(true);
             event.setCancellationResult(InteractionResult.SUCCESS);
             return true;
@@ -507,23 +509,44 @@ public final class SuperLeadEvents {
         if (pending.isPresent()) {
             LeadAnchor first = pending.get();
             LeadKind kind = SuperLeadNetwork.pendingKind(player).orElse(stackKind);
+            int lengthUnits = SuperLeadNetwork.pendingLengthUnits(player);
+            if (stackKind != kind) {
+                refundPendingLengthExtensions(level, player, kind, lengthUnits);
+                SuperLeadNetwork.clearPendingAnchor(player);
+                clearLeashingState(stack);
+                return InteractionResult.FAIL;
+            }
             if (first.equals(anchor)) {
+                if (lengthUnits < SuperLeadNetwork.MAX_LENGTH_UNITS
+                        && canSpendPendingLengthExtension(level, player, stack)
+                        && SuperLeadNetwork.extendPendingLength(player)) {
+                    if (!level.isClientSide() && !player.isCreative()) {
+                        stack.shrink(1);
+                    }
+                    markLeashingState(stack);
+                    return InteractionResult.SUCCESS;
+                }
+                refundPendingLengthExtensions(level, player, kind, lengthUnits);
                 SuperLeadNetwork.clearPendingAnchor(player);
                 clearLeashingState(stack);
             } else if (first.attachmentPoint(level)
-                    .distanceTo(anchor.attachmentPoint(level)) > SuperLeadNetwork.MAX_LEASH_DISTANCE) {
+                    .distanceTo(
+                            anchor.attachmentPoint(level)) > SuperLeadNetwork.maxLeashDistanceForUnits(lengthUnits)) {
+                refundPendingLengthExtensions(level, player, kind, lengthUnits);
                 SuperLeadNetwork.clearPendingAnchor(player);
                 clearLeashingState(stack);
                 result = InteractionResult.FAIL;
             } else if (!SuperLeadNetwork.canCreateRopePlacement(level, player, first, anchor)) {
+                refundPendingLengthExtensions(level, player, kind, lengthUnits);
                 SuperLeadNetwork.clearPendingAnchor(player);
                 clearLeashingState(stack);
                 result = InteractionResult.FAIL;
             } else {
-                LeadConnection created = SuperLeadNetwork.connect(level, first, anchor, kind, player);
+                LeadConnection created = SuperLeadNetwork.connect(level, first, anchor, kind, player, lengthUnits);
                 SuperLeadNetwork.clearPendingAnchor(player);
                 clearLeashingState(stack);
                 if (created == null) {
+                    refundPendingLengthExtensions(level, player, kind, lengthUnits);
                     result = InteractionResult.FAIL;
                 } else if (!level.isClientSide() && !player.isCreative()) {
                     stack.shrink(1);
@@ -541,12 +564,44 @@ public final class SuperLeadEvents {
         return result;
     }
 
+    private static boolean canSpendPendingLengthExtension(Level level, Player player, ItemStack stack) {
+        return level.isClientSide() || player.isCreative() || stack.getCount() > 1;
+    }
+
+    private static void refundPendingLengthExtensions(Level level, Player player, LeadKind kind, int lengthUnits) {
+        int extra = Math.max(0, lengthUnits - LeadConnection.MIN_LENGTH_UNITS);
+        if (extra <= 0 || level.isClientSide() || player.isCreative()) {
+            return;
+        }
+        ItemStack refund = SuperLeadItems.stack(kind);
+        refund.setCount(extra);
+        if (!player.addItem(refund)) {
+            player.drop(refund, false);
+        }
+    }
+
+    private static void refundAndClearPendingLength(Player player) {
+        if (SuperLeadNetwork.pendingAnchor(player).isEmpty()) {
+            return;
+        }
+        int lengthUnits = SuperLeadNetwork.pendingLengthUnits(player);
+        LeadKind kind = SuperLeadNetwork.pendingKind(player).orElse(LeadKind.NORMAL);
+        refundPendingLengthExtensions(player.level(), player, kind, lengthUnits);
+        SuperLeadNetwork.clearPendingAnchor(player);
+        clearLeashingState(player.getMainHandItem());
+        clearLeashingState(player.getOffhandItem());
+    }
+
     @SubscribeEvent
     public static void onLevelTick(LevelTickEvent.Post event) {
         for (Player player : event.getLevel().players()) {
             SuperLeadNetwork.pendingAnchor(player).ifPresent(anchor -> {
+                int lengthUnits = SuperLeadNetwork.pendingLengthUnits(player);
                 if (anchor.attachmentPoint(event.getLevel())
-                        .distanceTo(player.getRopeHoldPosition(1.0F)) > SuperLeadNetwork.MAX_LEASH_DISTANCE) {
+                        .distanceTo(player.getRopeHoldPosition(1.0F)) > SuperLeadNetwork
+                                .maxLeashDistanceForUnits(lengthUnits)) {
+                    refundPendingLengthExtensions(event.getLevel(), player,
+                            SuperLeadNetwork.pendingKind(player).orElse(LeadKind.NORMAL), lengthUnits);
                     SuperLeadNetwork.clearPendingAnchor(player);
                     clearLeashingState(player.getMainHandItem());
                     clearLeashingState(player.getOffhandItem());
@@ -571,6 +626,7 @@ public final class SuperLeadEvents {
     @SubscribeEvent
     public static void onPlayerChangedDimension(PlayerEvent.PlayerChangedDimensionEvent event) {
         if (event.getEntity() instanceof ServerPlayer player) {
+            refundAndClearPendingLength(player);
             RopeTripController.stopEverywhere(player);
             ZiplineController.stopEverywhere(player);
             SuperLeadPayloads.sendToPlayer(player);
@@ -580,6 +636,7 @@ public final class SuperLeadEvents {
     @SubscribeEvent
     public static void onPlayerLoggedOut(PlayerEvent.PlayerLoggedOutEvent event) {
         if (event.getEntity() instanceof ServerPlayer player) {
+            refundAndClearPendingLength(player);
             RopeTripController.stopEverywhere(player);
             ZiplineController.stopEverywhere(player);
         }
