@@ -17,6 +17,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 import java.util.function.Predicate;
 import java.util.regex.Pattern;
 import net.minecraft.ChatFormatting;
@@ -49,7 +50,6 @@ public final class PresetServerManager {
     private static final Permission.HasCommandLevel OP = new Permission.HasCommandLevel(PermissionLevel.GAMEMASTERS);
     private static final Permission.HasCommandLevel OP4 = new Permission.HasCommandLevel(PermissionLevel.OWNERS);
     private static final Pattern PLAYER_PRESET_BASE = Pattern.compile("^[A-Za-z0-9_\\-]{1,23}$");
-    private static final double BINDER_PICK_RADIUS = 0.95D;
 
     private PresetServerManager() {
     }
@@ -480,7 +480,8 @@ public final class PresetServerManager {
         return Optional.of(presetName);
     }
 
-    public static boolean toggleBoundPresetInView(ServerPlayer player, ItemStack binderStack) {
+    public static boolean toggleBoundPresetInView(ServerPlayer player, ItemStack binderStack,
+            UUID connectionId, Vec3 hitPoint, double hitT) {
         if (!Config.allowOpVisualPresets()) {
             player.sendSystemMessage(Component.translatable("message.super_lead.preset_binder.disabled")
                     .withStyle(ChatFormatting.RED));
@@ -506,8 +507,10 @@ public final class PresetServerManager {
             return false;
         }
 
-        Optional<LeadConnection> opt = SuperLeadNetwork.findConnectionInView(level, player, BINDER_PICK_RADIUS);
-        if (opt.isEmpty()) {
+        // Use the client's pick (same verification as cut/upgrade actions)
+        Optional<LeadConnection> opt = SuperLeadNetwork.findConnectionById(level, connectionId);
+        if (opt.isEmpty()
+                || !SuperLeadNetwork.canUseClientPickedConnection(level, player, opt.get(), hitPoint, hitT)) {
             player.sendSystemMessage(Component.translatable("message.super_lead.preset_binder.no_rope")
                     .withStyle(ChatFormatting.YELLOW));
             return false;

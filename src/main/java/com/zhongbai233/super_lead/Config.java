@@ -36,6 +36,7 @@ public final class Config {
     public static final ModConfigSpec.IntValue NETWORK_FLUID_BUCKET_AMOUNT;
     public static final ModConfigSpec.IntValue NETWORK_STUCK_BREAK_TICKS;
     public static final ModConfigSpec.IntValue NETWORK_MAX_ROPES_PER_BLOCK_FACE;
+    public static final ModConfigSpec.DoubleValue CUT_REFUND_RATIO;
 
     public static final ModConfigSpec.BooleanValue PRESETS_ALLOW_OP_VISUAL_PRESETS;
 
@@ -85,6 +86,9 @@ public final class Config {
         NETWORK_MAX_ROPES_PER_BLOCK_FACE = builder
                 .comment("Maximum number of ropes that can anchor to a single block face.")
                 .defineInRange("max_ropes_per_block_face", 8, 1, 64);
+        CUT_REFUND_RATIO = builder
+                .comment("Fraction of upgrade materials refunded when a rope is cut (0 = none, 1 = full).")
+                .defineInRange("cut_refund_ratio", 0.5D, 0.0D, 1.0D);
         builder.pop();
 
         builder.push("presets");
@@ -110,6 +114,7 @@ public final class Config {
     private static volatile int cachedStuckBreakTicks = 100;
     private static volatile int cachedMaxRopesPerBlockFace = 8;
     private static volatile boolean cachedAllowOpVisualPresets = true;
+    private static volatile double cachedCutRefundRatio = 0.5D;
 
     private Config() {
     }
@@ -186,6 +191,10 @@ public final class Config {
         return cachedAllowOpVisualPresets;
     }
 
+    public static double cutRefundRatio() {
+        return cachedCutRefundRatio;
+    }
+
     @SubscribeEvent
     public static void onLoad(ModConfigEvent.Loading event) {
         if (event.getConfig().getSpec() == SPEC) {
@@ -215,6 +224,7 @@ public final class Config {
         cachedStuckBreakTicks = NETWORK_STUCK_BREAK_TICKS.getAsInt();
         cachedMaxRopesPerBlockFace = NETWORK_MAX_ROPES_PER_BLOCK_FACE.getAsInt();
         cachedAllowOpVisualPresets = PRESETS_ALLOW_OP_VISUAL_PRESETS.get();
+        cachedCutRefundRatio = CUT_REFUND_RATIO.get();
     }
 
     /**

@@ -309,8 +309,9 @@ public final class RopeDynamicLights {
     private static int locateSegment(RopeSimulation sim, int nodeCount, double target) {
         if (target <= 0.0D)
             return 0;
+        double eps = 1.0e-9D;
         for (int i = 0; i < nodeCount - 1; i++) {
-            if (target <= sim.renderLength(i + 1))
+            if (target < sim.renderLength(i + 1) - eps)
                 return i;
         }
         return nodeCount - 2;

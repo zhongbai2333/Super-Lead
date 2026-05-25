@@ -1,6 +1,7 @@
 package com.zhongbai233.super_lead.lead.client;
 
 import com.zhongbai233.super_lead.lead.AddRopeAttachment;
+import com.zhongbai233.super_lead.lead.BoostRopePerch;
 import com.zhongbai233.super_lead.lead.LeadConnection;
 import com.zhongbai233.super_lead.lead.LeadConnectionAction;
 import com.zhongbai233.super_lead.lead.LeadEndpointLayout;
@@ -41,7 +42,7 @@ import net.neoforged.neoforge.client.network.ClientPacketDistributor;
  * keeps
  * that subscriber from becoming the place where every interaction rule lives.
  */
-final class ClientRopeInteractions {
+public final class ClientRopeInteractions {
     private static final double ZIPLINE_PICK_RADIUS = 0.55D;
     /**
      * Looser radius for picking a rope to attach a decoration to. The aim usually
@@ -59,8 +60,16 @@ final class ClientRopeInteractions {
     private ClientRopeInteractions() {
     }
 
-    static LeadConnection hoveredConnection() {
+    public static LeadConnection hoveredConnection() {
         return hoveredConnection;
+    }
+
+    public static Vec3 hoveredHitPoint() {
+        return hoveredHitPoint;
+    }
+
+    public static double hoveredHitT() {
+        return hoveredHitT;
     }
 
     static void clearHovered() {
@@ -119,6 +128,25 @@ final class ClientRopeInteractions {
                         hand == net.minecraft.world.InteractionHand.OFF_HAND,
                         hitPoint,
                         hitT));
+        return true;
+    }
+
+    /**
+     * Send a BoostRopePerch packet for the currently hovered connection.
+     * Called when the player shift-right-clicks with seeds while aiming at a rope.
+     */
+    static boolean trySendBoostRopePerch() {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.player == null || !SuperLeadNetwork.canModifyRopes(mc.player)) {
+            return false;
+        }
+        LeadConnection hovered = hoveredConnection;
+        Vec3 hitPoint = hoveredHitPoint;
+        double hitT = hoveredHitT;
+        if (hovered == null || hitPoint == null || !Double.isFinite(hitT)) {
+            return false;
+        }
+        ClientPacketDistributor.sendToServer(new BoostRopePerch(hovered.id(), hitPoint, hitT));
         return true;
     }
 

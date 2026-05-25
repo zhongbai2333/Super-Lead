@@ -61,6 +61,8 @@ public final class PresetEditScreen extends Screen {
     private int bodyBottom;
     private int contentHeight;
     private int scrollOffset;
+    private int sidebarScrollOffset;
+    private int sidebarContentHeight;
     private boolean loaded;
     private boolean detailsRequested;
     private boolean pointerDownInBody;
@@ -114,20 +116,28 @@ public final class PresetEditScreen extends Screen {
                 .bounds(this.width - PADDING - 60, PADDING, 60, 14).build();
         addRenderableWidget(back);
 
-        // --- Left sidebar: vertical tab buttons ---
+        // --- Left sidebar: vertical tab buttons with scroll ---
         int sidebarTop = PADDING + 20;
-        int tabY = sidebarTop;
+        int sidebarBottom = this.height - PADDING;
+        int sidebarAreaH = sidebarBottom - sidebarTop;
+        sidebarContentHeight = groups.size() * (TAB_BTN_H + TAB_GAP) - TAB_GAP;
+        clampSidebarScroll(sidebarAreaH);
+
+        int btnW = SIDEBAR_W - 4;
         for (int i = 0; i < groups.size(); i++) {
             int index = i;
+            int y = sidebarTop + i * (TAB_BTN_H + TAB_GAP) - sidebarScrollOffset;
+            // Only create buttons visible within the sidebar area
+            if (y + TAB_BTN_H < sidebarTop || y > sidebarBottom)
+                continue;
             Component label = groupLabel(groups.get(i));
             Button tab = Button.builder(label, b -> {
                 this.activeTab = index;
                 this.scrollOffset = 0;
                 this.rebuildWidgets();
-            }).bounds(PADDING, tabY, SIDEBAR_W - 4, TAB_BTN_H).build();
+            }).bounds(PADDING, y, btnW, TAB_BTN_H).build();
             tab.active = i != activeTab;
             addRenderableWidget(tab);
-            tabY += TAB_BTN_H + TAB_GAP;
         }
 
         // --- Right body: config rows for active tab ---
@@ -192,6 +202,11 @@ public final class PresetEditScreen extends Screen {
         scrollOffset = Mth.clamp(scrollOffset, 0, maxScroll);
     }
 
+    private void clampSidebarScroll(int visibleH) {
+        int maxScroll = Math.max(0, sidebarContentHeight - visibleH);
+        sidebarScrollOffset = Mth.clamp(sidebarScrollOffset, 0, maxScroll);
+    }
+
     private void applyDetails(PresetDetailsResponse response, boolean rebuild) {
         if (rebuild && isInteractingWithBodyControls()) {
             pendingDetails = response;
@@ -242,6 +257,14 @@ public final class PresetEditScreen extends Screen {
 
     @Override
     public boolean mouseScrolled(double mx, double my, double dx, double dy) {
+        int contentX = PADDING + SIDEBAR_W;
+        if (mx < contentX && my >= PADDING + 20 && my <= this.height - PADDING) {
+            int visibleH = (this.height - PADDING) - (PADDING + 20);
+            sidebarScrollOffset -= (int) Math.round(dy * (TAB_BTN_H + TAB_GAP));
+            clampSidebarScroll(visibleH);
+            this.rebuildWidgets();
+            return true;
+        }
         if (my >= bodyTop && my <= bodyBottom) {
             scrollOffset -= (int) Math.round(dy * (ROW_HEIGHT + ROW_GAP));
             clampScroll();
@@ -507,6 +530,7 @@ public final class PresetEditScreen extends Screen {
         if (groups != null && !groups.isEmpty())
             renderRows(graphics);
         renderScrollbar(graphics);
+        renderSidebarScrollbar(graphics);
     }
 
     private void renderRows(GuiGraphicsExtractor graphics) {
@@ -565,6 +589,22 @@ public final class PresetEditScreen extends Screen {
         int maxScroll = contentHeight - viewport;
         if (maxScroll > 0) {
             int thumbY = bodyTop + scrollOffset * (viewport - thumbH) / maxScroll;
+            graphics.fill(trackX, thumbY, trackX + SCROLLBAR_W, thumbY + thumbH, 0xFF8090A0);
+        }
+    }
+
+    private void renderSidebarScrollbar(GuiGraphicsExtractor graphics) {
+        int sidebarTop = PADDING + 20;
+        int sidebarBottom = this.height - PADDING;
+        int viewport = sidebarBottom - sidebarTop;
+        if (sidebarContentHeight <= viewport || viewport <= 0)
+            return;
+        int trackX = PADDING + SIDEBAR_W - SCROLLBAR_W;
+        graphics.fill(trackX, sidebarTop, trackX + SCROLLBAR_W, sidebarBottom, 0x60000000);
+        int thumbH = Math.max(12, viewport * viewport / sidebarContentHeight);
+        int maxScroll = sidebarContentHeight - viewport;
+        if (maxScroll > 0) {
+            int thumbY = sidebarTop + sidebarScrollOffset * (viewport - thumbH) / maxScroll;
             graphics.fill(trackX, thumbY, trackX + SCROLLBAR_W, thumbY + thumbH, 0xFF8090A0);
         }
     }

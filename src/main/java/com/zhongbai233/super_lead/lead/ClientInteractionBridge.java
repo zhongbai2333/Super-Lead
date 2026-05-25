@@ -72,6 +72,11 @@ public final class ClientInteractionBridge {
         invokeVoid(PRESET_BINDER, "sendToggleRope", new Class<?>[] { InteractionHand.class }, hand);
     }
 
+    public static boolean trySendBoostRopePerch() {
+        String events = "com.zhongbai233.super_lead.lead.client.SuperLeadClientEvents";
+        return invokeBoolean(events, "trySendBoostRopePerch", new Class<?>[0]);
+    }
+
     public static void openOrEditPresetBinder(ItemStack stack, InteractionHand hand) {
         invokeVoid(PRESET_BINDER, "openOrEdit",
                 new Class<?>[] { ItemStack.class, InteractionHand.class }, stack, hand);

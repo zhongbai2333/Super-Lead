@@ -46,6 +46,7 @@ record ServerPhysicsTuning(
         double windStrengthJitter,
         double windDirectionDeg,
         double windDirectionJitterDeg,
+        double windCellDirectionSpreadDeg,
         double windWaveLength,
         double windSpeed,
         double windDuty,
@@ -152,6 +153,10 @@ record ServerPhysicsTuning(
         double windDirectionJitterDeg = parseDouble(
                 ClientTuning.overrideValue(overrides, ClientTuning.WIND_DIRECTION_JITTER_DEG),
                 ClientTuning.WIND_DIRECTION_JITTER_DEG, ClientTuning.WIND_DIRECTION_JITTER_DEG.defaultValue);
+        double windCellDirectionSpreadDeg = parseDouble(
+                ClientTuning.overrideValue(overrides, ClientTuning.WIND_CELL_DIRECTION_SPREAD_DEG),
+                ClientTuning.WIND_CELL_DIRECTION_SPREAD_DEG,
+                ClientTuning.WIND_CELL_DIRECTION_SPREAD_DEG.defaultValue);
         double windWaveLength = parseDouble(ClientTuning.overrideValue(overrides, ClientTuning.WIND_WAVELENGTH),
                 ClientTuning.WIND_WAVELENGTH, ClientTuning.WIND_WAVELENGTH.defaultValue);
         double windSpeed = parseDouble(ClientTuning.overrideValue(overrides, ClientTuning.WIND_SPEED),
@@ -178,6 +183,7 @@ record ServerPhysicsTuning(
                 ziplineSpeedLimit, ziplineRedstoneAccelerationMultiplier,
                 MAX_SOLVED_SAG_FALLBACK, SAG_ARC_APPROX_FACTOR_FALLBACK, FULL_SLACK_HORIZONTAL_RATIO_FALLBACK,
                 windEnabled, windStrength, windStrengthJitter, windDirectionDeg, windDirectionJitterDeg,
+                windCellDirectionSpreadDeg,
                 windWaveLength, windSpeed, windDuty, windDurationJitter, windPauseJitter, windRampBias,
                 windVerticalLift);
     }

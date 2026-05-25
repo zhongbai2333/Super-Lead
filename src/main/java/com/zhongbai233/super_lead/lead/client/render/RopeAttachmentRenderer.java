@@ -1004,13 +1004,18 @@ public final class RopeAttachmentRenderer {
 
     /**
      * Find the segment index {@code i} such that
-     * {@code renderLength(i) <= target <= renderLength(i+1)}.
+     * {@code renderLength(i) <= target < renderLength(i+1)}.
+     * Uses a strict-less-than on the upper bound so that a {@code target}
+     * exactly at a node position consistently maps to the segment <em>ending</em>
+     * at that node ({@code frac ≈ 1.0}) rather than flickering between two
+     * adjacent segments.
      */
     private static int locateSegment(RopeSimulation sim, int nodeCount, double target) {
         if (target <= 0.0D)
             return 0;
+        double eps = 1.0e-9D;
         for (int i = 0; i < nodeCount - 1; i++) {
-            if (target <= sim.renderLength(i + 1))
+            if (target < sim.renderLength(i + 1) - eps)
                 return i;
         }
         return nodeCount - 2;
@@ -1019,8 +1024,9 @@ public final class RopeAttachmentRenderer {
     private static int locateSegment(double[] lengths, double target) {
         if (target <= 0.0D)
             return 0;
+        double eps = 1.0e-9D;
         for (int i = 0; i < lengths.length - 1; i++) {
-            if (target <= lengths[i + 1])
+            if (target < lengths[i + 1] - eps)
                 return i;
         }
         return lengths.length - 2;

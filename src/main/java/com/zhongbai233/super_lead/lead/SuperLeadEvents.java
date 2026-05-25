@@ -3,13 +3,9 @@ package com.zhongbai233.super_lead.lead;
 import com.zhongbai233.super_lead.Super_lead;
 import com.zhongbai233.super_lead.lead.integration.ae2.AE2LeadMaterials;
 import com.zhongbai233.super_lead.lead.integration.mekanism.MekanismLeadMaterials;
-import java.util.Optional;
-import net.minecraft.ChatFormatting;
 import net.minecraft.core.Direction;
 import net.minecraft.core.component.DataComponents;
-import net.minecraft.network.chat.Component;
 import net.minecraft.util.TriState;
-import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
@@ -22,6 +18,7 @@ import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.event.entity.player.PlayerEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerInteractEvent;
+import net.neoforged.neoforge.event.level.BlockEvent;
 import net.neoforged.neoforge.event.level.ChunkWatchEvent;
 import net.neoforged.neoforge.event.tick.LevelTickEvent;
 
@@ -138,24 +135,13 @@ public final class SuperLeadEvents {
     private static boolean tryStartZipline(PlayerInteractEvent.RightClickBlock event) {
         if (!ZiplineController.isChain(event.getItemStack()))
             return false;
-        if (event.getLevel().isClientSide()) {
-            if (!ClientInteractionBridge.trySendStartZipline(event.getHand())) {
-                return false;
-            }
-            event.setCanceled(true);
-            event.setCancellationResult(InteractionResult.SUCCESS);
-            return true;
-        }
-        if (event.getLevel() instanceof ServerLevel serverLevel
-                && SuperLeadNetwork.hasClientPickCompatibleConnectionInView(serverLevel, event.getEntity(),
-                        connection -> ZiplineController.canRideConnection(serverLevel, connection)
-                                && ZiplineController.canReachConnectionStart(serverLevel, event.getEntity(),
-                                        connection))) {
-            event.setCanceled(true);
-            event.setCancellationResult(InteractionResult.SUCCESS);
-            return true;
-        }
-        return false;
+        if (!event.getLevel().isClientSide())
+            return false;
+        if (!ClientInteractionBridge.trySendStartZipline(event.getHand()))
+            return false;
+        event.setCanceled(true);
+        event.setCancellationResult(InteractionResult.SUCCESS);
+        return true;
     }
 
     private static boolean tryStartZiplineItem(PlayerInteractEvent.RightClickItem event) {
@@ -171,35 +157,16 @@ public final class SuperLeadEvents {
     }
 
     private static boolean tryUseConnectionAction(PlayerInteractEvent.RightClickBlock event) {
-        if (!SuperLeadNetwork.canModifyRopes(event.getEntity())) {
+        if (!event.getLevel().isClientSide())
             return false;
-        }
+        if (!SuperLeadNetwork.canModifyRopes(event.getEntity()))
+            return false;
         ItemStack stack = event.getItemStack();
         LeadConnectionAction action = LeadConnectionAction.fromStack(stack).orElse(null);
-        if (action == null) {
+        if (action == null)
             return false;
-        }
-        if (!event.getLevel().isClientSide()) {
-            // Server-side handling is driven exclusively by the client-confirmed packet
-            // (UseConnectionAction). Avoid running the server's own view-pick here so that
-            // straight-line ray + larger radius cannot upgrade a rope the client never
-            // highlighted.
-            // Still consume the vanilla block interaction when the server can confirm a
-            // compatible
-            // rope in view; otherwise block items like chests can be placed after the
-            // custom
-            // upgrade packet succeeds.
-            if (event.getLevel() instanceof ServerLevel serverLevel
-                    && SuperLeadNetwork.hasClientPickCompatibleConnectionInView(
-                            serverLevel, event.getEntity(), action::canTarget)) {
-                consumeBlockInteraction(event, InteractionResult.SUCCESS);
-                return true;
-            }
+        if (!sendClientUseAction(event.getEntity(), event.getHand(), action))
             return false;
-        }
-        if (!sendClientUseAction(event.getEntity(), event.getHand(), action)) {
-            return false;
-        }
         consumeBlockInteraction(event, InteractionResult.SUCCESS);
         return true;
     }
@@ -356,52 +323,28 @@ public final class SuperLeadEvents {
      * Client-only entry point; server is driven by the resulting packet.
      */
     private static boolean tryAddRopeAttachment(Player player, InteractionHand hand, Level level) {
+        if (!level.isClientSide())
+            return false;
         if (!SuperLeadNetwork.canModifyRopes(player))
             return false;
         ItemStack stack = player.getItemInHand(hand);
         if (!com.zhongbai233.super_lead.lead.RopeAttachmentItems.isAttachable(stack))
             return false;
-        if (!level.isClientSide()) {
-            // Server side: don't actually attach, but still cancel the block interaction so
-            // the held block isn't placed while the client-to-server attachment packet is
-            // in
-            // flight.
-            return canAimAtRopeForAttachment(player, hand, level);
-        }
         return ClientInteractionBridge.trySendAddRopeAttachment(hand);
     }
 
     private static boolean tryUsePresetBinder(Player player, InteractionHand hand, Level level, boolean shift) {
+        if (!level.isClientSide())
+            return false;
         ItemStack stack = player.getItemInHand(hand);
         if (!SuperLeadItems.isPresetBinder(stack))
             return false;
-        if (level.isClientSide()) {
-            if (shift) {
-                ClientInteractionBridge.sendPresetBinderToggleRope(hand);
-            } else {
-                ClientInteractionBridge.openOrEditPresetBinder(stack, hand);
-            }
+        if (shift) {
+            ClientInteractionBridge.sendPresetBinderToggleRope(hand);
+        } else {
+            ClientInteractionBridge.openOrEditPresetBinder(stack, hand);
         }
         return true;
-    }
-
-    /**
-     * Lightweight server-side check: is the player aiming at a rope that can accept
-     * attachments? Used to suppress vanilla block placement when the client will
-     * send
-     * an AddRopeAttachment packet.
-     */
-    private static boolean canAimAtRopeForAttachment(Player player, InteractionHand hand, Level level) {
-        if (!(level instanceof ServerLevel serverLevel))
-            return false;
-        if (!player.getOffhandItem().is(Items.STRING))
-            return false;
-        for (LeadConnection connection : SuperLeadNetwork.connections(level)) {
-            if (SuperLeadNetwork.canTouchConnectionForAttachment(serverLevel, player, connection)) {
-                return true;
-            }
-        }
-        return false;
     }
 
     /**
@@ -615,6 +558,13 @@ public final class SuperLeadEvents {
     }
 
     @SubscribeEvent
+    public static void onBlockPlaced(BlockEvent.EntityPlaceEvent event) {
+        if (event.getLevel().isClientSide() || !(event.getLevel() instanceof Level level))
+            return;
+        SuperLeadNetwork.pruneInvalid(level);
+    }
+
+    @SubscribeEvent
     public static void onPlayerLoggedIn(PlayerEvent.PlayerLoggedInEvent event) {
         if (event.getEntity() instanceof ServerPlayer player) {
             RopeTripController.stopEverywhere(player);
@@ -750,20 +700,12 @@ public final class SuperLeadEvents {
     }
 
     private static boolean tryBoostRopePerch(Level level, Player player, ItemStack stack) {
-        if (!(level instanceof ServerLevel serverLevel))
+        if (!isSeedItem(stack))
+            return false;
+        if (!level.isClientSide())
             return false;
         if (!SuperLeadNetwork.canModifyRopes(player))
             return false;
-        Optional<LeadConnection> opt = SuperLeadNetwork.findConnectionInView(serverLevel, player, 0.95D);
-        if (opt.isEmpty())
-            return false;
-        if (!player.isCreative()) {
-            stack.shrink(1);
-        }
-        ParrotRopePerchController.boostRope(serverLevel, opt.get().id());
-        player.sendSystemMessage(
-                Component.literal("Seeds scattered on the rope! Parrots will find it more attractive.")
-                        .withStyle(ChatFormatting.GREEN));
-        return true;
+        return ClientInteractionBridge.trySendBoostRopePerch();
     }
 }

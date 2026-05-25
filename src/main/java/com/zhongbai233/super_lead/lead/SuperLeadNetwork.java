@@ -22,6 +22,7 @@ import net.minecraft.world.entity.decoration.LeashFenceKnotEntity;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Item;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.FenceBlock;
@@ -291,7 +292,30 @@ public final class SuperLeadNetwork {
         LeadEndpointLayout.Endpoints endpoints = endpoints(level, connection);
         return level.getBlockState(connection.from().pos()).isAir()
                 || level.getBlockState(connection.to().pos()).isAir()
-                || endpoints.from().distanceTo(endpoints.to()) > maxLeashDistance(connection);
+                || endpoints.from().distanceTo(endpoints.to()) > maxLeashDistance(connection)
+                || anchorFaceBlocked(level, connection.from())
+                || anchorFaceBlocked(level, connection.to());
+    }
+
+    /**
+     * Returns true when the anchor's attachment face is obstructed by a
+     * newly-placed solid block, e.g. a player covered the block face the rope
+     * was anchored to.
+     */
+    private static boolean anchorFaceBlocked(Level level, LeadAnchor anchor) {
+        BlockState anchorState = level.getBlockState(anchor.pos());
+        if (anchorState.isAir())
+            return true; // anchor block gone — handled above, but double-check
+
+        // Fence/iron-bar knots attach on top; check the block above the post
+        if (LeadAnchor.isKnotBlock(anchorState)) {
+            BlockPos above = anchor.pos().above();
+            return level.getBlockState(above).isCollisionShapeFullBlock(level, above);
+        }
+
+        // For face-mounted anchors, check the block adjacent in the face direction
+        BlockPos adjacent = anchor.pos().relative(anchor.face());
+        return level.getBlockState(adjacent).isCollisionShapeFullBlock(level, adjacent);
     }
 
     public static void tickStuckBreaks(ServerLevel level) {
@@ -407,11 +431,6 @@ public final class SuperLeadNetwork {
     public static boolean hasConnectionNear(Level level, Vec3 point, double maxDistance,
             Predicate<LeadConnection> predicate) {
         return nearestConnection(level, point, maxDistance, predicate).isPresent();
-    }
-
-    public static Optional<LeadConnection> findConnectionInView(ServerLevel level, Player player, double radius) {
-        return nearestConnectionInView(level, player, radius, connection -> true)
-                .map(ConnectionPick::connection);
     }
 
     public static boolean hasConnectionInView(Level level, Player player, double radius,
@@ -629,20 +648,7 @@ public final class SuperLeadNetwork {
         return isHitNearRope(level, connection, a, b, claimedHitPoint, clamp01(claimedT));
     }
 
-    /**
-     * Attachment placement / removal / form-toggle.
-     *
-     * <p>
-     * Uses the same simplified proximity test as rope cutting/upgrade.
-     * The wider envelope for removal handles multi-rope stacks on the same face.
-     */
     public static boolean canTouchConnectionForAttachment(ServerLevel level, Player player, LeadConnection connection) {
-        return isPlayerNearRope(level, player, connection, serverConfirmedPickReach());
-    }
-
-    /** Wider-envelope variant for attachment removal (multi-rope stacks). */
-    public static boolean canTouchConnectionForAttachmentRemoval(ServerLevel level, Player player,
-            LeadConnection connection) {
         return isPlayerNearRope(level, player, connection, serverConfirmedPickReach());
     }
 
@@ -717,16 +723,6 @@ public final class SuperLeadNetwork {
         return Math.max(SERVER_CONFIRMED_CURVE_MAX_SAG + radius, chord * 0.55D + radius);
     }
 
-    public static boolean hasClientPickCompatibleConnectionInView(ServerLevel level, Player player,
-            Predicate<LeadConnection> predicate) {
-        for (LeadConnection connection : connections(level)) {
-            if (predicate.test(connection) && canUseClientPickedConnection(level, player, connection)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
     /** Per-connection: change kind. */
     public static boolean upgradeConnectionKind(ServerLevel level, LeadConnection connection, LeadKind newKind) {
         if (connection.kind() == newKind)
@@ -772,6 +768,7 @@ public final class SuperLeadNetwork {
         if (!removed)
             return false;
         dropConnectionDrops(level, connection, midpoint(level, connection), player);
+        dropCutRefund(level, connection, midpoint(level, connection), player);
         cleanupFenceKnot(level, connection.from());
         cleanupFenceKnot(level, connection.to());
         notifyRedstoneChange(level, connection);
@@ -1589,6 +1586,48 @@ public final class SuperLeadNetwork {
         }
         level.addFreshEntity(new ItemEntity(level, point.x, point.y, point.z,
                 new ItemStack(SuperLeadItems.SUPER_LEAD.asItem(), count)));
+    }
+
+    /**
+     * Drop the rope item matching the connection's kind and refund a fraction of
+     * upgrade materials based on tier and {@link Config#cutRefundRatio()}.
+     */
+    private static void dropCutRefund(ServerLevel level, LeadConnection connection, Vec3 point, Player player) {
+        if (player != null && player.isCreative())
+            return;
+        // Drop the rope item for this connection's kind
+        ItemStack ropeDrop = SuperLeadItems.stack(connection.kind());
+        ropeDrop.setCount(connection.lengthUnits());
+        level.addFreshEntity(new ItemEntity(level, point.x, point.y, point.z, ropeDrop));
+
+        // Refund a fraction of tier upgrade materials
+        int tier = connection.tier();
+        if (tier <= 0)
+            return;
+        double ratio = Math.max(0.0D, Math.min(1.0D, Config.cutRefundRatio()));
+        if (ratio <= 0.0D)
+            return;
+        Item refundItem = tierRefundItem(connection.kind());
+        if (refundItem == null)
+            return;
+        int refundCount = (int) Math.floor(tier * ratio);
+        if (refundCount <= 0)
+            return;
+        level.addFreshEntity(new ItemEntity(level, point.x, point.y + 0.3D, point.z,
+                new ItemStack(refundItem, refundCount)));
+    }
+
+    /** The material refunded when cutting an upgraded rope of the given kind. */
+    private static net.minecraft.world.item.Item tierRefundItem(LeadKind kind) {
+        return switch (kind) {
+            case REDSTONE, ENERGY -> net.minecraft.world.item.Items.REDSTONE;
+            case ITEM -> net.minecraft.world.item.Items.CHEST;
+            case FLUID -> net.minecraft.world.item.Items.BUCKET;
+            case PRESSURIZED -> net.minecraft.world.item.Items.IRON_INGOT;
+            case THERMAL -> net.minecraft.world.item.Items.COPPER_INGOT;
+            case AE_NETWORK -> net.minecraft.world.item.Items.AMETHYST_SHARD;
+            default -> null;
+        };
     }
 
     private static LeadEndpointLayout.Endpoints endpoints(Level level, LeadConnection connection) {

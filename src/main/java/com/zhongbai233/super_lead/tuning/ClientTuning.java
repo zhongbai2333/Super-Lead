@@ -293,6 +293,10 @@ public final class ClientTuning {
     public static final TuningKey<Double> WIND_DIRECTION_JITTER_DEG = registerD(
             "wind.directionJitterDeg", "physics.wind", 14.0D, 0.0D, 90.0D,
             "Maximum per-gust direction drift around wind.directionDeg.");
+    public static final TuningKey<Double> WIND_CELL_DIRECTION_SPREAD_DEG = registerD(
+            "wind.cellDirectionSpreadDeg", "physics.wind", 60.0D, 0.0D, 180.0D,
+            "Maximum per-cell persistent direction offset. Each 24×24 wind cell gets a random"
+                    + " fixed direction bias within this range, so different areas blow in different directions.");
     public static final TuningKey<Double> WIND_WAVELENGTH = registerD(
             "wind.waveLength", "physics.wind", 34.0D, 4.0D, 256.0D,
             "World-space distance between gust fronts.");

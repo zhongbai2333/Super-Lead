@@ -1,11 +1,14 @@
 package com.zhongbai233.super_lead.preset.client;
 
+import com.zhongbai233.super_lead.lead.LeadConnection;
 import com.zhongbai233.super_lead.lead.cargo.SuperLeadDataComponents;
+import com.zhongbai233.super_lead.lead.client.ClientRopeInteractions;
 import com.zhongbai233.super_lead.preset.PresetBinderData;
 import com.zhongbai233.super_lead.preset.PresetBinderToggleRope;
 import net.minecraft.client.Minecraft;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.phys.Vec3;
 import net.neoforged.neoforge.client.network.ClientPacketDistributor;
 
 public final class PresetBinderClient {
@@ -23,6 +26,13 @@ public final class PresetBinderClient {
     }
 
     public static void sendToggleRope(InteractionHand hand) {
-        ClientPacketDistributor.sendToServer(new PresetBinderToggleRope(hand == InteractionHand.OFF_HAND));
+        LeadConnection hovered = ClientRopeInteractions.hoveredConnection();
+        Vec3 hitPoint = ClientRopeInteractions.hoveredHitPoint();
+        double hitT = ClientRopeInteractions.hoveredHitT();
+        if (hovered == null || hitPoint == null || !Double.isFinite(hitT)) {
+            return;
+        }
+        ClientPacketDistributor.sendToServer(new PresetBinderToggleRope(
+                hovered.id(), hand == InteractionHand.OFF_HAND, hitPoint, hitT));
     }
 }

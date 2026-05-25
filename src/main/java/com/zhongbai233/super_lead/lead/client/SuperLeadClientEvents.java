@@ -43,6 +43,7 @@ import net.minecraft.client.renderer.culling.Frustum;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.entity.MoverType;
 import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.level.LightLayer;
 import net.minecraft.world.phys.AABB;
@@ -70,6 +71,7 @@ public final class SuperLeadClientEvents {
     private static final int ATTACHMENT_REMOVAL_HIGHLIGHT_COLOR = 0x66FF6040;
     private static final int ZIPLINE_HIGHLIGHT_COLOR = 0x883FCBFF;
     private static final int PRESET_BINDER_HIGHLIGHT_COLOR = 0x88DD55FF;
+    private static final int PERCH_BOOST_HIGHLIGHT_COLOR = 0x8855FF88;
     /**
      * Beyond this nearest-rope-span distance (blocks) the rope is dropped entirely:
      * no physics, no render.
@@ -973,6 +975,14 @@ public final class SuperLeadClientEvents {
         if (attachmentHighlight != null) {
             return attachmentHighlight;
         }
+        // Perch boost highlight: shift + seeds aiming at a rope
+        if (player.isShiftKeyDown()) {
+            ConnectionHighlight perchHighlight = pickPerchBoostHighlight(minecraft, entries, partialTick, cameraPos);
+            if (perchHighlight != null) {
+                return perchHighlight;
+            }
+        }
+
         // Rope upgrades are gated behind sneak (except shears, which always work).
         // Mirror that
         // here so the player only sees the highlight when the action would actually
@@ -1134,6 +1144,87 @@ public final class SuperLeadClientEvents {
      * Highlight the rope under the crosshair when the player holds a bound preset
      * binder and is sneaking, giving visual feedback for the rope toggle action.
      */
+    public static boolean trySendBoostRopePerch() {
+        return ClientRopeInteractions.trySendBoostRopePerch();
+    }
+
+    private static ConnectionHighlight pickPerchBoostHighlight(Minecraft minecraft, List<RenderEntry> entries,
+            float partialTick, Vec3 cameraPos) {
+        Player player = minecraft.player;
+        if (player == null)
+            return null;
+        ItemStack main = player.getMainHandItem();
+        ItemStack off = player.getOffhandItem();
+        boolean hasSeeds = isSeedItem(main) || isSeedItem(off);
+        if (!hasSeeds)
+            return null;
+
+        Camera camera = minecraft.gameRenderer.getMainCamera();
+        var forward = camera.forwardVector();
+        double dirX = forward.x();
+        double dirY = forward.y();
+        double dirZ = forward.z();
+        double invDir = 1.0D / Math.sqrt(dirX * dirX + dirY * dirY + dirZ * dirZ);
+        dirX *= invDir;
+        dirY *= invDir;
+        dirZ *= invDir;
+
+        double maxDistance = SuperLeadNetwork.maxExtendedLeashDistance();
+        net.minecraft.world.phys.HitResult hitResult = minecraft.hitResult;
+        if (hitResult != null && hitResult.getType() != net.minecraft.world.phys.HitResult.Type.MISS) {
+            double hitDist = hitResult.getLocation().distanceTo(cameraPos);
+            maxDistance = Math.min(maxDistance, hitDist + PICK_RADIUS);
+        } else if (player != null) {
+            maxDistance = Math.min(maxDistance, player.blockInteractionRange() + PICK_REACH_SLACK);
+        }
+        double best = PICK_RADIUS * PICK_RADIUS;
+        UUID bestId = null;
+        Vec3 bestHitPoint = null;
+        double bestHitT = 0.5D;
+
+        for (RenderEntry entry : entries) {
+            RopeSimulation sim = entry.sim();
+            double total = sim.prepareRender(partialTick);
+            if (total <= 0.0D)
+                continue;
+            for (int i = 0; i < sim.nodeCount() - 1; i++) {
+                double ax = sim.renderX(i);
+                double ay = sim.renderY(i);
+                double az = sim.renderZ(i);
+                double bx = sim.renderX(i + 1);
+                double by = sim.renderY(i + 1);
+                double bz = sim.renderZ(i + 1);
+                for (int sample = 0; sample <= 4; sample++) {
+                    double t = sample / 4.0D;
+                    double px = ax + (bx - ax) * t;
+                    double py = ay + (by - ay) * t;
+                    double pz = az + (bz - az) * t;
+                    double distance = RopePickMath.distancePointToRaySqr(px, py, pz,
+                            cameraPos.x, cameraPos.y, cameraPos.z,
+                            dirX, dirY, dirZ, maxDistance);
+                    if (distance < best) {
+                        best = distance;
+                        bestId = entry.connection().id();
+                        bestHitPoint = new Vec3(px, py, pz);
+                        bestHitT = i / (double) (sim.nodeCount() - 1) + t / (sim.nodeCount() - 1);
+                    }
+                }
+            }
+        }
+        if (bestId == null)
+            return null;
+        return new ConnectionHighlight(bestId, PERCH_BOOST_HIGHLIGHT_COLOR, bestHitPoint, bestHitT);
+    }
+
+    private static boolean isSeedItem(ItemStack stack) {
+        return stack.is(net.minecraft.world.item.Items.WHEAT_SEEDS)
+                || stack.is(net.minecraft.world.item.Items.MELON_SEEDS)
+                || stack.is(net.minecraft.world.item.Items.PUMPKIN_SEEDS)
+                || stack.is(net.minecraft.world.item.Items.BEETROOT_SEEDS)
+                || stack.is(net.minecraft.world.item.Items.TORCHFLOWER_SEEDS)
+                || stack.is(net.minecraft.world.item.Items.PITCHER_POD);
+    }
+
     private static ConnectionHighlight pickPresetBinderHighlight(Minecraft minecraft, List<RenderEntry> entries,
             float partialTick, Vec3 cameraPos) {
         Player player = minecraft.player;

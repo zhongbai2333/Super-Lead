@@ -613,7 +613,7 @@ public final class ParrotRopePerchController {
                 && parrot.hurtTime <= 0;
     }
 
-    private static boolean canPerchOn(ServerLevel level, LeadConnection connection) {
+    public static boolean canPerchOn(ServerLevel level, LeadConnection connection) {
         if (connection == null || connection.physicsPreset().isBlank()) {
             return false;
         }
