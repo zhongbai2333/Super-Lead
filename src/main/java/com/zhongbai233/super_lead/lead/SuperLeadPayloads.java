@@ -456,29 +456,76 @@ public final class SuperLeadPayloads {
     }
 
     private static void handleUseConnectionAction(UseConnectionAction payload, IPayloadContext context) {
-        if (!acceptRateLimit("use_action", context))
+        if (!acceptRateLimit("use_action", context)) {
+            if (SuperLeadEvents.debugPackets) {
+                com.mojang.logging.LogUtils.getLogger().info(
+                        "[super_lead DEBUG] handleUseConnectionAction DROP rate-limit connId={} action={}",
+                        payload.connectionId(), payload.actionOrdinal());
+            }
             return;
+        }
         runOnServer(context, (player, level) -> {
-            if (!SuperLeadNetwork.canModifyRopes(player))
+            if (!SuperLeadNetwork.canModifyRopes(player)) {
+                if (SuperLeadEvents.debugPackets) {
+                    com.mojang.logging.LogUtils.getLogger().info(
+                            "[super_lead DEBUG] handleUseConnectionAction SKIP cantModify player={}", player.getDisplayName().getString());
+                }
                 return;
+            }
             LeadConnectionAction[] actions = LeadConnectionAction.values();
-            if (payload.actionOrdinal() < 0 || payload.actionOrdinal() >= actions.length)
+            if (payload.actionOrdinal() < 0 || payload.actionOrdinal() >= actions.length) {
+                if (SuperLeadEvents.debugPackets) {
+                    com.mojang.logging.LogUtils.getLogger().info(
+                            "[super_lead DEBUG] handleUseConnectionAction SKIP badOrdinal={}", payload.actionOrdinal());
+                }
                 return;
+            }
             LeadConnectionAction action = actions[payload.actionOrdinal()];
             net.minecraft.world.InteractionHand hand = hand(payload.useOffhand());
             net.minecraft.world.item.ItemStack stack = player.getItemInHand(hand);
-            if (!action.matches(stack))
+            if (!action.matches(stack)) {
+                if (SuperLeadEvents.debugPackets) {
+                    com.mojang.logging.LogUtils.getLogger().info(
+                            "[super_lead DEBUG] handleUseConnectionAction SKIP noMatch action={} handItem={}",
+                            action.name(), stack.getDisplayName().getString());
+                }
                 return;
+            }
 
             java.util.Optional<LeadConnection> opt = SuperLeadNetwork.findConnectionById(level, payload.connectionId());
-            if (opt.isEmpty())
+            if (opt.isEmpty()) {
+                if (SuperLeadEvents.debugPackets) {
+                    com.mojang.logging.LogUtils.getLogger().info(
+                            "[super_lead DEBUG] handleUseConnectionAction SKIP connNotFound id={}", payload.connectionId());
+                }
                 return;
+            }
             LeadConnection connection = opt.get();
-            if (!action.canTarget(connection))
+            if (!action.canTarget(connection)) {
+                if (SuperLeadEvents.debugPackets) {
+                    com.mojang.logging.LogUtils.getLogger().info(
+                            "[super_lead DEBUG] handleUseConnectionAction SKIP cantTarget action={} connKind={} connTier={}",
+                            action.name(), connection.kind(), connection.tier());
+                }
                 return;
+            }
 
+            if (SuperLeadEvents.debugPackets) {
+                com.mojang.logging.LogUtils.getLogger().info(
+                        "[super_lead DEBUG] handleUseConnectionAction EXECUTE action={} connId={} kind={} tier={}",
+                        action.name(), payload.connectionId(), connection.kind(), connection.tier());
+            }
             if (action.applyTo(level, player, connection, payload.hitPoint(), payload.hitT())) {
+                if (SuperLeadEvents.debugPackets) {
+                    com.mojang.logging.LogUtils.getLogger().info(
+                            "[super_lead DEBUG] handleUseConnectionAction SUCCESS action={}", action.name());
+                }
                 action.consumeSuccessfulUse(stack, player, hand);
+            } else {
+                if (SuperLeadEvents.debugPackets) {
+                    com.mojang.logging.LogUtils.getLogger().info(
+                            "[super_lead DEBUG] handleUseConnectionAction FAILED applyTo action={}", action.name());
+                }
             }
         });
     }

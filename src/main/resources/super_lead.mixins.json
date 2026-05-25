@@ -11,7 +11,8 @@
     "EntityRendererBlockLightMixin",
     "ZiplineFirstPersonItemMixin",
     "ZiplineHeldItemLayerMixin",
-    "ZiplineHumanoidModelMixin"
+    "ZiplineHumanoidModelMixin",
+    "SuppressUseItemOnPacketMixin"
   ],
   "injectors": {
     "defaultRequire": 1

@@ -217,7 +217,7 @@ public final class RopeStaticGeometry {
 
     private static int extractEnd(LeadConnection connection) {
         return switch (connection.kind()) {
-            case ITEM, FLUID, PRESSURIZED -> connection.extractAnchor();
+            case ITEM, FLUID, PRESSURIZED, ENERGY -> connection.extractAnchor();
             default -> 0;
         };
     }

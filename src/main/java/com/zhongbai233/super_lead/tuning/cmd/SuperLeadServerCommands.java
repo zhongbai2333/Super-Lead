@@ -9,6 +9,7 @@ import com.zhongbai233.super_lead.Config;
 import com.zhongbai233.super_lead.Super_lead;
 import com.zhongbai233.super_lead.lead.LeadConnection;
 import com.zhongbai233.super_lead.lead.LeadKind;
+import com.zhongbai233.super_lead.lead.SuperLeadEvents;
 import com.zhongbai233.super_lead.lead.SuperLeadSavedData;
 import com.zhongbai233.super_lead.serverconfig.ServerConfigManager;
 import java.util.ArrayList;
@@ -107,7 +108,9 @@ public final class SuperLeadServerCommands {
                                         .suggests(SUGGEST_KEY)
                                         .executes(SuperLeadServerCommands::reset))))
                 .then(Commands.literal("audit")
-                        .then(Commands.literal("ropes").executes(SuperLeadServerCommands::auditRopes)));
+                        .then(Commands.literal("ropes").executes(SuperLeadServerCommands::auditRopes)))
+                .then(Commands.literal("debug")
+                        .then(Commands.literal("packets").executes(SuperLeadServerCommands::toggleDebugPackets)));
         dispatcher.register(root);
     }
 
@@ -295,6 +298,22 @@ public final class SuperLeadServerCommands {
                     .withStyle(ChatFormatting.RED), false);
         }
         return Math.max(1, audit.total);
+    }
+
+    private static int toggleDebugPackets(CommandContext<CommandSourceStack> ctx) {
+        SuperLeadEvents.debugPackets = !SuperLeadEvents.debugPackets;
+        boolean on = SuperLeadEvents.debugPackets;
+        ctx.getSource().sendSuccess(
+                () -> Component.literal("[super_lead] Packet debug tracing: " + (on ? "ON" : "OFF"))
+                        .withStyle(on ? ChatFormatting.GREEN : ChatFormatting.RED),
+                true);
+        if (on) {
+            ctx.getSource().sendSuccess(
+                    () -> Component.literal("  Check game log for [super_lead DEBUG] entries. Run again to turn off.")
+                            .withStyle(ChatFormatting.GRAY),
+                    false);
+        }
+        return 1;
     }
 
     private static String shortUuid(UUID uuid) {

@@ -514,6 +514,7 @@ public final class SuperLeadClientEvents {
         return connection.kind() == LeadKind.ITEM
                 || connection.kind() == LeadKind.FLUID
                 || connection.kind() == LeadKind.PRESSURIZED
+                || connection.kind() == LeadKind.ENERGY
                         ? connection.extractAnchor()
                         : 0;
     }

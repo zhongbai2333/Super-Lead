@@ -1,5 +1,6 @@
 package com.zhongbai233.super_lead.lead;
 
+import com.mojang.logging.LogUtils;
 import com.zhongbai233.super_lead.Super_lead;
 import com.zhongbai233.super_lead.lead.integration.ae2.AE2LeadMaterials;
 import com.zhongbai233.super_lead.lead.integration.mekanism.MekanismLeadMaterials;
@@ -21,6 +22,7 @@ import net.neoforged.neoforge.event.entity.player.PlayerInteractEvent;
 import net.neoforged.neoforge.event.level.BlockEvent;
 import net.neoforged.neoforge.event.level.ChunkWatchEvent;
 import net.neoforged.neoforge.event.tick.LevelTickEvent;
+import org.slf4j.Logger;
 
 @EventBusSubscriber(modid = Super_lead.MODID)
 /**
@@ -33,6 +35,19 @@ import net.neoforged.neoforge.event.tick.LevelTickEvent;
  * into package-private services so event handlers stay readable.
  */
 public final class SuperLeadEvents {
+    private static final Logger LOG = LogUtils.getLogger();
+
+    /** Toggle via /superlead debug packets */
+    public static volatile boolean debugPackets;
+
+    /** Last client tick a custom UseConnectionAction was sent.
+     * Read by {@code SuppressUseItemOnPacketMixin} to suppress the vanilla packet. */
+    public static volatile long lastActionPacketTick = -1;
+
+    public static boolean wasActionPacketSentThisTick(long tick) {
+        return tick == lastActionPacketTick;
+    }
+
     private SuperLeadEvents() {
     }
 
@@ -157,29 +172,55 @@ public final class SuperLeadEvents {
     }
 
     private static boolean tryUseConnectionAction(PlayerInteractEvent.RightClickBlock event) {
-        if (!event.getLevel().isClientSide())
+        boolean isClient = event.getLevel().isClientSide();
+        if (debugPackets) {
+            LOG.info("[super_lead DEBUG] tryUseConnectionAction ENTER side={} item={} shift={}",
+                    isClient ? "CLIENT" : "SERVER",
+                    event.getItemStack().getDisplayName().getString(),
+                    event.getEntity().isShiftKeyDown());
+        }
+        if (!isClient) {
+            if (debugPackets) LOG.info("[super_lead DEBUG] tryUseConnectionAction EXIT reason=SERVER_SKIP");
             return false;
-        if (!SuperLeadNetwork.canModifyRopes(event.getEntity()))
+        }
+        if (!SuperLeadNetwork.canModifyRopes(event.getEntity())) {
+            if (debugPackets) LOG.info("[super_lead DEBUG] tryUseConnectionAction EXIT reason=CANT_MODIFY");
             return false;
+        }
         ItemStack stack = event.getItemStack();
         LeadConnectionAction action = LeadConnectionAction.fromStack(stack).orElse(null);
-        if (action == null)
+        if (action == null) {
+            if (debugPackets) LOG.info("[super_lead DEBUG] tryUseConnectionAction EXIT reason=NO_ACTION");
             return false;
-        if (!sendClientUseAction(event.getEntity(), event.getHand(), action))
+        }
+        if (!sendClientUseAction(event.getEntity(), event.getHand(), action)) {
+            if (debugPackets) LOG.info("[super_lead DEBUG] tryUseConnectionAction EXIT reason=SEND_FAILED action={}", action.name());
             return false;
-        consumeBlockInteraction(event, InteractionResult.SUCCESS);
+        }
+        if (debugPackets) LOG.info("[super_lead DEBUG] tryUseConnectionAction SENT custom packet action={}", action.name());
+        consumeBlockInteraction(event, InteractionResult.CONSUME);
+        if (debugPackets) LOG.info("[super_lead DEBUG] tryUseConnectionAction EXIT reason=SUCCESS eventCanceled");
         return true;
     }
 
     /**
-     * Client-side: if the player is currently hovering a connection that this
-     * action can target,
-     * send the use packet to the server. Returns true when a packet was sent
-     * (caller should cancel
-     * the interaction event so the vanilla use packet is suppressed).
+     * Sends a custom UseConnectionAction packet to the server and records the
+     * tick so {@code SuppressUseItemOnPacketMixin} can drop the vanilla
+     * ServerboundUseItemOnPacket.
+     *
+     * @return true when a packet was sent (or already sent this tick)
      */
     private static boolean sendClientUseAction(Player player, InteractionHand hand, LeadConnectionAction action) {
-        return ClientInteractionBridge.trySendUseConnectionAction(hand, action);
+        long tick = player.level().getGameTime();
+        if (tick == lastActionPacketTick) {
+            if (debugPackets) LOG.info("[super_lead DEBUG] sendClientUseAction SKIP duplicate tick={}", tick);
+            return true;
+        }
+        boolean sent = ClientInteractionBridge.trySendUseConnectionAction(hand, action);
+        if (sent) {
+            lastActionPacketTick = tick;
+        }
+        return sent;
     }
 
     @SubscribeEvent
@@ -219,7 +260,7 @@ public final class SuperLeadEvents {
         if (action != null && shift && event.getLevel().isClientSide()) {
             if (sendClientUseAction(event.getEntity(), event.getHand(), action)) {
                 event.setCanceled(true);
-                event.setCancellationResult(InteractionResult.SUCCESS);
+                event.setCancellationResult(InteractionResult.CONSUME);
                 return;
             }
         }

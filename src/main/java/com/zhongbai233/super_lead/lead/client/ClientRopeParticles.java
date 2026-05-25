@@ -25,7 +25,8 @@ final class ClientRopeParticles {
 
     static float[] computeItemPulses(LeadConnection connection, long currentTick, float partialTick) {
         if (connection.kind() != LeadKind.ITEM && connection.kind() != LeadKind.FLUID
-                && connection.kind() != LeadKind.PRESSURIZED) {
+                && connection.kind() != LeadKind.PRESSURIZED
+                && connection.kind() != LeadKind.ENERGY) {
             return EMPTY_PULSES;
         }
         Iterable<ItemPulse> active = ItemFlowAnimator.activePulses(connection.id(), currentTick, partialTick);
