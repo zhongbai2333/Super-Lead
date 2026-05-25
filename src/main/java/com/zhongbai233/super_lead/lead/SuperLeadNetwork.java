@@ -299,21 +299,21 @@ public final class SuperLeadNetwork {
 
     /**
      * Returns true when the anchor's attachment face is obstructed by a
-     * newly-placed solid block, e.g. a player covered the block face the rope
-     * was anchored to.
+     * solid block. Only applies to face-mounted anchors (walls, ceilings, floors);
+     * fence and iron-bar knots are exposed from all sides so a block above
+     * doesn't necessarily block a horizontal rope path.
      */
     private static boolean anchorFaceBlocked(Level level, LeadAnchor anchor) {
         BlockState anchorState = level.getBlockState(anchor.pos());
         if (anchorState.isAir())
-            return true; // anchor block gone — handled above, but double-check
+            return true;
 
-        // Fence/iron-bar knots attach on top; check the block above the post
-        if (LeadAnchor.isKnotBlock(anchorState)) {
-            BlockPos above = anchor.pos().above();
-            return level.getBlockState(above).isCollisionShapeFullBlock(level, above);
-        }
+        // Fence/iron-bar knots: rope can exit in any direction from the post top,
+        // so a block above doesn't reliably indicate obstruction.
+        if (LeadAnchor.isKnotBlock(anchorState))
+            return false;
 
-        // For face-mounted anchors, check the block adjacent in the face direction
+        // Face-mounted anchors: check the block adjacent in the anchor's face direction
         BlockPos adjacent = anchor.pos().relative(anchor.face());
         return level.getBlockState(adjacent).isCollisionShapeFullBlock(level, adjacent);
     }
