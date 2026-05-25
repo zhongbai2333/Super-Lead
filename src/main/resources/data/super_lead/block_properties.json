@@ -10,6 +10,7 @@
   "minecraft:bamboo_sign": { "pierced": false, "mount_above": true, "mount_offset": 0.53 },
   "minecraft:crimson_sign": { "pierced": false, "mount_above": true, "mount_offset": 0.53 },
   "minecraft:warped_sign": { "pierced": false, "mount_above": true, "mount_offset": 0.53 },
+  "minecraft:pale_oak_sign": { "pierced": false, "mount_above": true, "mount_offset": 0.53 },
 
   "minecraft:oak_hanging_sign": { "pierced": false, "mount_above": false, "hang_offset": 0.5, "hanger_length": 0.0, "hanger_spacing": 0.0 },
   "minecraft:spruce_hanging_sign": { "pierced": false, "mount_above": false, "hang_offset": 0.5, "hanger_length": 0.0, "hanger_spacing": 0.0 },
@@ -22,6 +23,7 @@
   "minecraft:bamboo_hanging_sign": { "pierced": false, "mount_above": false, "hang_offset": 0.5, "hanger_length": 0.0, "hanger_spacing": 0.0 },
   "minecraft:crimson_hanging_sign": { "pierced": false, "mount_above": false, "hang_offset": 0.5, "hanger_length": 0.0, "hanger_spacing": 0.0 },
   "minecraft:warped_hanging_sign": { "pierced": false, "mount_above": false, "hang_offset": 0.5, "hanger_length": 0.0, "hanger_spacing": 0.0 },
+  "minecraft:pale_oak_hanging_sign": { "pierced": false, "mount_above": false, "hang_offset": 0.5, "hanger_length": 0.0, "hanger_spacing": 0.0 },
 
   "minecraft:lantern": { "pierced": false, "mount_above": false, "hang_offset": 0.28, "hanger_length": 0.0, "hanger_spacing": 0.0, "model_state": { "hanging": "true" } },
   "minecraft:soul_lantern": { "pierced": false, "mount_above": false, "hang_offset": 0.28, "hanger_length": 0.0, "hanger_spacing": 0.0, "model_state": { "hanging": "true" } },
