@@ -50,7 +50,9 @@ public final class LeadTooltipOverlay {
 
         ItemStack main = player.getMainHandItem();
         ItemStack off = player.getOffhandItem();
-        if (!main.is(Items.SHEARS) && !off.is(Items.SHEARS)) {
+        boolean hasShears = main.is(Items.SHEARS) || off.is(Items.SHEARS);
+        boolean hasUpgradeItem = com.zhongbai233.super_lead.lead.LeadConnectionAction.fromHeldItems(player).isPresent();
+        if (!hasShears && !hasUpgradeItem) {
             return;
         }
 

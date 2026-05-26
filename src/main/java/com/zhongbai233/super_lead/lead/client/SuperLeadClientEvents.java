@@ -988,17 +988,14 @@ public final class SuperLeadClientEvents {
         // Mirror that
         // here so the player only sees the highlight when the action would actually
         // fire.
+        // However, also show the highlight for upgrade items without sneak so the
+        // tier-info overlay (LeadTooltipOverlay) can display current level.
         LeadConnectionAction action = LeadConnectionAction.fromHeldItems(player).orElse(null);
         if (action == null) {
             // No upgrade action — check for preset binder highlight
             if (player.isShiftKeyDown()) {
                 return pickPresetBinderHighlight(minecraft, entries, partialTick, cameraPos);
             }
-            return null;
-        }
-        boolean isShears = player.getMainHandItem().is(net.minecraft.world.item.Items.SHEARS)
-                || player.getOffhandItem().is(net.minecraft.world.item.Items.SHEARS);
-        if (!isShears && !player.isShiftKeyDown()) {
             return null;
         }
 

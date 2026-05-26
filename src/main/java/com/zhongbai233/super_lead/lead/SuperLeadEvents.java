@@ -40,8 +40,10 @@ public final class SuperLeadEvents {
     /** Toggle via /superlead debug packets */
     public static volatile boolean debugPackets;
 
-    /** Last client tick a custom UseConnectionAction was sent.
-     * Read by {@code SuppressUseItemOnPacketMixin} to suppress the vanilla packet. */
+    /**
+     * Last client tick a custom UseConnectionAction was sent.
+     * Read by {@code SuppressUseItemOnPacketMixin} to suppress the vanilla packet.
+     */
     public static volatile long lastActionPacketTick = -1;
 
     public static boolean wasActionPacketSentThisTick(long tick) {
@@ -180,26 +182,32 @@ public final class SuperLeadEvents {
                     event.getEntity().isShiftKeyDown());
         }
         if (!isClient) {
-            if (debugPackets) LOG.info("[super_lead DEBUG] tryUseConnectionAction EXIT reason=SERVER_SKIP");
+            if (debugPackets)
+                LOG.info("[super_lead DEBUG] tryUseConnectionAction EXIT reason=SERVER_SKIP");
             return false;
         }
         if (!SuperLeadNetwork.canModifyRopes(event.getEntity())) {
-            if (debugPackets) LOG.info("[super_lead DEBUG] tryUseConnectionAction EXIT reason=CANT_MODIFY");
+            if (debugPackets)
+                LOG.info("[super_lead DEBUG] tryUseConnectionAction EXIT reason=CANT_MODIFY");
             return false;
         }
         ItemStack stack = event.getItemStack();
         LeadConnectionAction action = LeadConnectionAction.fromStack(stack).orElse(null);
         if (action == null) {
-            if (debugPackets) LOG.info("[super_lead DEBUG] tryUseConnectionAction EXIT reason=NO_ACTION");
+            if (debugPackets)
+                LOG.info("[super_lead DEBUG] tryUseConnectionAction EXIT reason=NO_ACTION");
             return false;
         }
         if (!sendClientUseAction(event.getEntity(), event.getHand(), action)) {
-            if (debugPackets) LOG.info("[super_lead DEBUG] tryUseConnectionAction EXIT reason=SEND_FAILED action={}", action.name());
+            if (debugPackets)
+                LOG.info("[super_lead DEBUG] tryUseConnectionAction EXIT reason=SEND_FAILED action={}", action.name());
             return false;
         }
-        if (debugPackets) LOG.info("[super_lead DEBUG] tryUseConnectionAction SENT custom packet action={}", action.name());
+        if (debugPackets)
+            LOG.info("[super_lead DEBUG] tryUseConnectionAction SENT custom packet action={}", action.name());
         consumeBlockInteraction(event, InteractionResult.CONSUME);
-        if (debugPackets) LOG.info("[super_lead DEBUG] tryUseConnectionAction EXIT reason=SUCCESS eventCanceled");
+        if (debugPackets)
+            LOG.info("[super_lead DEBUG] tryUseConnectionAction EXIT reason=SUCCESS eventCanceled");
         return true;
     }
 
@@ -213,7 +221,8 @@ public final class SuperLeadEvents {
     private static boolean sendClientUseAction(Player player, InteractionHand hand, LeadConnectionAction action) {
         long tick = player.level().getGameTime();
         if (tick == lastActionPacketTick) {
-            if (debugPackets) LOG.info("[super_lead DEBUG] sendClientUseAction SKIP duplicate tick={}", tick);
+            if (debugPackets)
+                LOG.info("[super_lead DEBUG] sendClientUseAction SKIP duplicate tick={}", tick);
             return true;
         }
         boolean sent = ClientInteractionBridge.trySendUseConnectionAction(hand, action);
@@ -371,7 +380,11 @@ public final class SuperLeadEvents {
         ItemStack stack = player.getItemInHand(hand);
         if (!com.zhongbai233.super_lead.lead.RopeAttachmentItems.isAttachable(stack))
             return false;
-        return ClientInteractionBridge.trySendAddRopeAttachment(hand);
+        boolean sent = ClientInteractionBridge.trySendAddRopeAttachment(hand);
+        if (sent) {
+            lastActionPacketTick = level.getGameTime();
+        }
+        return sent;
     }
 
     private static boolean tryUsePresetBinder(Player player, InteractionHand hand, Level level, boolean shift) {
@@ -747,6 +760,10 @@ public final class SuperLeadEvents {
             return false;
         if (!SuperLeadNetwork.canModifyRopes(player))
             return false;
-        return ClientInteractionBridge.trySendBoostRopePerch();
+        boolean sent = ClientInteractionBridge.trySendBoostRopePerch();
+        if (sent) {
+            lastActionPacketTick = level.getGameTime();
+        }
+        return sent;
     }
 }
