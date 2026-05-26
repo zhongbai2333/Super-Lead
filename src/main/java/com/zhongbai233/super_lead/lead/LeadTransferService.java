@@ -4,6 +4,7 @@ import com.zhongbai233.super_lead.Config;
 import com.zhongbai233.super_lead.lead.cargo.CargoManifestData;
 import com.zhongbai233.super_lead.lead.integration.ae2.AE2NetworkBridge;
 import com.zhongbai233.super_lead.lead.integration.mekanism.MekanismChemicalBridge;
+import com.zhongbai233.super_lead.lead.integration.mekanism.MekanismFluidBridge;
 import com.zhongbai233.super_lead.lead.integration.mekanism.MekanismHeatBridge;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -94,6 +95,12 @@ final class LeadTransferService {
         }
         tickTransfer(level, LeadKind.FLUID, Capabilities.Fluid.BLOCK, FLUID_RR_CURSOR,
                 rope -> Config.fluidBucketAmount() * (1 << Math.min(Config.fluidTierMax(), rope.tier())));
+
+        // Also try Mekanism's fluid capability for tanks that don't expose
+        // NeoForge's Capabilities.Fluid.BLOCK (e.g. Mekanism Fluid Tank).
+        if (isMekanismLoaded()) {
+            tickMekanismFluidTransfer(level);
+        }
     }
 
     static void tickPressurized(ServerLevel level) {
@@ -260,6 +267,156 @@ final class LeadTransferService {
         int tier = Math.min(Config.pressurizedTierMax(), rope.tier());
         long multiplier = 1L << Math.min(30, tier);
         return Math.max(1L, Math.min(Integer.MAX_VALUE, (long) Config.pressurizedBatchAmount() * multiplier));
+    }
+
+    /**
+     * Fluid transfer for Mekanism tanks. Mirrors {@link #tickPressurizedTransfer}
+     * but uses Mekanism's {@code IFluidHandler} capability instead of NeoForge's
+     * {@code ResourceHandler<FluidResource>}.
+     */
+    private static void tickMekanismFluidTransfer(ServerLevel level) {
+        SuperLeadSavedData data = SuperLeadSavedData.get(level);
+        List<LeadConnection> fluidConnections = data.connectionsOfKindFast(LeadKind.FLUID);
+        if (fluidConnections.isEmpty()) {
+            return;
+        }
+
+        MekanismFluidBridge.HandlerCache fluidHandlers = new MekanismFluidBridge.HandlerCache();
+        Map<BlockPos, List<LeadConnection>> ropesAt;
+        Map<BlockPos, List<LeadConnection>> startsBySource;
+        long currentGen = data.generation();
+        LeadKind kind = LeadKind.FLUID;
+        Long cachedGen = cachedGeneration(level, kind);
+        if (cachedGen != null && cachedGen.longValue() == currentGen) {
+            ropesAt = cachedRopesAt(level, kind);
+            startsBySource = cachedStartsBySource(level, kind);
+        } else {
+            int size = fluidConnections.size();
+            ropesAt = new HashMap<>(size * 2);
+            startsBySource = new HashMap<>(Math.max(16, size / 4));
+            for (LeadConnection c : fluidConnections) {
+                BlockPos a = c.from().pos().immutable();
+                BlockPos b = c.to().pos().immutable();
+                ropesAt.computeIfAbsent(a, k -> new ArrayList<>(2)).add(c);
+                if (!a.equals(b)) {
+                    ropesAt.computeIfAbsent(b, k -> new ArrayList<>(2)).add(c);
+                }
+
+                LeadAnchor src = c.extractSource();
+                if (src != null && fluidHandlers.has(level, src)) {
+                    startsBySource.computeIfAbsent(src.pos().immutable(), k -> new ArrayList<>(2)).add(c);
+                }
+            }
+            cacheGenerationAndIndexes(level, kind, currentGen, ropesAt, startsBySource);
+        }
+
+        for (Map.Entry<BlockPos, List<LeadConnection>> entry : startsBySource.entrySet()) {
+            BlockPos sourcePos = entry.getKey();
+            List<LeadConnection> ropes = entry.getValue();
+            if (ropes.isEmpty()) {
+                continue;
+            }
+
+            int n = ropes.size();
+            int start = FLUID_RR_CURSOR.getOrDefault(sourcePos, 0) % n;
+
+            for (int step = 0; step < n; step++) {
+                int idx = (start + step) % n;
+                LeadConnection rope = ropes.get(idx);
+                LeadAnchor sourceAnchor = rope.extractSource();
+                LeadAnchor firstFar = rope.extractTarget();
+                if (sourceAnchor == null || firstFar == null
+                        || !fluidHandlers.has(level, sourceAnchor)) {
+                    continue;
+                }
+
+                long batch = Config.fluidBucketAmount() * (1L << Math.min(Config.fluidTierMax(), rope.tier()));
+
+                List<PathStep> path = new ArrayList<>();
+                List<RrChoice> rrChoices = new ArrayList<>();
+                Set<UUID> visited = new HashSet<>();
+                visited.add(rope.id());
+                path.add(new PathStep(rope, rope.extractAnchor() == 2));
+
+                if (walkAndTransferMekFluid(level, sourceAnchor, batch, firstFar, ropesAt,
+                        FLUID_RR_CURSOR, fluidHandlers, visited, path, rrChoices, 1)) {
+                    long now = level.getGameTime();
+                    for (int i = 0; i < path.size(); i++) {
+                        PathStep s = path.get(i);
+                        long startTick = now + (long) i * ITEM_PULSE_DURATION_TICKS;
+                        SuperLeadPayloads.sendItemPulse(level,
+                                new ItemPulse(s.rope.id(), s.reverse, startTick, ITEM_PULSE_DURATION_TICKS));
+                    }
+                    FLUID_RR_CURSOR.put(sourcePos, (idx + 1) % n);
+                    for (RrChoice rc : rrChoices) {
+                        FLUID_RR_CURSOR.put(rc.knot, (rc.idx + 1) % rc.n);
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
+    private static boolean walkAndTransferMekFluid(
+            ServerLevel level,
+            LeadAnchor sourceAnchor,
+            long batch,
+            LeadAnchor current,
+            Map<BlockPos, List<LeadConnection>> ropesAt,
+            Map<BlockPos, Integer> rrCursor,
+            MekanismFluidBridge.HandlerCache fluidHandlers,
+            Set<UUID> visited,
+            List<PathStep> path,
+            List<RrChoice> rrChoices,
+            int depth) {
+        if (depth > MAX_TRANSFER_SEARCH_DEPTH) {
+            return false;
+        }
+        if (fluidHandlers.has(level, current)) {
+            return fluidHandlers.transferOne(level, sourceAnchor, current, batch,
+                    MekanismFluidBridge.ANY, pathConnections(path)) > 0L;
+        }
+        ResourceHandler<FluidResource> neoTarget = handler(level, current, Capabilities.Fluid.BLOCK);
+        if (neoTarget != null) {
+            return fluidHandlers.transferOne(level, sourceAnchor, neoTarget, batch,
+                MekanismFluidBridge.ANY, pathConnections(path)) > 0L;
+        }
+
+        BlockPos knot = current.pos().immutable();
+        List<LeadConnection> all = ropesAt.getOrDefault(knot, List.of());
+        List<LeadConnection> branches = new ArrayList<>();
+        for (LeadConnection b : all) {
+            if (!visited.contains(b.id())) {
+                branches.add(b);
+            }
+        }
+        if (branches.isEmpty()) {
+            return false;
+        }
+
+        int n = branches.size();
+        int rrStart = rrCursor.getOrDefault(knot, 0) % n;
+        for (int step = 0; step < n; step++) {
+            int idx = (rrStart + step) % n;
+            LeadConnection branch = branches.get(idx);
+            boolean enteredFromSide = branch.from().pos().equals(knot);
+            LeadAnchor far = enteredFromSide ? branch.to() : branch.from();
+            boolean reverse = !enteredFromSide;
+
+            visited.add(branch.id());
+            path.add(new PathStep(branch, reverse));
+            rrChoices.add(new RrChoice(knot, idx, n));
+
+            if (walkAndTransferMekFluid(level, sourceAnchor, batch, far, ropesAt, rrCursor,
+                    fluidHandlers, visited, path, rrChoices, depth + 1)) {
+                return true;
+            }
+
+            path.remove(path.size() - 1);
+            rrChoices.remove(rrChoices.size() - 1);
+            visited.remove(branch.id());
+        }
+        return false;
     }
 
     private static void balanceThermalComponent(ServerLevel level, List<Integer> component,
@@ -436,6 +593,13 @@ final class LeadTransferService {
         ResourceHandler<R> h = handlers.get(level, current, cap);
         if (h != null) {
             return transferOne(sourceHandler, h, batch, resource -> pathAllowsResource(path, resource));
+        }
+        if (cap.equals(Capabilities.Fluid.BLOCK) && isMekanismLoaded()
+                && MekanismFluidBridge.hasHandler(level, current)) {
+            @SuppressWarnings("unchecked")
+            ResourceHandler<FluidResource> fluidSource = (ResourceHandler<FluidResource>) sourceHandler;
+            return MekanismFluidBridge.transferOne(fluidSource, MekanismFluidBridge.handler(level, current), batch,
+                    resource -> pathAllowsResource(path, resource), pathConnections(path)) > 0L;
         }
 
         BlockPos knot = current.pos().immutable();
