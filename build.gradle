@@ -168,8 +168,8 @@ dependencies {
     compileOnly fileTree(dir: 'libs', include: ['Mekanism-*.jar', 'mekanism-*.jar'])
     compileOnly "com.github.QiuYe-123:Mekanism:${mekanism_version}"
     // TEMPORARY: runtime access for bug testing — remove after debugging
-    localRuntimeOnly fileTree(dir: 'libs', include: ['Mekanism-*.jar', 'mekanism-*.jar'])
-    localRuntimeOnly "com.github.QiuYe-123:Mekanism:${mekanism_version}"
+    // localRuntimeOnly fileTree(dir: 'libs', include: ['Mekanism-*.jar', 'mekanism-*.jar'])
+    // localRuntimeOnly "com.github.QiuYe-123:Mekanism:${mekanism_version}"
     compileOnly "mezz.jei:jei-${jei_minecraft_version}-common-api:${jei_version}"
     compileOnly "mezz.jei:jei-${jei_minecraft_version}-neoforge-api:${jei_version}"
 

@@ -1,5 +1,6 @@
 package com.zhongbai233.super_lead.lead;
 
+import io.netty.channel.local.LocalAddress;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
@@ -86,7 +87,7 @@ final class RopeTripController {
         player.connection.send(new ClientboundSetEntityMotionPacket(player));
         SyncRopeTripState payload = SyncRopeTripState.active(player.getId(), CRAWL_TICKS, startX, startZ,
                 target.x, target.z, FALL_TICKS);
-        PacketDistributor.sendToPlayersTrackingEntityAndSelf(player, payload);
+        sendTripState(player, payload);
         player.hurtServer(level, player.damageSources().fall(), 1.0F);
         player.resetFallDistance();
         FORCED_CRAWLS.computeIfAbsent(NetworkKey.of(level), ignored -> new HashMap<>())
@@ -101,11 +102,11 @@ final class RopeTripController {
         if (crawls != null) {
             crawls.entrySet().removeIf(entry -> {
                 ServerPlayer player = level.getServer().getPlayerList().getPlayer(entry.getKey());
-                if (player == null || player.level() != level || !player.isAlive()) {
-                    if (player != null) {
-                        PacketDistributor.sendToPlayersTrackingEntityAndSelf(player,
-                                SyncRopeTripState.inactive(player.getId()));
-                    }
+                if (player == null) {
+                    return true;
+                }
+                if (player.level() != level || !player.isAlive()) {
+                    sendTripState(player, SyncRopeTripState.inactive(player.getId()));
                     return true;
                 }
                 ForcedCrawl crawl = entry.getValue();
@@ -136,8 +137,7 @@ final class RopeTripController {
                 if (player.getForcedPose() == Pose.SWIMMING) {
                     player.setForcedPose(null);
                 }
-                PacketDistributor.sendToPlayersTrackingEntityAndSelf(player,
-                        SyncRopeTripState.inactive(player.getId()));
+                sendTripState(player, SyncRopeTripState.inactive(player.getId()));
                 return true;
             });
             if (crawls.isEmpty()) {
@@ -162,14 +162,30 @@ final class RopeTripController {
         if (player == null) {
             return;
         }
+        boolean hadTripState = false;
         for (Map<UUID, ForcedCrawl> crawls : FORCED_CRAWLS.values()) {
-            crawls.remove(player.getUUID());
+            hadTripState |= crawls.remove(player.getUUID()) != null;
         }
-        if (player.getForcedPose() == Pose.SWIMMING) {
+        boolean hadForcedCrawlPose = player.getForcedPose() == Pose.SWIMMING;
+        if (hadForcedCrawlPose) {
             player.setForcedPose(null);
         }
-        PacketDistributor.sendToPlayersTrackingEntityAndSelf(player,
-                SyncRopeTripState.inactive(player.getId()));
+        if (hadTripState || hadForcedCrawlPose) {
+            sendTripState(player, SyncRopeTripState.inactive(player.getId()));
+        }
+    }
+
+    private static void sendTripState(ServerPlayer player, SyncRopeTripState payload) {
+        if (isLocalConnection(player)) {
+            PacketDistributor.sendToPlayersTrackingEntity(player, payload);
+            PacketDistributor.sendToPlayer(player, payload);
+        } else {
+            PacketDistributor.sendToPlayersTrackingEntityAndSelf(player, payload);
+        }
+    }
+
+    private static boolean isLocalConnection(ServerPlayer player) {
+        return player.connection.getConnection().getRemoteAddress() instanceof LocalAddress;
     }
 
     static void clear(ServerLevel level) {
