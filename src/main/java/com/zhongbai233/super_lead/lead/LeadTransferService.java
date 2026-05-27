@@ -6,6 +6,8 @@ import com.zhongbai233.super_lead.lead.integration.ae2.AE2NetworkBridge;
 import com.zhongbai233.super_lead.lead.integration.mekanism.MekanismChemicalBridge;
 import com.zhongbai233.super_lead.lead.integration.mekanism.MekanismFluidBridge;
 import com.zhongbai233.super_lead.lead.integration.mekanism.MekanismHeatBridge;
+import com.github.tartaricacid.netmusic.tileentity.TileEntityMusicPlayer;
+import com.github.tartaricacid.netmusic.item.ItemMusicCD;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -42,8 +44,14 @@ final class LeadTransferService {
     private static final Map<BlockPos, Integer> ITEM_RR_CURSOR = new HashMap<>();
     private static final Map<BlockPos, Integer> FLUID_RR_CURSOR = new HashMap<>();
     private static final Map<BlockPos, Integer> PRESSURIZED_RR_CURSOR = new HashMap<>();
+    private static final Map<BlockPos, Long> MUSIC_PLAYER_COOLDOWN = new HashMap<>();
+    private static final Map<BlockPos, Long> MUSIC_PLAYER_FALSE_SINCE = new HashMap<>();
+    private static final Set<BlockPos> MUSIC_PLAYER_WAS_PLAYING = new HashSet<>();
     private static final int MAX_TRANSFER_SEARCH_DEPTH = 64;
     private static final int ITEM_PULSE_DURATION_TICKS = 10;
+    private static final int MUSIC_PLAYER_EXTRACT_COOLDOWN_TICKS = 200; // 绳子送入后完整保护（等待解码+播放完毕）
+    private static final int MUSIC_PLAYER_FALSE_DEBOUNCE_TICKS = 10;   // 自然播放完毕后快速允许抽取
+    private static final int MUSIC_PLAYER_DISC_DEBOUNCE_TICKS = 100;   // 玩家放入唱片等待解码器启动（5s）
 
     /**
      * Per-dimension cached generation and pre-built indexes for each transfer kind.
@@ -85,6 +93,16 @@ final class LeadTransferService {
         if (level.getGameTime() % Config.itemTransferIntervalTicks() != 0L) {
             return;
         }
+        // 清理过期的唱片机记录
+        MUSIC_PLAYER_COOLDOWN.values().removeIf(until -> level.getGameTime() >= until);
+        MUSIC_PLAYER_FALSE_SINCE.values().removeIf(
+                since -> level.getGameTime() - since > MUSIC_PLAYER_DISC_DEBOUNCE_TICKS * 4);
+        MUSIC_PLAYER_WAS_PLAYING.removeIf(pos -> {
+            if (level.getBlockEntity(pos) instanceof TileEntityMusicPlayer te) {
+                return !hasDiscInside(te);
+            }
+            return true;
+        });
         tickTransfer(level, LeadKind.ITEM, Capabilities.Item.BLOCK, ITEM_RR_CURSOR,
                 rope -> Math.min(64, 1 << Math.min(Config.itemTierMax(), rope.tier())));
     }
@@ -121,6 +139,7 @@ final class LeadTransferService {
         ITEM_RR_CURSOR.clear();
         FLUID_RR_CURSOR.clear();
         PRESSURIZED_RR_CURSOR.clear();
+        MUSIC_PLAYER_WAS_PLAYING.clear();
     }
 
     /**
@@ -379,7 +398,7 @@ final class LeadTransferService {
         ResourceHandler<FluidResource> neoTarget = handler(level, current, Capabilities.Fluid.BLOCK);
         if (neoTarget != null) {
             return fluidHandlers.transferOne(level, sourceAnchor, neoTarget, batch,
-                MekanismFluidBridge.ANY, pathConnections(path)) > 0L;
+                    MekanismFluidBridge.ANY, pathConnections(path)) > 0L;
         }
 
         BlockPos knot = current.pos().immutable();
@@ -464,6 +483,90 @@ final class LeadTransferService {
         return net.neoforged.fml.ModList.get().isLoaded("ae2");
     }
 
+    private static boolean isNetMusicLoaded() {
+        return net.neoforged.fml.ModList.get().isLoaded("netmusic");
+    }
+
+    private static boolean hasDiscInside(TileEntityMusicPlayer te) {
+        var inv = te.getPlayerInv();
+        if (inv.size() <= 0) {
+            return false;
+        }
+        var res = inv.getResource(0);
+        return res != null && !res.isEmpty();
+    }
+
+    private static boolean isMusicPlayerBlocked(ServerLevel level, BlockPos pos) {
+        if (!isNetMusicLoaded())
+            return false;
+
+        long now = level.getGameTime();
+
+        Long cooldownUntil = MUSIC_PLAYER_COOLDOWN.get(pos);
+        if (cooldownUntil != null && now < cooldownUntil) {
+            return true;
+        }
+
+        if (level.getBlockEntity(pos) instanceof TileEntityMusicPlayer te) {
+            if (te.isPlay()) {
+                MUSIC_PLAYER_FALSE_SINCE.remove(pos);
+                MUSIC_PLAYER_WAS_PLAYING.add(pos);
+                return true;
+            }
+
+            boolean discInside = hasDiscInside(te);
+            if (!discInside) {
+                MUSIC_PLAYER_WAS_PLAYING.remove(pos);
+                Long falseSince = MUSIC_PLAYER_FALSE_SINCE.get(pos);
+                if (falseSince == null) {
+                    MUSIC_PLAYER_FALSE_SINCE.put(pos, now);
+                    return true;
+                }
+                if (now - falseSince < MUSIC_PLAYER_FALSE_DEBOUNCE_TICKS) {
+                    return true;
+                }
+                MUSIC_PLAYER_FALSE_SINCE.remove(pos);
+                return false;
+            }
+
+            boolean wasPlaying = MUSIC_PLAYER_WAS_PLAYING.contains(pos);
+            long debounce = wasPlaying ? MUSIC_PLAYER_FALSE_DEBOUNCE_TICKS : MUSIC_PLAYER_DISC_DEBOUNCE_TICKS;
+            Long falseSince = MUSIC_PLAYER_FALSE_SINCE.get(pos);
+            if (falseSince == null) {
+                MUSIC_PLAYER_FALSE_SINCE.put(pos, now);
+                return true;
+            }
+            if (now - falseSince < debounce) {
+                return true;
+            }
+            MUSIC_PLAYER_FALSE_SINCE.remove(pos);
+            MUSIC_PLAYER_WAS_PLAYING.remove(pos);
+            return false;
+        }
+        return false;
+    }
+
+    @SuppressWarnings("null")
+    private static void tryTriggerMusicPlayerPlay(ServerLevel level, LeadAnchor anchor) {
+        if (!isNetMusicLoaded())
+            return;
+        if (level.getBlockEntity(anchor.pos()) instanceof TileEntityMusicPlayer te) {
+            var inv = te.getPlayerInv();
+            if (inv.size() <= 0)
+                return;
+            net.neoforged.neoforge.transfer.item.ItemResource res = inv.getResource(0);
+            if (res == null || res.isEmpty())
+                return;
+            ItemMusicCD.SongInfo info = ItemMusicCD.getSongInfo(res.toStack());
+            if (info != null) {
+                te.setPlayToClient(info);
+                MUSIC_PLAYER_COOLDOWN.put(anchor.pos(),
+                        level.getGameTime() + MUSIC_PLAYER_EXTRACT_COOLDOWN_TICKS);
+                MUSIC_PLAYER_FALSE_SINCE.remove(anchor.pos());
+            }
+        }
+    }
+
     private static <R extends Resource> void tickTransfer(
             ServerLevel level,
             LeadKind kind,
@@ -535,6 +638,10 @@ final class LeadTransferService {
                     continue;
                 }
 
+                if (kind == LeadKind.ITEM && isMusicPlayerBlocked(level, sourceAnchor.pos())) {
+                    continue;
+                }
+
                 int batch = Math.max(1, batchOf.applyAsInt(rope));
 
                 List<PathStep> path = new ArrayList<>();
@@ -592,7 +699,12 @@ final class LeadTransferService {
         }
         ResourceHandler<R> h = handlers.get(level, current, cap);
         if (h != null) {
-            return transferOne(sourceHandler, h, batch, resource -> pathAllowsResource(path, resource));
+            boolean transferred = transferOne(sourceHandler, h, batch,
+                    resource -> pathAllowsResource(path, resource));
+            if (transferred && cap.equals(Capabilities.Item.BLOCK)) {
+                tryTriggerMusicPlayerPlay(level, current);
+            }
+            return transferred;
         }
         if (cap.equals(Capabilities.Fluid.BLOCK) && isMekanismLoaded()
                 && MekanismFluidBridge.hasHandler(level, current)) {

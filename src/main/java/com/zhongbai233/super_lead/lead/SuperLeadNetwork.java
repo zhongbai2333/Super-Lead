@@ -1207,6 +1207,14 @@ public final class SuperLeadNetwork {
         return LeadSignalService.leadSignal(getter, pos, direction);
     }
 
+    public static int leadDirectSignal(SignalGetter getter, BlockPos pos, Direction direction) {
+        return LeadSignalService.leadDirectSignal(getter, pos, direction);
+    }
+
+    public static boolean hasLeadNeighborSignal(SignalGetter getter, BlockPos pos) {
+        return LeadSignalService.hasLeadNeighborSignal(getter, pos);
+    }
+
     private static Optional<LeadConnection> nearestConnection(Level level, Vec3 point, double maxDistance,
             Predicate<LeadConnection> predicate) {
         LeadConnection closest = null;

@@ -28,7 +28,7 @@ import net.neoforged.neoforge.transfer.transaction.Transaction;
  * bridge
  * provides the same transfer semantics using Mekanism's native API.
  */
-@SuppressWarnings("deprecation")
+@SuppressWarnings("removal")
 public final class MekanismFluidBridge {
 
     private MekanismFluidBridge() {

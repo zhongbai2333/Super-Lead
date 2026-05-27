@@ -40,6 +40,14 @@ repositories {
         }
     }
 
+    maven {
+        name = "Modrinth"
+        url = "https://api.modrinth.com/maven"
+        content {
+            includeGroup "maven.modrinth"
+        }
+    }
+
     flatDir {
         dir 'libs'
     }
@@ -172,6 +180,9 @@ dependencies {
     // localRuntimeOnly "com.github.QiuYe-123:Mekanism:${mekanism_version}"
     compileOnly "mezz.jei:jei-${jei_minecraft_version}-common-api:${jei_version}"
     compileOnly "mezz.jei:jei-${jei_minecraft_version}-neoforge-api:${jei_version}"
+
+    // NetMusic optional integration: skip item extraction while music is playing
+    compileOnly "maven.modrinth:net-music:mCrjhdSq"
 
     testImplementation platform('org.junit:junit-bom:5.11.4')
     testImplementation 'org.junit.jupiter:junit-jupiter'

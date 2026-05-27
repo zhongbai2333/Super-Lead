@@ -15,21 +15,12 @@ import net.minecraft.core.Direction;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.SignalGetter;
-import net.minecraft.world.level.block.Blocks;
 import net.neoforged.neoforge.capabilities.Capabilities;
 import net.neoforged.neoforge.transfer.energy.EnergyHandler;
 import net.neoforged.neoforge.transfer.transaction.Transaction;
 
 /**
  * Redstone and energy service for rope networks.
- *
- * <p>
- * This class owns the redstone recursion guard used by the signal mixin, the
- * per-tick redstone component solver, and energy transfer/power-stickiness
- * state.
- * Keeping these systems together is important because energy traversal reuses
- * the
- * same signal-bridge semantics as redstone ropes.
  */
 final class LeadSignalService {
     /**
@@ -39,12 +30,6 @@ final class LeadSignalService {
     private static final Map<UUID, Long> ENERGY_ACTIVE_UNTIL = new HashMap<>();
     private static final long ENERGY_STICKY_TICKS = 40L;
     private static final ThreadLocal<Boolean> SUPPRESS_LEAD_SIGNALS = ThreadLocal.withInitial(() -> false);
-    /**
-     * Per-dimension BlockPos -> redstone connection list index for O(1) lookup
-     * in {@link #leadSignal}. Rebuilt lazily when the SavedData generation changes.
-     */
-    private static final Map<ServerLevel, Map<BlockPos, List<LeadConnection>>> REDSTONE_POS_INDEX = new HashMap<>();
-    private static final Map<ServerLevel, Long> REDSTONE_POS_INDEX_GEN = new HashMap<>();
 
     private LeadSignalService() {
     }
@@ -53,7 +38,6 @@ final class LeadSignalService {
         SuperLeadSavedData data = SuperLeadSavedData.get(level);
         List<LeadConnection> redstoneConnections = data.connectionsOfKindFast(LeadKind.REDSTONE);
         if (redstoneConnections.isEmpty()) {
-            invalidateRedstonePosIndex(level);
             return;
         }
 
@@ -61,8 +45,6 @@ final class LeadSignalService {
         boolean changed = false;
         boolean[] visited = new boolean[size];
         Map<LeadAnchor, List<Integer>> connectionsByAnchor = indexConnectionsByAnchor(redstoneConnections, size);
-        // Rebuild the BlockPos index for leadSignal while we already iterate
-        rebuildRedstonePosIndex(level, redstoneConnections);
         RedstoneTraversalCache redstoneCache = new RedstoneTraversalCache(level);
         for (int i = 0; i < redstoneConnections.size(); i++) {
             if (visited[i]) {
@@ -84,14 +66,6 @@ final class LeadSignalService {
             }
 
             final int componentPower = power;
-
-            // Collect connections whose power actually changed before updating,
-            // so we can rebuild the REDSTONE_POS_INDEX with fresh data before
-            // notifying neighbors. Otherwise getSignal() queries inside
-            // updateNeighborsAt would read stale LeadConnection objects from
-            // the index and return the old (non-zero) power, causing the
-            // signal to "stick" until the next block update.
-            List<LeadConnection> changedInComponent = new ArrayList<>();
             for (int index : component) {
                 LeadConnection connection = redstoneConnections.get(index);
                 if (connection.power() == componentPower) {
@@ -101,18 +75,7 @@ final class LeadSignalService {
                 LeadConnection updated = connection.withPower(componentPower);
                 changed |= data.update(connection.id(), oldConnection -> oldConnection.withPower(componentPower),
                         false);
-                changedInComponent.add(updated);
-            }
-
-            if (!changedInComponent.isEmpty()) {
-                // Rebuild the pos index so leadSignalServer returns the new
-                // power when neighbor blocks re-evaluate during
-                // notifyRedstoneChange below.
-                rebuildRedstonePosIndex(level, data.connectionsOfKindFast(LeadKind.REDSTONE));
-
-                for (LeadConnection updated : changedInComponent) {
-                    notifyRedstoneChange(level, updated);
-                }
+                notifyRedstoneChange(level, updated);
             }
         }
 
@@ -181,18 +144,13 @@ final class LeadSignalService {
             return 0;
         }
 
-        if (level instanceof ServerLevel serverLevel) {
-            return leadSignalServer(serverLevel, pos);
-        }
-        // Client-side fallback: iterate all connections (client rope count is
-        // typically low since it's chunk-scoped).
         int signal = 0;
-        List<LeadConnection> redstoneConnections = SuperLeadNetwork.connections(level);
+        List<LeadConnection> redstoneConnections = redstoneConnections(level);
         for (LeadConnection connection : redstoneConnections) {
             if (connection.kind() != LeadKind.REDSTONE || connection.power() <= 0) {
                 continue;
             }
-            if (isRedstoneOutputPosition(connection.from(), pos) || isRedstoneOutputPosition(connection.to(), pos)) {
+            if (isRedstoneOutputPosition(connection, pos)) {
                 signal = Math.max(signal, connection.power());
                 if (signal >= 15) {
                     return 15;
@@ -202,25 +160,48 @@ final class LeadSignalService {
         return signal;
     }
 
-    private static int leadSignalServer(ServerLevel level, BlockPos pos) {
-        Map<BlockPos, List<LeadConnection>> index = REDSTONE_POS_INDEX.get(level);
-        if (index == null) {
+    static int leadDirectSignal(SignalGetter getter, BlockPos pos, Direction direction) {
+        if (SUPPRESS_LEAD_SIGNALS.get() || !(getter instanceof Level level)) {
             return 0;
         }
-        List<LeadConnection> candidates = index.get(pos.immutable());
-        if (candidates == null || candidates.isEmpty()) {
-            return 0;
-        }
+
         int signal = 0;
-        for (LeadConnection connection : candidates) {
-            if (connection.power() > signal) {
-                signal = connection.power();
+        List<LeadConnection> redstoneConnections = redstoneConnections(level);
+        for (LeadConnection connection : redstoneConnections) {
+            if (connection.kind() != LeadKind.REDSTONE || connection.power() <= 0) {
+                continue;
+            }
+            if (isRedstoneDirectOutput(connection, pos, direction)) {
+                signal = Math.max(signal, connection.power());
                 if (signal >= 15) {
                     return 15;
                 }
             }
         }
         return signal;
+    }
+
+    static boolean hasLeadNeighborSignal(SignalGetter getter, BlockPos pos) {
+        if (SUPPRESS_LEAD_SIGNALS.get() || !(getter instanceof Level level)) {
+            return false;
+        }
+        List<LeadConnection> redstoneConnections = redstoneConnections(level);
+        for (LeadConnection connection : redstoneConnections) {
+            if (connection.kind() != LeadKind.REDSTONE || connection.power() <= 0) {
+                continue;
+            }
+            if (isRedstoneOutputPosition(connection, pos)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static List<LeadConnection> redstoneConnections(Level level) {
+        if (level instanceof ServerLevel serverLevel) {
+            return SuperLeadSavedData.get(serverLevel).connectionsOfKindFast(LeadKind.REDSTONE);
+        }
+        return SuperLeadNetwork.connections(level);
     }
 
     static void notifyRedstoneChange(ServerLevel level, LeadConnection connection) {
@@ -472,39 +453,6 @@ final class LeadSignalService {
         return byAnchor;
     }
 
-    private static void rebuildRedstonePosIndex(ServerLevel level, List<LeadConnection> connections) {
-        SuperLeadSavedData data = SuperLeadSavedData.get(level);
-        Map<BlockPos, List<LeadConnection>> index = REDSTONE_POS_INDEX.get(level);
-        Long cachedGen = REDSTONE_POS_INDEX_GEN.get(level);
-        long currentGen = data.generation();
-        if (cachedGen != null && cachedGen.longValue() == currentGen && index != null) {
-            return;
-        }
-        if (index == null) {
-            index = new HashMap<>();
-            REDSTONE_POS_INDEX.put(level, index);
-        } else {
-            index.clear();
-        }
-        for (LeadConnection c : connections) {
-            index.computeIfAbsent(c.from().pos().immutable(), k -> new ArrayList<>(1)).add(c);
-            BlockPos toPos = c.to().pos().immutable();
-            if (!toPos.equals(c.from().pos())) {
-                index.computeIfAbsent(toPos, k -> new ArrayList<>(1)).add(c);
-            }
-        }
-        REDSTONE_POS_INDEX_GEN.put(level, currentGen);
-    }
-
-    private static void invalidateRedstonePosIndex(ServerLevel level) {
-        REDSTONE_POS_INDEX.remove(level);
-        REDSTONE_POS_INDEX_GEN.remove(level);
-    }
-
-    static void discardLevelState(ServerLevel level) {
-        invalidateRedstonePosIndex(level);
-    }
-
     private static void addAnchorIndex(Map<LeadAnchor, List<Integer>> byAnchor, LeadAnchor anchor, int index) {
         byAnchor.computeIfAbsent(anchor, key -> new ArrayList<>()).add(index);
     }
@@ -558,14 +506,32 @@ final class LeadSignalService {
         }
     }
 
+    private static boolean isRedstoneOutputPosition(LeadConnection connection, BlockPos pos) {
+        return isRedstoneOutputPosition(connection.from(), pos)
+                || isRedstoneOutputPosition(connection.to(), pos);
+    }
+
     private static boolean isRedstoneOutputPosition(LeadAnchor anchor, BlockPos pos) {
         return anchor.pos().equals(pos) || anchor.pos().relative(anchor.face()).equals(pos);
     }
 
+    private static boolean isRedstoneDirectOutput(LeadConnection connection, BlockPos pos, Direction direction) {
+        return isRedstoneDirectOutput(connection.from(), pos, direction)
+                || isRedstoneDirectOutput(connection.to(), pos, direction);
+    }
+
+    private static boolean isRedstoneDirectOutput(LeadAnchor anchor, BlockPos pos, Direction direction) {
+        return direction == anchor.face() && anchor.pos().relative(anchor.face()).equals(pos);
+    }
+
     private static void notifyRedstoneAnchor(ServerLevel level, LeadAnchor anchor) {
-        BlockPos pos = anchor.pos();
-        level.updateNeighborsAt(pos, level.getBlockState(pos).getBlock());
-        level.updateNeighborsAt(pos.relative(anchor.face()), Blocks.AIR);
+        BlockPos attachedPos = anchor.pos();
+        BlockPos outputPos = attachedPos.relative(anchor.face());
+
+        level.neighborChanged(attachedPos, level.getBlockState(outputPos).getBlock(), null);
+
+        level.updateNeighborsAt(outputPos, level.getBlockState(outputPos).getBlock());
+        level.updateNeighborsAt(attachedPos, level.getBlockState(attachedPos).getBlock());
     }
 
     private static final class EnergyHandlerCache {

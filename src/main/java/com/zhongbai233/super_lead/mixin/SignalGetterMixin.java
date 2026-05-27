@@ -18,4 +18,21 @@ public interface SignalGetterMixin {
             cir.setReturnValue(leadSignal);
         }
     }
+
+    @Inject(method = "getDirectSignal", at = @At("RETURN"), cancellable = true)
+    private void superLead$addLeadDirectSignal(BlockPos pos, Direction direction,
+            CallbackInfoReturnable<Integer> cir) {
+        int leadSignal = SuperLeadNetwork.leadDirectSignal((SignalGetter) (Object) this, pos, direction);
+        if (leadSignal > cir.getReturnValue()) {
+            cir.setReturnValue(leadSignal);
+        }
+    }
+
+    @Inject(method = "hasNeighborSignal", at = @At("RETURN"), cancellable = true)
+    private void superLead$hasLeadNeighborSignal(BlockPos pos, CallbackInfoReturnable<Boolean> cir) {
+        if (!cir.getReturnValue()
+                && SuperLeadNetwork.hasLeadNeighborSignal((SignalGetter) (Object) this, pos)) {
+            cir.setReturnValue(true);
+        }
+    }
 }
