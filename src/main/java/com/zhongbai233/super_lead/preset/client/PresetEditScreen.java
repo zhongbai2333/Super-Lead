@@ -19,6 +19,7 @@ import net.minecraft.client.gui.components.AbstractSliderButton;
 import net.minecraft.client.gui.components.AbstractWidget;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.EditBox;
+import net.minecraft.client.gui.narration.NarrationElementOutput;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
@@ -36,6 +37,7 @@ import net.neoforged.neoforge.client.network.ClientPacketDistributor;
  */
 public final class PresetEditScreen extends Screen {
     private static final int WIDGET_H = 16;
+    private static final int COLOR_WIDGET_H = 34;
     private static final int PADDING = 8;
     private static final int SIDEBAR_W = 100;
     private static final int TAB_BTN_H = 20;
@@ -43,6 +45,7 @@ public final class PresetEditScreen extends Screen {
     private static final int DESC_GAP = 2;
     private static final int DESC_H = 9;
     private static final int ROW_HEIGHT = WIDGET_H + DESC_GAP + DESC_H;
+    private static final int COLOR_ROW_HEIGHT = COLOR_WIDGET_H + DESC_GAP + DESC_H;
     private static final int ROW_GAP = 4;
     private static final int RESET_BTN_W = 14;
     private static final int VALUE_TEXT_W = 76;
@@ -168,6 +171,7 @@ public final class PresetEditScreen extends Screen {
         for (TuningKey<?> key : ClientTuning.allKeys()) {
             if (!key.group.equals(group))
                 continue;
+            int rowH = rowHeightFor(key);
             int y = baseY - scrollOffset;
             AbstractWidget widget = buildWidget(key, sliderX, y, sliderW);
             AbstractWidget input = buildInput(key, inputX, y, INPUT_W);
@@ -175,7 +179,7 @@ public final class PresetEditScreen extends Screen {
                 clearOverride(key);
                 this.rebuildWidgets();
             }).bounds(resetX, y, RESET_BTN_W, WIDGET_H).build();
-            boolean visible = y >= bodyTop && y + ROW_HEIGHT <= bodyBottom;
+            boolean visible = y >= bodyTop && y + rowH <= bodyBottom;
             boolean interactive = loaded && visible;
             widget.visible = visible;
             widget.active = interactive && widget.active;
@@ -191,7 +195,7 @@ public final class PresetEditScreen extends Screen {
             }
             addRenderableWidget(reset);
             rows.add(new Row(widget, input, reset, key, baseY));
-            baseY += ROW_HEIGHT + ROW_GAP;
+            baseY += rowH + ROW_GAP;
         }
         contentHeight = Math.max(0, baseY - startY);
         clampScroll();
@@ -205,6 +209,10 @@ public final class PresetEditScreen extends Screen {
     private void clampSidebarScroll(int visibleH) {
         int maxScroll = Math.max(0, sidebarContentHeight - visibleH);
         sidebarScrollOffset = Mth.clamp(sidebarScrollOffset, 0, maxScroll);
+    }
+
+    private static int rowHeightFor(TuningKey<?> key) {
+        return key.type instanceof ColorTuningType ? COLOR_ROW_HEIGHT : ROW_HEIGHT;
     }
 
     private void applyDetails(PresetDetailsResponse response, boolean rebuild) {
@@ -311,8 +319,7 @@ public final class PresetEditScreen extends Screen {
         if (key.type instanceof ColorTuningType) {
             TuningKey<Integer> colorKey = (TuningKey<Integer>) key;
             int current = parseColor(overrides.get(key.id), colorKey.getDefault(), colorKey);
-            double initial = current / (double) ColorTuningType.MAX;
-            return new PresetColorSlider(x, y, width, WIDGET_H, initial, value -> {
+            return new PresetColorRgbControl(x, y, width, COLOR_WIDGET_H, current, value -> {
                 setOverride(key, value);
             });
         }
@@ -540,6 +547,7 @@ public final class PresetEditScreen extends Screen {
             if (!w.visible)
                 continue;
             TuningKey<?> key = row.key;
+            syncColorInput(row, key);
             int rowY = w.getY() + (w.getHeight() - this.font.lineHeight) / 2;
             Component label = Component.translatableWithFallback(
                     "super_lead.tuning." + key.id + ".label", key.id);
@@ -554,7 +562,7 @@ public final class PresetEditScreen extends Screen {
             graphics.text(this.font, Component.literal(displayed), valueX, rowY, color);
 
             if (key.description != null && !key.description.isEmpty()) {
-                int descY = w.getY() + WIDGET_H + DESC_GAP;
+                int descY = w.getY() + w.getHeight() + DESC_GAP;
                 int maxWidth = this.width - contentX - PADDING - SCROLLBAR_W - 2;
                 Component desc = Component.translatableWithFallback(
                         "super_lead.tuning." + key.id + ".desc", key.description);
@@ -714,24 +722,152 @@ public final class PresetEditScreen extends Screen {
         }
     }
 
-    private static final class PresetColorSlider extends AbstractSliderButton {
-        private final java.util.function.Consumer<String> sink;
+    private void syncColorInput(Row row, TuningKey<?> key) {
+        if (!(key.type instanceof ColorTuningType) || !(row.input instanceof EditBox box) || box.isFocused()) {
+            return;
+        }
+        String value = formatColorDisplay(key);
+        if (!value.equals(box.getValue())) {
+            box.setValue(value);
+            box.setTextColor(0xFFE8E8E8);
+        }
+    }
 
-        PresetColorSlider(int x, int y, int w, int h, double initial,
+    private String formatColorDisplay(TuningKey<?> key) {
+        @SuppressWarnings("unchecked")
+        TuningKey<Integer> colorKey = (TuningKey<Integer>) key;
+        String raw = overrides.get(colorKey.id);
+        if (raw == null) {
+            return colorKey.type.format(colorKey.getDefault());
+        }
+        try {
+            return colorKey.type.format(colorKey.type.parse(raw));
+        } catch (RuntimeException ignored) {
+            return raw;
+        }
+    }
+
+    private static final class PresetColorRgbControl extends AbstractWidget {
+        private static final int SWATCH_W = 18;
+        private static final int BAR_H = 8;
+        private static final int BAR_GAP = 3;
+        private static final int BAR_PAD_X = 6;
+        private static final int HANDLE_W = 3;
+
+        private final java.util.function.Consumer<String> sink;
+        private int rgb;
+        private int activeChannel = -1;
+
+        PresetColorRgbControl(int x, int y, int width, int height, int initialRgb,
                 java.util.function.Consumer<String> sink) {
-            super(x, y, w, h, Component.empty(), Mth.clamp(initial, 0.0D, 1.0D));
+            super(x, y, width, height, Component.empty());
+            this.rgb = initialRgb & 0xFFFFFF;
             this.sink = sink;
         }
 
         @Override
-        protected void updateMessage() {
-            setMessage(Component.empty());
+        protected void extractWidgetRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY,
+                float partialTick) {
+            int x = getX();
+            int y = getY();
+            graphics.fill(x, y, x + SWATCH_W, y + getHeight(), 0xFF101010);
+            graphics.fill(x + 1, y + 1, x + SWATCH_W - 1, y + getHeight() - 1, 0xFF000000 | rgb);
+
+            int[] values = { (rgb >> 16) & 0xFF, (rgb >> 8) & 0xFF, rgb & 0xFF };
+            int[] colors = { 0xFFFF4040, 0xFF40FF60, 0xFF508CFF };
+            for (int channel = 0; channel < 3; channel++) {
+                drawChannel(graphics, channel, values[channel], colors[channel]);
+            }
         }
 
         @Override
-        protected void applyValue() {
-            int next = (int) Math.round(this.value * ColorTuningType.MAX);
-            sink.accept(String.format(java.util.Locale.ROOT, "#%06X", next & ColorTuningType.MAX));
+        protected void updateWidgetNarration(NarrationElementOutput narration) {
+        }
+
+        private void drawChannel(GuiGraphicsExtractor graphics, int channel, int value, int color) {
+            int barX0 = barX0();
+            int barX1 = barX1();
+            int barY0 = channelY(channel);
+            int barY1 = barY0 + BAR_H;
+            graphics.fill(barX0, barY0, barX1, barY1, 0xFF202020);
+            graphics.fill(barX0 + 1, barY0 + 1, barX1 - 1, barY1 - 1, 0xFF333333);
+            int fillX = barX0 + Math.round((barX1 - barX0 - 1) * (value / 255.0F));
+            graphics.fill(barX0 + 1, barY0 + 1, fillX, barY1 - 1, color);
+            int handleX = Mth.clamp(fillX - HANDLE_W / 2, barX0, barX1 - HANDLE_W);
+            graphics.fill(handleX, barY0, handleX + HANDLE_W, barY1, 0xFFE8E8E8);
+        }
+
+        @Override
+        public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
+            if (!this.active || !this.visible || !isMouseOver(event.x(), event.y())) {
+                return false;
+            }
+            this.activeChannel = channelAt(event.y());
+            if (this.activeChannel < 0) {
+                return false;
+            }
+            setFocused(true);
+            setChannelFromMouse(this.activeChannel, event.x());
+            return true;
+        }
+
+        @Override
+        public boolean mouseDragged(MouseButtonEvent event, double dragX, double dragY) {
+            if (this.activeChannel < 0 || !this.active || !this.visible) {
+                return false;
+            }
+            setChannelFromMouse(this.activeChannel, event.x());
+            return true;
+        }
+
+        @Override
+        public boolean mouseReleased(MouseButtonEvent event) {
+            if (this.activeChannel < 0) {
+                return false;
+            }
+            this.activeChannel = -1;
+            return true;
+        }
+
+        private void setChannelFromMouse(int channel, double mouseX) {
+            int barX0 = barX0();
+            int barX1 = barX1();
+            double slider = Mth.clamp((mouseX - barX0) / Math.max(1.0D, barX1 - barX0), 0.0D, 1.0D);
+            int channelValue = (int) Math.round(slider * 255.0D);
+            int r = (rgb >> 16) & 0xFF;
+            int g = (rgb >> 8) & 0xFF;
+            int b = rgb & 0xFF;
+            if (channel == 0) {
+                r = channelValue;
+            } else if (channel == 1) {
+                g = channelValue;
+            } else {
+                b = channelValue;
+            }
+            rgb = (r << 16) | (g << 8) | b;
+            sink.accept(String.format(java.util.Locale.ROOT, "#%06X", rgb));
+        }
+
+        private int channelAt(double mouseY) {
+            for (int channel = 0; channel < 3; channel++) {
+                int y0 = channelY(channel);
+                if (mouseY >= y0 && mouseY < y0 + BAR_H) {
+                    return channel;
+                }
+            }
+            return -1;
+        }
+
+        private int barX0() {
+            return getX() + SWATCH_W + BAR_PAD_X;
+        }
+
+        private int barX1() {
+            return getX() + getWidth();
+        }
+
+        private int channelY(int channel) {
+            return getY() + channel * (BAR_H + BAR_GAP);
         }
     }
 }

@@ -324,6 +324,8 @@
   "super_lead.tuning.wind.directionDeg.desc": "在 X/Z 平面上主导风向的角度（度）。",
   "super_lead.tuning.wind.directionJitterDeg.label": "风向抖动角度",
   "super_lead.tuning.wind.directionJitterDeg.desc": "每阵风相对主导风向的最大漂移角度（度）。",
+  "super_lead.tuning.wind.cellDirectionSpreadDeg.label": "风向单元散布",
+  "super_lead.tuning.wind.cellDirectionSpreadDeg.desc": "每个 24×24 风区单元的固定风向偏移范围，不同区域吹不同方向。",
   "super_lead.tuning.wind.waveLength.label": "风波波长",
   "super_lead.tuning.wind.waveLength.desc": "阵风前缘之间的世界空间距离（方块）。",
   "super_lead.tuning.wind.speed.label": "风速",
