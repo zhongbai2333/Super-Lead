@@ -37,6 +37,7 @@ repositories {
         content {
             includeGroup 'com.github.QiuYe-123'
             includeGroup 'com.github.lostmyself8'
+            includeGroup 'com.github.zhongbai2333'
         }
     }
 
@@ -183,8 +184,8 @@ dependencies {
 
     // NetMusic optional integration: skip item extraction while music is playing
     compileOnly "maven.modrinth:net-music:mCrjhdSq"
-    // NetMusicCanPlayBili optional integration: modern turntable support
-    compileOnly fileTree(dir: '../NetMusicCanPlayBili/build/libs', include: ['net_music_can_play_bili-*.jar'])
+    // NetMusicCanPlayBili optional integration: modern turntable support (JitPack)
+    compileOnly "com.github.zhongbai2333:NetMusicCanPlayBili:${netmusicbili_version}"
 
     testImplementation platform('org.junit:junit-bom:5.11.4')
     testImplementation 'org.junit.jupiter:junit-jupiter'
