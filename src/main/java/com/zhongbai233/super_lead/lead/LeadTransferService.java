@@ -8,6 +8,7 @@ import com.zhongbai233.super_lead.lead.integration.mekanism.MekanismFluidBridge;
 import com.zhongbai233.super_lead.lead.integration.mekanism.MekanismHeatBridge;
 import com.github.tartaricacid.netmusic.tileentity.TileEntityMusicPlayer;
 import com.github.tartaricacid.netmusic.item.ItemMusicCD;
+import com.zhongbai233.net_music_can_play_bili.blockentity.ModernTurntableBlockEntity;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -100,6 +101,9 @@ final class LeadTransferService {
         MUSIC_PLAYER_WAS_PLAYING.removeIf(pos -> {
             if (level.getBlockEntity(pos) instanceof TileEntityMusicPlayer te) {
                 return !hasDiscInside(te);
+            }
+            if (level.getBlockEntity(pos) instanceof ModernTurntableBlockEntity mte) {
+                return !mte.hasDisc();
             }
             return true;
         });
@@ -487,6 +491,10 @@ final class LeadTransferService {
         return net.neoforged.fml.ModList.get().isLoaded("netmusic");
     }
 
+    private static boolean isNetMusicCanPlayBiliLoaded() {
+        return net.neoforged.fml.ModList.get().isLoaded("net_music_can_play_bili");
+    }
+
     private static boolean hasDiscInside(TileEntityMusicPlayer te) {
         var inv = te.getPlayerInv();
         if (inv.size() <= 0) {
@@ -497,9 +505,6 @@ final class LeadTransferService {
     }
 
     private static boolean isMusicPlayerBlocked(ServerLevel level, BlockPos pos) {
-        if (!isNetMusicLoaded())
-            return false;
-
         long now = level.getGameTime();
 
         Long cooldownUntil = MUSIC_PLAYER_COOLDOWN.get(pos);
@@ -507,7 +512,8 @@ final class LeadTransferService {
             return true;
         }
 
-        if (level.getBlockEntity(pos) instanceof TileEntityMusicPlayer te) {
+        // 普通音乐机 (NetMusic TileEntityMusicPlayer)
+        if (isNetMusicLoaded() && level.getBlockEntity(pos) instanceof TileEntityMusicPlayer te) {
             if (te.isPlay()) {
                 MUSIC_PLAYER_FALSE_SINCE.remove(pos);
                 MUSIC_PLAYER_WAS_PLAYING.add(pos);
@@ -543,14 +549,45 @@ final class LeadTransferService {
             MUSIC_PLAYER_WAS_PLAYING.remove(pos);
             return false;
         }
+
+        // 现代音乐机 (NetMusicCanPlayBili ModernTurntableBlockEntity)
+        if (isNetMusicCanPlayBiliLoaded() && level.getBlockEntity(pos) instanceof ModernTurntableBlockEntity mte) {
+            if (mte.isPlaying()) {
+                MUSIC_PLAYER_FALSE_SINCE.remove(pos);
+                MUSIC_PLAYER_WAS_PLAYING.add(pos);
+                return true;
+            }
+
+            boolean discInside = mte.hasDisc();
+            if (!discInside) {
+                MUSIC_PLAYER_WAS_PLAYING.remove(pos);
+                MUSIC_PLAYER_FALSE_SINCE.remove(pos);
+                return false;
+            }
+
+            // 有唱片但没在播放：等待 debounce 后允许抽取
+            boolean wasPlaying = MUSIC_PLAYER_WAS_PLAYING.contains(pos);
+            long debounce = wasPlaying ? MUSIC_PLAYER_FALSE_DEBOUNCE_TICKS : MUSIC_PLAYER_DISC_DEBOUNCE_TICKS;
+            Long falseSince = MUSIC_PLAYER_FALSE_SINCE.get(pos);
+            if (falseSince == null) {
+                MUSIC_PLAYER_FALSE_SINCE.put(pos, now);
+                return true;
+            }
+            if (now - falseSince < debounce) {
+                return true;
+            }
+            MUSIC_PLAYER_FALSE_SINCE.remove(pos);
+            MUSIC_PLAYER_WAS_PLAYING.remove(pos);
+            return false;
+        }
+
         return false;
     }
 
     @SuppressWarnings("null")
     private static void tryTriggerMusicPlayerPlay(ServerLevel level, LeadAnchor anchor) {
-        if (!isNetMusicLoaded())
-            return;
-        if (level.getBlockEntity(anchor.pos()) instanceof TileEntityMusicPlayer te) {
+        // 普通音乐机 (NetMusic)
+        if (isNetMusicLoaded() && level.getBlockEntity(anchor.pos()) instanceof TileEntityMusicPlayer te) {
             var inv = te.getPlayerInv();
             if (inv.size() <= 0)
                 return;
@@ -560,6 +597,28 @@ final class LeadTransferService {
             ItemMusicCD.SongInfo info = ItemMusicCD.getSongInfo(res.toStack());
             if (info != null) {
                 te.setPlayToClient(info);
+                MUSIC_PLAYER_COOLDOWN.put(anchor.pos(),
+                        level.getGameTime() + MUSIC_PLAYER_EXTRACT_COOLDOWN_TICKS);
+                MUSIC_PLAYER_FALSE_SINCE.remove(anchor.pos());
+            }
+            return;
+        }
+
+        // 现代音乐机 (NetMusicCanPlayBili)
+        if (isNetMusicCanPlayBiliLoaded()
+                && level.getBlockEntity(anchor.pos()) instanceof ModernTurntableBlockEntity mte) {
+            if (!mte.hasDisc())
+                return;
+            ItemMusicCD.SongInfo info = ItemMusicCD.getSongInfo(mte.getDisc());
+            if (info == null)
+                return;
+            var player = level.getNearestPlayer(
+                    anchor.pos().getX() + 0.5,
+                    anchor.pos().getY() + 0.5,
+                    anchor.pos().getZ() + 0.5,
+                    64.0, false);
+            if (player instanceof net.minecraft.server.level.ServerPlayer sp) {
+                mte.startFromDisc(sp);
                 MUSIC_PLAYER_COOLDOWN.put(anchor.pos(),
                         level.getGameTime() + MUSIC_PLAYER_EXTRACT_COOLDOWN_TICKS);
                 MUSIC_PLAYER_FALSE_SINCE.remove(anchor.pos());

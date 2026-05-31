@@ -183,6 +183,8 @@ dependencies {
 
     // NetMusic optional integration: skip item extraction while music is playing
     compileOnly "maven.modrinth:net-music:mCrjhdSq"
+    // NetMusicCanPlayBili optional integration: modern turntable support
+    compileOnly fileTree(dir: '../NetMusicCanPlayBili/build/libs', include: ['net_music_can_play_bili-*.jar'])
 
     testImplementation platform('org.junit:junit-bom:5.11.4')
     testImplementation 'org.junit.jupiter:junit-jupiter'
