@@ -104,6 +104,22 @@ versionRange = "[29.5.0,)"
 ordering = "AFTER"
 side = "CLIENT"
 
+[[dependencies."${mod_id}"]]
+modId = "netmusic"
+type = "optional"
+reason = "Enables automated music CD loading and playback triggering on NetMusic players via item leads."
+versionRange = "[1.5.0,)"
+ordering = "AFTER"
+side = "BOTH"
+
+[[dependencies."${mod_id}"]]
+modId = "net_music_can_play_bili"
+type = "optional"
+reason = "Enables automated disc insertion/extraction on Modern Turntable via item leads."
+versionRange = "[0.2.0,)"
+ordering = "AFTER"
+side = "BOTH"
+
 # Features are specific properties of the game environment, that you may want to declare you require. This example declares
 # that your mod requires GL version 3.2 or higher. Other features will be added. They are side aware so declaring this won't
 # stop your mod loading on the server for example.
