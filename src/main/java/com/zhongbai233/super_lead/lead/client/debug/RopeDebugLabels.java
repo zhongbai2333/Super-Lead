@@ -72,7 +72,7 @@ public final class RopeDebugLabels {
             return;
         }
         synchronized (LOCK) {
-            pending.sort(Comparator.comparingDouble(Sample::distanceSqr));
+            pending.sort(Comparator.comparingDouble(sample -> sample.distanceSqr()));
             frame = List.copyOf(pending);
         }
     }

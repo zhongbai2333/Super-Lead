@@ -12,7 +12,6 @@ import java.util.function.Predicate;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.item.ItemStack;
 import net.neoforged.neoforge.fluids.FluidStack;
-import net.neoforged.neoforge.fluids.capability.IFluidHandler;
 import net.neoforged.neoforge.transfer.ResourceHandler;
 import net.neoforged.neoforge.transfer.fluid.FluidResource;
 import net.neoforged.neoforge.transfer.transaction.Transaction;
@@ -21,14 +20,11 @@ import net.neoforged.neoforge.transfer.transaction.Transaction;
  * Facade over Mekanism's fluid capability for Super Lead fluid ropes.
  * <p>
  * Mekanism 1.21 registers its fluid handlers under
- * {@code Capabilities.FLUID.block()} (Mekanism's own capability key wrapping
- * NeoForge's {@code IFluidHandler}) rather than NeoForge's
- * {@code Capabilities.Fluid.BLOCK}. The generic rope transfer engine uses the
- * NeoForge resource-handler model and silently skips Mekanism tanks. This
- * bridge
- * provides the same transfer semantics using Mekanism's native API.
+ * {@code Capabilities.FLUID.block()} rather than NeoForge's
+ * {@code Capabilities.Fluid.BLOCK}. This bridge provides the same transfer
+ * semantics using Mekanism's capability key while still using NeoForge's
+ * {@code ResourceHandler<FluidResource>} model.
  */
-@SuppressWarnings("removal")
 public final class MekanismFluidBridge {
 
     private MekanismFluidBridge() {
@@ -37,8 +33,8 @@ public final class MekanismFluidBridge {
     /** Any non-empty fluid passes. */
     public static final Predicate<FluidStack> ANY = stack -> stack != null && !stack.isEmpty();
 
-    public static IFluidHandler handler(ServerLevel level, LeadAnchor anchor) {
-        IFluidHandler h = level.getCapability(
+    public static ResourceHandler<FluidResource> handler(ServerLevel level, LeadAnchor anchor) {
+        ResourceHandler<FluidResource> h = level.getCapability(
                 mekanism.common.capabilities.Capabilities.FLUID.block(),
                 anchor.pos(), anchor.face());
         if (h == null) {
@@ -63,65 +59,56 @@ public final class MekanismFluidBridge {
         return transferOne(handler(level, source), handler(level, target), maxAmount, filter, path);
     }
 
-    public static long transferOne(IFluidHandler source, IFluidHandler target, long maxAmount,
+    public static long transferOne(ResourceHandler<FluidResource> source, ResourceHandler<FluidResource> target,
+            long maxAmount,
             Predicate<FluidStack> filter) {
         if (source == null || target == null || maxAmount <= 0L) {
             return 0L;
         }
         Predicate<FluidStack> effectiveFilter = filter == null ? ANY : filter;
-        int tanks = source.getTanks();
-        for (int tank = 0; tank < tanks; tank++) {
-            FluidStack stored = source.getFluidInTank(tank);
+        int slots = source.size();
+        for (int slot = 0; slot < slots; slot++) {
+            FluidResource resource = source.getResource(slot);
+            if (resource == null || resource.isEmpty()) {
+                continue;
+            }
+            long available = source.getAmountAsLong(slot);
+            if (available <= 0L) {
+                continue;
+            }
+            int requested = (int) Math.min(Math.min(maxAmount, available), Integer.MAX_VALUE);
+            FluidStack stored = resource.toStack(requested);
             if (stored.isEmpty() || !effectiveFilter.test(stored)) {
                 continue;
             }
 
-            int requested = (int) Math.min(maxAmount, stored.getAmount());
-            FluidStack drainStack = new FluidStack(stored.getFluid(), requested, stored.getComponentsPatch());
-            FluidStack simulatedExtract = source.drain(drainStack, IFluidHandler.FluidAction.SIMULATE);
-            if (simulatedExtract.isEmpty() || !effectiveFilter.test(simulatedExtract)) {
+            int accepted = acceptedAmount(target, stored);
+            if (accepted <= 0) {
                 continue;
             }
 
-            long accepted = acceptedAmount(target, simulatedExtract);
-            if (accepted <= 0L) {
-                continue;
-            }
-
-            int execAmount = (int) Math.min(accepted, simulatedExtract.getAmount());
-            FluidStack execDrain = new FluidStack(simulatedExtract.getFluid(), execAmount,
-                    simulatedExtract.getComponentsPatch());
-            FluidStack extracted = source.drain(execDrain, IFluidHandler.FluidAction.EXECUTE);
-            if (extracted.isEmpty() || !effectiveFilter.test(extracted)) {
-                // Put back what we took
-                if (!extracted.isEmpty()) {
-                    source.fill(extracted, IFluidHandler.FluidAction.EXECUTE);
+            try (Transaction tx = Transaction.openRoot()) {
+                int extracted = source.extract(slot, resource, Math.min(accepted, requested), tx);
+                if (extracted <= 0) {
+                    continue;
                 }
-                continue;
-            }
-
-            int inserted = target.fill(extracted, IFluidHandler.FluidAction.EXECUTE);
-            int remainder = Math.max(0, extracted.getAmount() - inserted);
-            if (remainder > 0) {
-                source.fill(new FluidStack(extracted.getFluid(), remainder,
-                        extracted.getComponentsPatch()),
-                        IFluidHandler.FluidAction.EXECUTE);
-            }
-            if (inserted > 0L) {
+                FluidStack extractedStack = resource.toStack(extracted);
+                if (extractedStack.isEmpty() || !effectiveFilter.test(extractedStack)) {
+                    continue;
+                }
+                int inserted = target.insert(resource, extracted, tx);
+                if (inserted <= 0) {
+                    continue;
+                }
+                tx.commit();
                 return inserted;
             }
         }
         return 0L;
     }
 
-    public static long transferOne(IFluidHandler source, IFluidHandler target, long maxAmount,
-            Predicate<FluidStack> filter, List<LeadConnection> path) {
-        Predicate<FluidStack> effectiveFilter = filter == null ? ANY : filter;
-        return transferOne(source, target, maxAmount,
-                stack -> effectiveFilter.test(stack) && pathAllows(path, stack));
-    }
-
-    public static long transferOne(ResourceHandler<FluidResource> source, IFluidHandler target, int maxAmount,
+    public static long transferResourceOne(ResourceHandler<FluidResource> source, ResourceHandler<FluidResource> target,
+            int maxAmount,
             Predicate<FluidResource> filter, List<LeadConnection> path) {
         if (source == null || target == null || maxAmount <= 0) {
             return 0L;
@@ -143,7 +130,7 @@ public final class MekanismFluidBridge {
             }
 
             int requested = (int) Math.min(maxAmount, avail);
-            int accepted = target.fill(resource.toStack(requested), IFluidHandler.FluidAction.SIMULATE);
+            int accepted = acceptedAmount(target, resource.toStack(requested));
             if (accepted <= 0) {
                 continue;
             }
@@ -153,7 +140,7 @@ public final class MekanismFluidBridge {
                 if (extracted <= 0) {
                     continue;
                 }
-                int inserted = target.fill(resource.toStack(extracted), IFluidHandler.FluidAction.EXECUTE);
+                int inserted = target.insert(resource, extracted, tx);
                 if (inserted <= 0) {
                     continue;
                 }
@@ -164,37 +151,36 @@ public final class MekanismFluidBridge {
         return 0L;
     }
 
-    public static long transferOne(IFluidHandler source, ResourceHandler<FluidResource> target, long maxAmount,
+    public static long transferOne(ResourceHandler<FluidResource> source, ResourceHandler<FluidResource> target,
+            long maxAmount,
             Predicate<FluidStack> filter, List<LeadConnection> path) {
         if (source == null || target == null || maxAmount <= 0L) {
             return 0L;
         }
         Predicate<FluidStack> effectiveFilter = filter == null ? ANY : filter;
-        int tanks = source.getTanks();
-        for (int tank = 0; tank < tanks; tank++) {
-            FluidStack stored = source.getFluidInTank(tank);
+        int slots = source.size();
+        for (int slot = 0; slot < slots; slot++) {
+            FluidResource resource = source.getResource(slot);
+            if (resource == null || resource.isEmpty()) {
+                continue;
+            }
+            long available = source.getAmountAsLong(slot);
+            if (available <= 0L) {
+                continue;
+            }
+            int requested = (int) Math.min(Math.min(maxAmount, available), Integer.MAX_VALUE);
+            FluidStack stored = resource.toStack(requested);
             if (stored.isEmpty() || !effectiveFilter.test(stored) || !pathAllows(path, stored)) {
                 continue;
             }
 
-            int requested = (int) Math.min(maxAmount, stored.getAmount());
-            FluidStack drainStack = new FluidStack(stored.getFluid(), requested, stored.getComponentsPatch());
-            FluidStack simulatedExtract = source.drain(drainStack, IFluidHandler.FluidAction.SIMULATE);
-            if (simulatedExtract.isEmpty() || !effectiveFilter.test(simulatedExtract)) {
-                continue;
-            }
-
-            FluidResource resource = FluidResource.of(simulatedExtract);
             try (Transaction tx = Transaction.openRoot()) {
-                int inserted = target.insert(resource, simulatedExtract.getAmount(), tx);
+                int inserted = target.insert(resource, requested, tx);
                 if (inserted <= 0) {
                     continue;
                 }
-                FluidStack extracted = source.drain(resource.toStack(inserted), IFluidHandler.FluidAction.EXECUTE);
-                if (extracted.getAmount() != inserted) {
-                    if (!extracted.isEmpty()) {
-                        source.fill(extracted, IFluidHandler.FluidAction.EXECUTE);
-                    }
+                int extracted = source.extract(slot, resource, inserted, tx);
+                if (extracted != inserted) {
                     continue;
                 }
                 tx.commit();
@@ -204,11 +190,19 @@ public final class MekanismFluidBridge {
         return 0L;
     }
 
-    private static long acceptedAmount(IFluidHandler target, FluidStack stack) {
-        return target.fill(stack, IFluidHandler.FluidAction.SIMULATE);
+    private static int acceptedAmount(ResourceHandler<FluidResource> target, FluidStack stack) {
+        if (stack == null || stack.isEmpty()) {
+            return 0;
+        }
+        try (Transaction tx = Transaction.openRoot()) {
+            return target.insert(FluidResource.of(stack), stack.getAmount(), tx);
+        }
     }
 
     private static boolean pathAllows(List<LeadConnection> path, FluidStack stack) {
+        if (path == null || path.isEmpty()) {
+            return true;
+        }
         for (LeadConnection connection : path) {
             if (!connectionAllowsFluid(connection, stack)) {
                 return false;
@@ -237,7 +231,7 @@ public final class MekanismFluidBridge {
     }
 
     public static final class HandlerCache {
-        private final Map<LeadAnchor, IFluidHandler> hits = new HashMap<>();
+        private final Map<LeadAnchor, ResourceHandler<FluidResource>> hits = new HashMap<>();
         private final Set<LeadAnchor> misses = new HashSet<>();
 
         public boolean has(ServerLevel level, LeadAnchor anchor) {
@@ -251,20 +245,20 @@ public final class MekanismFluidBridge {
         }
 
         public long transferOne(ServerLevel level, LeadAnchor source, ResourceHandler<FluidResource> target,
-            long maxAmount, Predicate<FluidStack> filter, List<LeadConnection> path) {
+                long maxAmount, Predicate<FluidStack> filter, List<LeadConnection> path) {
             return MekanismFluidBridge.transferOne(get(level, source), target, maxAmount, filter, path);
         }
 
-        private IFluidHandler get(ServerLevel level, LeadAnchor anchor) {
+        private ResourceHandler<FluidResource> get(ServerLevel level, LeadAnchor anchor) {
             if (anchor == null) {
                 return null;
             }
             LeadAnchor key = new LeadAnchor(anchor.pos().immutable(), anchor.face());
-            IFluidHandler cached = hits.get(key);
+            ResourceHandler<FluidResource> cached = hits.get(key);
             if (cached != null || misses.contains(key)) {
                 return cached;
             }
-            IFluidHandler found = handler(level, key);
+            ResourceHandler<FluidResource> found = handler(level, key);
             if (found == null) {
                 misses.add(key);
             } else {

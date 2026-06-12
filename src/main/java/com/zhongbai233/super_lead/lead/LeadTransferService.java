@@ -51,8 +51,8 @@ final class LeadTransferService {
     private static final int MAX_TRANSFER_SEARCH_DEPTH = 64;
     private static final int ITEM_PULSE_DURATION_TICKS = 10;
     private static final int MUSIC_PLAYER_EXTRACT_COOLDOWN_TICKS = 200; // 绳子送入后完整保护（等待解码+播放完毕）
-    private static final int MUSIC_PLAYER_FALSE_DEBOUNCE_TICKS = 10;   // 自然播放完毕后快速允许抽取
-    private static final int MUSIC_PLAYER_DISC_DEBOUNCE_TICKS = 100;   // 玩家放入唱片等待解码器启动（5s）
+    private static final int MUSIC_PLAYER_FALSE_DEBOUNCE_TICKS = 10; // 自然播放完毕后快速允许抽取
+    private static final int MUSIC_PLAYER_DISC_DEBOUNCE_TICKS = 100; // 玩家放入唱片等待解码器启动（5s）
 
     /**
      * Per-dimension cached generation and pre-built indexes for each transfer kind.
@@ -769,7 +769,8 @@ final class LeadTransferService {
                 && MekanismFluidBridge.hasHandler(level, current)) {
             @SuppressWarnings("unchecked")
             ResourceHandler<FluidResource> fluidSource = (ResourceHandler<FluidResource>) sourceHandler;
-            return MekanismFluidBridge.transferOne(fluidSource, MekanismFluidBridge.handler(level, current), batch,
+            return MekanismFluidBridge.transferResourceOne(fluidSource, MekanismFluidBridge.handler(level, current),
+                    batch,
                     resource -> pathAllowsResource(path, resource), pathConnections(path)) > 0L;
         }
 

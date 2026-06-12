@@ -18,6 +18,7 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
+import static java.lang.String.CASE_INSENSITIVE_ORDER;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.world.level.storage.LevelResource;
 import org.slf4j.Logger;
@@ -83,7 +84,7 @@ public final class RopePresetLibrary {
         } catch (IOException e) {
             LOG.warn("[super_lead] cannot list presets: {}", e.toString());
         }
-        out.sort(String::compareToIgnoreCase);
+        out.sort(CASE_INSENSITIVE_ORDER);
         return out;
     }
 

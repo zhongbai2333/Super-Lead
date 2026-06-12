@@ -793,8 +793,8 @@ public final class RopeAttachmentRenderer {
         if (active.isEmpty()) {
             return 0.0D;
         }
-        xs.sort(Double::compareTo);
-        zs.sort(Double::compareTo);
+        xs.sort(null);
+        zs.sort(null);
         double area = 0.0D;
         for (int xi = 0; xi < xs.size() - 1; xi++) {
             double x0 = xs.get(xi), x1 = xs.get(xi + 1);

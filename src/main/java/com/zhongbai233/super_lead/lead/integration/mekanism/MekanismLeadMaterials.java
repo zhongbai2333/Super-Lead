@@ -9,7 +9,8 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 
 /**
- * Mekanism material matching without a hard dependency on Mekanism item classes.
+ * Mekanism material matching without a hard dependency on Mekanism item
+ * classes.
  */
 public final class MekanismLeadMaterials {
     private static final Identifier STEEL_BLOCK_ID = Identifier.fromNamespaceAndPath("mekanism", "block_steel");
@@ -17,7 +18,7 @@ public final class MekanismLeadMaterials {
             "alloy_reinforced");
 
     private static final TagKey<Item> C_STEEL_BLOCKS = TagKey.create(Registries.ITEM,
-        Identifier.fromNamespaceAndPath("c", "storage_blocks/steel"));
+            Identifier.fromNamespaceAndPath("c", "storage_blocks/steel"));
     /** Mekanism 26.1 tags reinforced alloy as c:alloys/elite. */
     private static final TagKey<Item> C_REINFORCED_ALLOYS = TagKey.create(Registries.ITEM,
             Identifier.fromNamespaceAndPath("c", "alloys/elite"));

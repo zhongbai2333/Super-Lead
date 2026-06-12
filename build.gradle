@@ -171,11 +171,14 @@ dependencies {
     // the optional rope-terminal bridge because AE2's public API does not expose its menu opener/types.
     compileOnly "org.appliedenergistics:appliedenergistics2:${ae2_version}:api"
     compileOnly "org.appliedenergistics:appliedenergistics2:${ae2_version}"
-    // Prefer a pinned local Mekanism 26.1 jar in ./libs for release verification.
-    // The JitPack coordinate below remains as the default dev fallback while the
+    // Prefer a pinned Mekanism 26.1 jar committed under ./gradle/libs for CI/release verification.
+    // The JitPack coordinate below remains as the local-dev fallback while the
     // 26.1 line is not available from Mekanism's official ModMaven coordinates.
-    compileOnly fileTree(dir: 'libs', include: ['Mekanism-*.jar', 'mekanism-*.jar'])
-    compileOnly "com.github.QiuYe-123:Mekanism:${mekanism_version}"
+    def localMekanismJars = fileTree(dir: 'gradle/libs', include: ['Mekanism-*.jar', 'mekanism-*.jar'])
+    compileOnly localMekanismJars
+    if (localMekanismJars.files.empty) {
+        compileOnly "com.github.QiuYe-123:Mekanism:${mekanism_version}"
+    }
     // TEMPORARY: runtime access for bug testing — remove after debugging
     // localRuntimeOnly fileTree(dir: 'libs', include: ['Mekanism-*.jar', 'mekanism-*.jar'])
     // localRuntimeOnly "com.github.QiuYe-123:Mekanism:${mekanism_version}"
