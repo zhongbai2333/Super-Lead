@@ -154,6 +154,10 @@ abstract class RopeSimulationVisualState extends RopeSimulationRenderCache {
             return;
         }
         float ct = contactT < 0.0F ? 0.0F : (contactT > 1.0F ? 1.0F : contactT);
+        RopeContactResponseModel.Weights response = RopeContactResponseModel.weights(tuning.slack());
+        if (!response.hasFlexible()) {
+            return;
+        }
         int seg = (int) Math.floor(ct * segments);
         if (seg >= segments)
             seg = segments - 1;
@@ -163,14 +167,14 @@ abstract class RopeSimulationVisualState extends RopeSimulationRenderCache {
         int i = seg, j = seg + 1;
         double wi = 1.0D - frac, wj = frac;
         if (!pinned[i]) {
-            x[i] += contactDx * wi * contactPushGain;
-            y[i] += contactDy * wi * contactPushGain;
-            z[i] += contactDz * wi * contactPushGain;
+            x[i] += contactDx * wi * contactPushGain * response.flexible();
+            y[i] += contactDy * wi * contactPushGain * response.flexible();
+            z[i] += contactDz * wi * contactPushGain * response.flexible();
         }
         if (!pinned[j]) {
-            x[j] += contactDx * wj * contactPushGain;
-            y[j] += contactDy * wj * contactPushGain;
-            z[j] += contactDz * wj * contactPushGain;
+            x[j] += contactDx * wj * contactPushGain * response.flexible();
+            y[j] += contactDy * wj * contactPushGain * response.flexible();
+            z[j] += contactDz * wj * contactPushGain * response.flexible();
         }
     }
 }

@@ -263,14 +263,15 @@ abstract class RopeSimulationStepper extends RopeSimulationContactConstraints {
                 (int) Math.ceil(segments * (1.0D + tautWeight * 3.0D)));
         if (iterations < minPasses)
             iterations = minPasses;
+        boolean tensionContact = hasDominantTensionContactTarget();
         for (int it = 0; it < iterations; it++) {
             solveDistanceConstraints(targetLen, alphaTilde, (it & 1) == 0);
             // Entity pushes run before terrain so blocks always win:
             // when a player pushes a rope against a wall the rope slides into the
             // player's collision box instead of clipping into the block.
-            if (!entityContacts.isEmpty())
+            if (!tensionContact && !entityContacts.isEmpty())
                 solveEntityConstraints(entityContacts);
-            if (terrainEnabled)
+            if (!tensionContact && terrainEnabled)
                 solveTerrainConstraints(level);
             if (!neighbors.isEmpty())
                 solveRopeRopeConstraints(neighbors);

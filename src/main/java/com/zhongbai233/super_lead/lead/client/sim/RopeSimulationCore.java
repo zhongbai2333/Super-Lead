@@ -437,17 +437,24 @@ abstract class RopeSimulationCore {
         }
         double clamped = Math.min(1.0D, weight);
         double keepVelocity = 1.0D - clamped;
+        boolean tensionContact = hasTensionContactTarget();
         double dx = b.x - a.x;
         double dy = b.y - a.y;
         double dz = b.z - a.z;
         for (int i = 1; i < nodes - 1; i++) {
-            if (preserveContactNodes && (contactNode[i] || supportNode[i])) {
+            if (!tensionContact && preserveContactNodes && (contactNode[i] || supportNode[i])) {
                 continue;
             }
             double t = i / (double) segments;
             double tx = a.x + dx * t;
             double ty = a.y + dy * t;
             double tz = a.z + dz * t;
+            if (tensionContact) {
+                double vWeight = RopeContactResponseModel.spanVWeight(t, contactT);
+                tx += contactDx * vWeight * contactPushGain;
+                ty += contactDy * vWeight * contactPushGain;
+                tz += contactDz * vWeight * contactPushGain;
+            }
             x[i] += (tx - x[i]) * clamped;
             y[i] += (ty - y[i]) * clamped;
             z[i] += (tz - z[i]) * clamped;
@@ -456,6 +463,21 @@ abstract class RopeSimulationCore {
             vz[i] *= keepVelocity;
         }
         markBoundsDirty();
+    }
+
+    protected boolean hasTensionContactTarget() {
+        if (contactT < 0.0F || contactPushGain <= 0.0D) {
+            return false;
+        }
+        return RopeContactResponseModel.weights(tuning.slack()).hasTension();
+    }
+
+    protected boolean hasDominantTensionContactTarget() {
+        if (contactT < 0.0F || contactPushGain <= 0.0D) {
+            return false;
+        }
+        RopeContactResponseModel.Weights response = RopeContactResponseModel.weights(tuning.slack());
+        return response.tension() >= response.flexible();
     }
 
     private void snapPreviousStateToCurrent() {

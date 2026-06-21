@@ -39,6 +39,7 @@ public final class RopeTripClientState {
     private static boolean wakeRequested;
     private static boolean movementWakeArmed;
     private static boolean cameraSwitched;
+    private static boolean ownsLocalForcedPose;
     private static CameraType previousCameraType;
     private static float lockedBodyRot;
 
@@ -48,8 +49,8 @@ public final class RopeTripClientState {
     public static void apply(SyncRopeTripState payload) {
         Minecraft minecraft = Minecraft.getInstance();
         if (!payload.active()) {
-            TRIPS.remove(payload.entityId());
-            if (isLocal(payload.entityId())) {
+            boolean removed = TRIPS.remove(payload.entityId()) != null;
+            if (removed && isLocal(payload.entityId())) {
                 clearLocal(minecraft.player);
             }
             return;
@@ -190,7 +191,10 @@ public final class RopeTripClientState {
     private static void enforceLocal(LocalPlayer player, TripEntry entry) {
         if (player == null)
             return;
-        player.setForcedPose(Pose.SWIMMING);
+        if (ownsLocalForcedPose || player.getForcedPose() == null) {
+            player.setForcedPose(Pose.SWIMMING);
+            ownsLocalForcedPose = true;
+        }
         player.setSprinting(false);
         Vec3 motion = player.getDeltaMovement();
         player.setDeltaMovement(0.0D, Math.min(motion.y, 0.0D), 0.0D);
@@ -266,9 +270,10 @@ public final class RopeTripClientState {
         wakeRequested = false;
         movementWakeArmed = false;
         restoreCamera(Minecraft.getInstance());
-        if (player != null && player.getForcedPose() == Pose.SWIMMING) {
+        if (ownsLocalForcedPose && player != null && player.getForcedPose() == Pose.SWIMMING) {
             player.setForcedPose(null);
         }
+        ownsLocalForcedPose = false;
     }
 
     private static boolean hasMovementInput(Input input) {

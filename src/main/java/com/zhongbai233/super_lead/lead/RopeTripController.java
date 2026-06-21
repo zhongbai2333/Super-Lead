@@ -166,13 +166,13 @@ final class RopeTripController {
         for (Map<UUID, ForcedCrawl> crawls : FORCED_CRAWLS.values()) {
             hadTripState |= crawls.remove(player.getUUID()) != null;
         }
-        boolean hadForcedCrawlPose = player.getForcedPose() == Pose.SWIMMING;
-        if (hadForcedCrawlPose) {
+        if (!hadTripState) {
+            return;
+        }
+        if (player.getForcedPose() == Pose.SWIMMING) {
             player.setForcedPose(null);
         }
-        if (hadTripState || hadForcedCrawlPose) {
-            sendTripState(player, SyncRopeTripState.inactive(player.getId()));
-        }
+        sendTripState(player, SyncRopeTripState.inactive(player.getId()));
     }
 
     private static void sendTripState(ServerPlayer player, SyncRopeTripState payload) {

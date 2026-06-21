@@ -171,6 +171,9 @@ abstract class RopeSimulationContactConstraints extends RopeSimulationTerrainCon
     protected void solveEntityConstraints(List<RopeEntityContact> entityContacts) {
         if (entityContacts.isEmpty() || !visualPushEnabled())
             return;
+        RopeContactResponseModel.Weights response = RopeContactResponseModel.weights(tuning.slack());
+        if (!response.hasEntityVolume())
+            return;
         double baseRadius = ropeRadius + collisionEps;
         updateBounds();
         for (int e = 0; e < entityContacts.size(); e++) {
@@ -184,12 +187,13 @@ abstract class RopeSimulationContactConstraints extends RopeSimulationTerrainCon
             if (box.maxZ + radius < minZ || box.minZ - radius > maxZ)
                 continue;
             for (int i = 0; i < segments; i++) {
-                pushSegmentOutOfEntityBox(i, i + 1, box, contact.velocity(), radius);
+                pushSegmentOutOfEntityBox(i, i + 1, box, contact.velocity(), radius, response.entityVolume());
             }
         }
     }
 
-    private void pushSegmentOutOfEntityBox(int a, int b, AABB box, Vec3 entityVelocity, double radius) {
+    private void pushSegmentOutOfEntityBox(int a, int b, AABB box, Vec3 entityVelocity, double radius,
+            double entityVolumeScale) {
         double ax = x[a], ay = y[a], az = z[a];
         double bx = x[b], by = y[b], bz = z[b];
         SegmentBoxContact contact = entitySegmentBoxContact.compute(ax, ay, az, bx, by, bz, box);
@@ -198,6 +202,10 @@ abstract class RopeSimulationContactConstraints extends RopeSimulationTerrainCon
         boolean footSupportContact = isFootSupportEntityContact(box, entityVelocity,
                 contact.spx, contact.spy, contact.spz, radius);
         if (!resolveEntityPush(a, b, box, contact, verticality, footSupportContact, radius, entityPush)) {
+            return;
+        }
+        entityPush.length *= entityVolumeScale;
+        if (entityPush.length <= 1.0e-6D) {
             return;
         }
 
