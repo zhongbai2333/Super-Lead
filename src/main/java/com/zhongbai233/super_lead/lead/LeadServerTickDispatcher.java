@@ -12,7 +12,6 @@ final class LeadServerTickDispatcher {
             return;
         }
 
-        SuperLeadNetwork.tickStuckBreaks(serverLevel);
         SuperLeadNetwork.tickRedstone(serverLevel);
         SuperLeadNetwork.tickEnergy(serverLevel);
         SuperLeadNetwork.tickItem(serverLevel);

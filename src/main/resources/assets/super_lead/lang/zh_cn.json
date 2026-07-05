@@ -84,7 +84,6 @@
   "super_lead.server_config.field.network.thermal_transfer": "热导管道基础热量/tick",
   "super_lead.server_config.field.network.item_transfer_interval": "物品传输间隔（tick）",
   "super_lead.server_config.field.network.fluid_bucket_amount": "流体桶容量（mB）",
-  "super_lead.server_config.field.network.stuck_break_ticks": "卡住断绳 tick 数",
   "super_lead.server_config.field.network.max_ropes_per_block_face": "单面最大绳索数",
   "super_lead.server_config.field.presets.allow_op_visual_presets": "允许 OP 推送视觉预设",
   "super_lead.preset.op_screen.refresh": "刷新列表",

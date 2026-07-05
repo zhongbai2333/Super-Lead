@@ -340,7 +340,6 @@
 每 tick：
 
 - 服务端：
-  - `tickStuckBreaks`
   - `tickRedstone`
   - `tickEnergy`
   - `tickItem`
@@ -704,7 +703,6 @@ GUI/交互：
   - `network.fluid_tier_max`
   - `network.item_transfer_interval`
   - `network.fluid_bucket_amount`
-  - `network.stuck_break_ticks`
 - 预设：
   - `presets.allow_op_visual_presets`
 

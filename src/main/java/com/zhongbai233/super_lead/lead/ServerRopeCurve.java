@@ -4,8 +4,13 @@ import com.zhongbai233.super_lead.lead.physics.RopeSagModel;
 import com.zhongbai233.super_lead.lead.client.geom.RopeMath;
 import com.zhongbai233.super_lead.lead.client.geom.SegmentHit;
 import java.util.Arrays;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.UUID;
 import net.minecraft.core.BlockPos;
+import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
@@ -26,6 +31,10 @@ final class ServerRopeCurve {
     private static final int TERRAIN_PASSES = 8;
     private static final int TERRAIN_DISTANCE_PASSES = 4;
     private static final double SERVER_WIND_TIMESTEP = 0.045D;
+    private static final int CACHE_MAX_ENTRIES = 512;
+    private static final long STATIC_CACHE_MAX_AGE_TICKS = 100L;
+    private static final Map<CacheKey, CacheEntry> CACHE = new HashMap<>();
+    private static long terrainVersion;
 
     private ServerRopeCurve() {
     }
@@ -34,12 +43,55 @@ final class ServerRopeCurve {
         if (connection == null || connection.physicsPreset().isBlank()) {
             return straight(a, b);
         }
-        return from(a, b, ServerPhysicsTuning.loadServerPhysicsTuning(level, connection.physicsPreset()), level,
-                connection);
+        ServerPhysicsTuning tuning = ServerPhysicsTuning.loadServerPhysicsTuning(level, connection.physicsPreset());
+        if (!shouldCache(level, connection, tuning)) {
+            return from(a, b, tuning, level, connection);
+        }
+        long now = level.getGameTime();
+        long windTick = hasTimeVaryingWind(tuning) ? now : -1L;
+        CacheKey key = new CacheKey(level.dimension(), connection.id(), SuperLeadSavedData.get(level).generation(),
+                connection.physicsPreset(), tuning, vecKey(a), vecKey(b), terrainVersion, windTick);
+        CacheEntry cached = CACHE.get(key);
+        if (cached != null && (windTick >= 0L || now - cached.createdTick() <= STATIC_CACHE_MAX_AGE_TICKS)) {
+            return cached.shape();
+        }
+        Shape shape = from(a, b, tuning, level, connection);
+        if (CACHE.size() >= CACHE_MAX_ENTRIES) {
+            CACHE.clear();
+        }
+        CACHE.put(key, new CacheEntry(shape, now));
+        return shape;
     }
 
     static Shape from(Vec3 a, Vec3 b, ServerPhysicsTuning tuning) {
         return from(a, b, tuning, null, null);
+    }
+
+    static void invalidateAll() {
+        CACHE.clear();
+    }
+
+    static void invalidateTerrain() {
+        terrainVersion++;
+        CACHE.clear();
+    }
+
+    private static boolean shouldCache(ServerLevel level, LeadConnection connection, ServerPhysicsTuning tuning) {
+        return level != null && connection != null && tuning != null;
+    }
+
+    private static boolean hasTimeVaryingWind(ServerPhysicsTuning tuning) {
+        return tuning.windEnabled()
+                && (Math.abs(tuning.windStrength()) > EPS
+                        || Math.abs(tuning.windStrengthJitter()) > EPS
+                        || Math.abs(tuning.windDirectionJitterDeg()) > EPS
+                        || Math.abs(tuning.windCellDirectionSpreadDeg()) > EPS
+                        || Math.abs(tuning.windSpeed()) > EPS
+                        || Math.abs(tuning.windVerticalLift()) > EPS);
+    }
+
+    private static VecKey vecKey(Vec3 vec) {
+        return new VecKey(Double.doubleToLongBits(vec.x), Double.doubleToLongBits(vec.y), Double.doubleToLongBits(vec.z));
     }
 
     private static Shape from(Vec3 a, Vec3 b, ServerPhysicsTuning tuning, ServerLevel level,
@@ -618,6 +670,17 @@ final class ServerRopeCurve {
             pin(a, b, x, y, z);
         }
     }
+
+    private record VecKey(long x, long y, long z) {
+    }
+
+    private record CacheKey(ResourceKey<Level> dimension, UUID connectionId, long ropeGeneration,
+            String physicsPreset, ServerPhysicsTuning tuning, VecKey a, VecKey b, long terrainVersion,
+            long windTick) {
+    }
+
+        private record CacheEntry(Shape shape, long createdTick) {
+        }
 
     private static double terrainRadius(ServerPhysicsTuning tuning) {
         if (tuning == null) {

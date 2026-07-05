@@ -615,6 +615,7 @@ public final class SuperLeadEvents {
     public static void onBlockPlaced(BlockEvent.EntityPlaceEvent event) {
         if (event.getLevel().isClientSide() || !(event.getLevel() instanceof Level level))
             return;
+        ServerRopeCurve.invalidateTerrain();
         SuperLeadNetwork.pruneInvalid(level);
     }
 

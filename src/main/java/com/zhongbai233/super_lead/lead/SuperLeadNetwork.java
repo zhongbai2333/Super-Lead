@@ -27,9 +27,7 @@ import net.minecraft.world.item.Items;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.FenceBlock;
 import net.minecraft.world.level.block.state.BlockState;
-import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
-import net.minecraft.world.phys.shapes.VoxelShape;
 
 /**
  * Server/client facade for rope gameplay operations.
@@ -58,16 +56,10 @@ public final class SuperLeadNetwork {
     /** Per-block T-slack factor: a 40-block rope gets 40×0.025 = 1.0 slack. */
     private static final double SERVER_CLAIM_T_SLACK_PER_BLOCK = 0.025D;
     private static final double SERVER_CLAIM_T_SLACK_MAX = 0.60D;
-    private static final Map<UUID, Long> INTERIOR_BLOCKED_SINCE = new HashMap<>();
     /**
      * Round-robin cursor keyed by (BlockPos, kind ordinal) for per-click cycling.
      */
     private static final Map<Long, Integer> EXTRACT_TOGGLE_CURSOR = new HashMap<>();
-    private static final long STUCK_CHECK_INTERVAL_TICKS = 5L;
-    private static final long STUCK_BREAK_TICKS = 100L;
-    private static final double STUCK_SAMPLE_STEP = 0.20D;
-    private static final double STUCK_ENDPOINT_IGNORE_DISTANCE = 0.35D;
-    private static final double STUCK_INSIDE_EPS = 1.0e-4D;
     public static final int ITEM_TIER_MAX = 6;
     public static final int FLUID_TIER_MAX = 4;
 
@@ -316,111 +308,6 @@ public final class SuperLeadNetwork {
         // Face-mounted anchors: check the block adjacent in the anchor's face direction
         BlockPos adjacent = anchor.pos().relative(anchor.face());
         return level.getBlockState(adjacent).isCollisionShapeFullBlock(level, adjacent);
-    }
-
-    public static void tickStuckBreaks(ServerLevel level) {
-        long now = level.getGameTime();
-        if (now % STUCK_CHECK_INTERVAL_TICKS != 0L) {
-            return;
-        }
-
-        List<LeadConnection> connections = SuperLeadSavedData.get(level).connections();
-        Set<UUID> liveIds = new HashSet<>();
-        List<LeadConnection> broken = new ArrayList<>();
-        for (LeadConnection connection : connections) {
-            liveIds.add(connection.id());
-            if (!hasInteriorBlockage(level, connection)) {
-                INTERIOR_BLOCKED_SINCE.remove(connection.id());
-                continue;
-            }
-
-            long since = INTERIOR_BLOCKED_SINCE.computeIfAbsent(connection.id(), id -> now);
-            if (now - since >= STUCK_BREAK_TICKS) {
-                broken.add(connection);
-            }
-        }
-
-        INTERIOR_BLOCKED_SINCE.keySet().retainAll(liveIds);
-        if (broken.isEmpty()) {
-            return;
-        }
-
-        Set<UUID> brokenIds = new HashSet<>();
-        for (LeadConnection connection : broken) {
-            brokenIds.add(connection.id());
-        }
-        boolean removed = SuperLeadSavedData.get(level).removeIf(connection -> brokenIds.contains(connection.id()));
-        if (!removed) {
-            return;
-        }
-
-        for (LeadConnection connection : broken) {
-            INTERIOR_BLOCKED_SINCE.remove(connection.id());
-            dropConnectionDrops(level, connection, midpoint(level, connection), null);
-            cleanupFenceKnot(level, connection.from());
-            cleanupFenceKnot(level, connection.to());
-            notifyRedstoneChange(level, connection);
-        }
-        SuperLeadPayloads.sendDirtyToDimension(level);
-        PresetServerManager.syncDimensionPresets(level);
-    }
-
-    private static boolean hasInteriorBlockage(Level level, LeadConnection connection) {
-        LeadEndpointLayout.Endpoints endpoints = endpoints(level, connection);
-        Vec3 a = endpoints.from();
-        Vec3 b = endpoints.to();
-        double distance = a.distanceTo(b);
-        if (distance < 1.0e-6D) {
-            return false;
-        }
-
-        int samples = Math.max(2, (int) Math.ceil(distance / STUCK_SAMPLE_STEP));
-        for (int i = 1; i < samples; i++) {
-            double t = i / (double) samples;
-            if (t * distance <= STUCK_ENDPOINT_IGNORE_DISTANCE
-                    || (1.0D - t) * distance <= STUCK_ENDPOINT_IGNORE_DISTANCE) {
-                continue;
-            }
-            Vec3 point = a.lerp(b, t);
-            if (isPointInsideCollision(level, point)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private static boolean isPointInsideCollision(Level level, Vec3 point) {
-        int baseX = (int) Math.floor(point.x);
-        int baseY = (int) Math.floor(point.y);
-        int baseZ = (int) Math.floor(point.z);
-        BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
-        for (int bx = baseX - 1; bx <= baseX + 1; bx++) {
-            for (int by = baseY - 1; by <= baseY + 1; by++) {
-                for (int bz = baseZ - 1; bz <= baseZ + 1; bz++) {
-                    cursor.set(bx, by, bz);
-                    BlockState state = level.getBlockState(cursor);
-                    VoxelShape shape = state.getCollisionShape(level, cursor);
-                    if (shape.isEmpty()) {
-                        continue;
-                    }
-                    double ox = cursor.getX();
-                    double oy = cursor.getY();
-                    double oz = cursor.getZ();
-                    for (AABB box : shape.toAabbs()) {
-                        if (containsStrict(box.move(ox, oy, oz), point)) {
-                            return true;
-                        }
-                    }
-                }
-            }
-        }
-        return false;
-    }
-
-    private static boolean containsStrict(AABB box, Vec3 point) {
-        return point.x > box.minX + STUCK_INSIDE_EPS && point.x < box.maxX - STUCK_INSIDE_EPS
-                && point.y > box.minY + STUCK_INSIDE_EPS && point.y < box.maxY - STUCK_INSIDE_EPS
-                && point.z > box.minZ + STUCK_INSIDE_EPS && point.z < box.maxZ - STUCK_INSIDE_EPS;
     }
 
     public static boolean hasUpgradeableConnectionNear(Level level, Vec3 point, double maxDistance) {

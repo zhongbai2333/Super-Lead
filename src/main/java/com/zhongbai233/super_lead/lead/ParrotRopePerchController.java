@@ -246,6 +246,7 @@ public final class ParrotRopePerchController {
         LeadEndpointLayout.Endpoints endpoints = LeadEndpointLayout.endpoints(level, connection, connections);
         double distance = endpoints.from().distanceTo(endpoints.to());
         int samples = Mth.clamp((int) Math.ceil(distance * 1.35D), MIN_ROPE_SAMPLES, MAX_ROPE_SAMPLES);
+        ServerRopeCurve.Shape shape = ServerRopeCurve.from(level, connection, endpoints.from(), endpoints.to());
         Vec3 parrotPos = parrot.position();
         Candidate best = null;
         double bestScore = Double.POSITIVE_INFINITY;
@@ -254,7 +255,7 @@ public final class ParrotRopePerchController {
             if (isOccupied(connection.id(), t, states)) {
                 continue;
             }
-            RopePoint point = sample(level, connection, connections, t);
+            RopePoint point = sample(shape, t);
             if (Math.abs(point.tangent().y) > MAX_TANGENT_Y) {
                 continue;
             }
@@ -641,8 +642,12 @@ public final class ParrotRopePerchController {
         LeadEndpointLayout.Endpoints endpoints = LeadEndpointLayout.endpoints(level, connection, connections);
         Vec3 a = endpoints.from();
         Vec3 b = endpoints.to();
-        double clamped = Mth.clamp(t, 0.0D, 1.0D);
         ServerRopeCurve.Shape shape = ServerRopeCurve.from(level, connection, a, b);
+        return sample(shape, t);
+    }
+
+    private static RopePoint sample(ServerRopeCurve.Shape shape, double t) {
+        double clamped = Mth.clamp(t, 0.0D, 1.0D);
         Vec3 position = ServerRopeCurve.point(shape, clamped);
         Vec3 tangent = ServerRopeCurve.tangent(shape, clamped);
         return new RopePoint(position, tangent);
