@@ -25,7 +25,7 @@ public record RopeContactPulse(List<Entry> contacts) implements CustomPacketPayl
     public static final CustomPacketPayload.Type<RopeContactPulse> TYPE = new CustomPacketPayload.Type<>(
             Identifier.fromNamespaceAndPath(Super_lead.MODID, "rope_contact_pulse"));
     public static final StreamCodec<RegistryFriendlyByteBuf, RopeContactPulse> STREAM_CODEC = CustomPacketPayload
-            .codec(RopeContactPulse::write, RopeContactPulse::read);
+            .codec((payload, buf) -> payload.write(buf), RopeContactPulse::read);
 
     @Override
     public Type<? extends CustomPacketPayload> type() {

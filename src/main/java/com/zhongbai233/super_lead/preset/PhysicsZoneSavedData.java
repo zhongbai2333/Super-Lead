@@ -19,8 +19,8 @@ import net.minecraft.world.phys.AABB;
  */
 public final class PhysicsZoneSavedData extends SavedData {
     private static final Codec<PhysicsZone> ZONE_CODEC = RecordCodecBuilder.create(inst -> inst.group(
-            Codec.STRING.fieldOf("name").forGetter(PhysicsZone::name),
-            Codec.STRING.fieldOf("preset").forGetter(PhysicsZone::presetName),
+            Codec.STRING.fieldOf("name").forGetter(zone -> zone.name()),
+            Codec.STRING.fieldOf("preset").forGetter(zone -> zone.presetName()),
             Codec.DOUBLE.fieldOf("minX").forGetter(z -> z.area().minX),
             Codec.DOUBLE.fieldOf("minY").forGetter(z -> z.area().minY),
             Codec.DOUBLE.fieldOf("minZ").forGetter(z -> z.area().minZ),

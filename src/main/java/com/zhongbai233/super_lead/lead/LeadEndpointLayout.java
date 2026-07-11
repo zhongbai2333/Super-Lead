@@ -2,7 +2,9 @@ package com.zhongbai233.super_lead.lead;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import net.minecraft.core.Direction;
 import net.minecraft.world.level.Level;
@@ -27,6 +29,38 @@ public final class LeadEndpointLayout {
     }
 
     public record Endpoints(Vec3 from, Vec3 to) {
+    }
+
+    public static Map<UUID, Endpoints> endpointsByConnection(Level level, List<LeadConnection> connections) {
+        if (connections == null || connections.isEmpty()) {
+            return Map.of();
+        }
+        Map<AnchorPair, List<LeadConnection>> groups = new HashMap<>();
+        for (LeadConnection connection : connections) {
+            if (connection != null) {
+                groups.computeIfAbsent(AnchorPair.of(connection.from(), connection.to()), key -> new ArrayList<>())
+                        .add(connection);
+            }
+        }
+        Map<UUID, Endpoints> endpoints = new HashMap<>(connections.size());
+        for (List<LeadConnection> group : groups.values()) {
+            if (group.size() <= 1) {
+                LeadConnection connection = group.getFirst();
+                endpoints.put(connection.id(), new Endpoints(
+                        connection.from().attachmentPoint(level), connection.to().attachmentPoint(level)));
+                continue;
+            }
+            group.sort((left, right) -> left.id().compareTo(right.id()));
+            int count = group.size();
+            for (int i = 0; i < count; i++) {
+                LeadConnection connection = group.get(i);
+                Placement placement = new Placement(i, count);
+                endpoints.put(connection.id(), new Endpoints(
+                        attachmentPoint(level, connection.from(), placement),
+                        attachmentPoint(level, connection.to(), placement)));
+            }
+        }
+        return endpoints;
     }
 
     public static Endpoints endpoints(Level level, LeadConnection connection, List<LeadConnection> allConnections) {
@@ -178,5 +212,16 @@ public final class LeadEndpointLayout {
 
     private record LocalOffset(double u, double v) {
         private static final LocalOffset ZERO = new LocalOffset(0.0D, 0.0D);
+    }
+
+    private record AnchorPair(LeadAnchor first, LeadAnchor second) {
+        private static AnchorPair of(LeadAnchor a, LeadAnchor b) {
+            return compareAnchor(a, b) <= 0 ? new AnchorPair(a, b) : new AnchorPair(b, a);
+        }
+
+        private static int compareAnchor(LeadAnchor a, LeadAnchor b) {
+            int pos = Long.compare(a.pos().asLong(), b.pos().asLong());
+            return pos != 0 ? pos : Integer.compare(a.face().ordinal(), b.face().ordinal());
+        }
     }
 }

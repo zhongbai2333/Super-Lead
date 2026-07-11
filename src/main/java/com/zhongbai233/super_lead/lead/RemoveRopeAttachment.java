@@ -11,7 +11,7 @@ public record RemoveRopeAttachment(UUID connectionId, UUID attachmentId) impleme
     public static final CustomPacketPayload.Type<RemoveRopeAttachment> TYPE = new CustomPacketPayload.Type<>(
             Identifier.fromNamespaceAndPath(Super_lead.MODID, "remove_rope_attachment"));
     public static final StreamCodec<RegistryFriendlyByteBuf, RemoveRopeAttachment> STREAM_CODEC = CustomPacketPayload
-            .codec(RemoveRopeAttachment::write, RemoveRopeAttachment::read);
+            .codec((payload, buf) -> payload.write(buf), RemoveRopeAttachment::read);
 
     @Override
     public Type<? extends CustomPacketPayload> type() {

@@ -1,5 +1,6 @@
 package com.zhongbai233.super_lead.lead.client.chunk;
 
+import java.util.List;
 import java.util.UUID;
 
 public final class RopeSectionSnapshot {
@@ -18,6 +19,7 @@ public final class RopeSectionSnapshot {
     public final int[] segmentColorARGB;
     public final float[] nodeThicknessScale;
     public final int extractEnd;
+        public final List<RopeSectionLine> attachmentLines;
     public final int segmentStart;
     public final int segmentEndExclusive;
 
@@ -28,7 +30,7 @@ public final class RopeSectionSnapshot {
             int[] nodeLight,
             int[] segmentColorARGB) {
         this(connectionId, x, y, z, sx, sy, sz, ux, uy, uz,
-                nodeLight, segmentColorARGB, null, 0, 0, Math.max(0, x.length - 1));
+                nodeLight, segmentColorARGB, null, 0, List.of(), 0, Math.max(0, x.length - 1));
     }
 
     public RopeSectionSnapshot(UUID connectionId,
@@ -40,7 +42,7 @@ public final class RopeSectionSnapshot {
             int segmentStart,
             int segmentEndExclusive) {
         this(connectionId, x, y, z, sx, sy, sz, ux, uy, uz,
-                nodeLight, segmentColorARGB, null, 0, segmentStart, segmentEndExclusive);
+                nodeLight, segmentColorARGB, null, 0, List.of(), segmentStart, segmentEndExclusive);
     }
 
     public RopeSectionSnapshot(UUID connectionId,
@@ -51,6 +53,7 @@ public final class RopeSectionSnapshot {
             int[] segmentColorARGB,
             float[] nodeThicknessScale,
             int extractEnd,
+            List<RopeSectionLine> attachmentLines,
             int segmentStart,
             int segmentEndExclusive) {
         this.connectionId = connectionId;
@@ -68,6 +71,9 @@ public final class RopeSectionSnapshot {
         this.segmentColorARGB = segmentColorARGB;
         this.nodeThicknessScale = nodeThicknessScale;
         this.extractEnd = Math.max(0, Math.min(2, extractEnd));
+        this.attachmentLines = attachmentLines == null || attachmentLines.isEmpty()
+                ? List.of()
+                : List.copyOf(attachmentLines);
         this.segmentStart = Math.max(0, Math.min(segmentStart, Math.max(0, x.length - 1)));
         this.segmentEndExclusive = Math.max(this.segmentStart,
                 Math.min(segmentEndExclusive, Math.max(0, x.length - 1)));

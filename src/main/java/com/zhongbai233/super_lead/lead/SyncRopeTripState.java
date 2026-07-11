@@ -20,7 +20,7 @@ public record SyncRopeTripState(
     public static final CustomPacketPayload.Type<SyncRopeTripState> TYPE = new CustomPacketPayload.Type<>(
             Identifier.fromNamespaceAndPath(Super_lead.MODID, "sync_rope_trip_state"));
     public static final StreamCodec<RegistryFriendlyByteBuf, SyncRopeTripState> STREAM_CODEC = CustomPacketPayload
-            .codec(SyncRopeTripState::write, SyncRopeTripState::read);
+            .codec((payload, buf) -> payload.write(buf), SyncRopeTripState::read);
 
     public static SyncRopeTripState active(int entityId, int remainingTicks, double startX, double startZ, double lockX,
             double lockZ, int fallTicks) {

@@ -20,7 +20,7 @@ public record SyncZiplines(List<Entry> entries) implements CustomPacketPayload {
     public static final CustomPacketPayload.Type<SyncZiplines> TYPE = new CustomPacketPayload.Type<>(
             Identifier.fromNamespaceAndPath(Super_lead.MODID, "sync_ziplines"));
     public static final StreamCodec<RegistryFriendlyByteBuf, SyncZiplines> STREAM_CODEC = CustomPacketPayload
-            .codec(SyncZiplines::write, SyncZiplines::read);
+            .codec((payload, buf) -> payload.write(buf), SyncZiplines::read);
 
     public SyncZiplines {
         entries = List.copyOf(entries);

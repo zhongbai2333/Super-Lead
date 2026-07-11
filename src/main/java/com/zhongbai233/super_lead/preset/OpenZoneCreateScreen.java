@@ -12,7 +12,7 @@ public record OpenZoneCreateScreen(BlockPos from, BlockPos to) implements Custom
     public static final CustomPacketPayload.Type<OpenZoneCreateScreen> TYPE = new CustomPacketPayload.Type<>(
             Identifier.fromNamespaceAndPath(Super_lead.MODID, "open_zone_create_screen"));
     public static final StreamCodec<RegistryFriendlyByteBuf, OpenZoneCreateScreen> STREAM_CODEC = CustomPacketPayload
-            .codec(OpenZoneCreateScreen::write, OpenZoneCreateScreen::read);
+            .codec((payload, buf) -> payload.write(buf), OpenZoneCreateScreen::read);
 
     @Override
     public Type<? extends CustomPacketPayload> type() {

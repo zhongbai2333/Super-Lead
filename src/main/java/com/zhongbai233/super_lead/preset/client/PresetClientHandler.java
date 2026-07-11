@@ -17,6 +17,7 @@ import org.slf4j.Logger;
 public final class PresetClientHandler {
     private static final Logger LOG = LogUtils.getLogger();
     private static volatile List<String> lastPresetList = List.of();
+    private static volatile List<PresetListResponse.Entry> lastPresetEntries = List.of();
     private static volatile java.util.function.Consumer<List<String>> listListener;
     private static volatile PresetDetailsResponse lastDetails;
     private static volatile java.util.function.Consumer<PresetDetailsResponse> detailsListener;
@@ -38,6 +39,7 @@ public final class PresetClientHandler {
     }
 
     public static void onListResponse(PresetListResponse payload) {
+        lastPresetEntries = List.copyOf(payload.entries());
         lastPresetList = List.copyOf(payload.names());
         java.util.function.Consumer<List<String>> l = listListener;
         if (l != null) {
@@ -47,6 +49,10 @@ public final class PresetClientHandler {
 
     public static List<String> lastPresetList() {
         return lastPresetList;
+    }
+
+    public static List<PresetListResponse.Entry> lastPresetEntries() {
+        return lastPresetEntries;
     }
 
     public static void setListListener(java.util.function.Consumer<List<String>> listener) {

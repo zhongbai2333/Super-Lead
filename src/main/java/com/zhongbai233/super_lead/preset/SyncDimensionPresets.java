@@ -20,7 +20,7 @@ public record SyncDimensionPresets(Map<String, Map<String, String>> presets) imp
     public static final CustomPacketPayload.Type<SyncDimensionPresets> TYPE = new CustomPacketPayload.Type<>(
             Identifier.fromNamespaceAndPath(Super_lead.MODID, "sync_dimension_presets"));
     public static final StreamCodec<RegistryFriendlyByteBuf, SyncDimensionPresets> STREAM_CODEC = CustomPacketPayload
-            .codec(SyncDimensionPresets::write, SyncDimensionPresets::read);
+            .codec((payload, buf) -> payload.write(buf), SyncDimensionPresets::read);
 
     public SyncDimensionPresets {
         Map<String, Map<String, String>> copy = new LinkedHashMap<>();

@@ -23,6 +23,8 @@ import com.zhongbai233.super_lead.preset.ZoneSelectionClick;
 import com.zhongbai233.super_lead.serverconfig.ServerConfigManager;
 import com.zhongbai233.super_lead.serverconfig.ServerConfigSet;
 import com.zhongbai233.super_lead.serverconfig.ServerConfigSnapshot;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import net.minecraft.server.level.ServerLevel;
@@ -44,11 +46,15 @@ import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
  * domain logic into the matching lead/cargo/preset/server-config service.
  */
 public final class SuperLeadPayloads {
-    /** Minimum tick interval between same-type C→S packets from the same player. */
+    /** Minimum tick interval between high-frequency gameplay C→S packets from the same player. */
     private static final int C2S_MIN_INTERVAL_TICKS = 2;
     private static final ConcurrentHashMap<UUID, ConcurrentHashMap<String, Long>> C2S_LAST_TICK = new ConcurrentHashMap<>();
 
     private SuperLeadPayloads() {
+    }
+
+    static void clearRateLimit(ServerPlayer player) {
+        C2S_LAST_TICK.remove(player.getUUID());
     }
 
     /**
@@ -56,7 +62,7 @@ public final class SuperLeadPayloads {
      * the same player sent the same packet type within
      * {@link #C2S_MIN_INTERVAL_TICKS}.
      */
-    private static boolean acceptRateLimit(String packetName, IPayloadContext context) {
+    private static boolean acceptGameplayRateLimit(String packetName, IPayloadContext context) {
         if (!(context.player() instanceof ServerPlayer player))
             return false;
         long now = ((ServerLevel) player.level()).getGameTime();
@@ -82,6 +88,8 @@ public final class SuperLeadPayloads {
                         SuperLeadPayloads::handleRemoveRopeAttachment)
                 .playToServer(ToggleRopeAttachmentForm.TYPE, ToggleRopeAttachmentForm.STREAM_CODEC,
                         SuperLeadPayloads::handleToggleRopeAttachmentForm)
+                .playToServer(ConfigureRopeAttachmentDisplay.TYPE, ConfigureRopeAttachmentDisplay.STREAM_CODEC,
+                    SuperLeadPayloads::handleConfigureRopeAttachmentDisplay)
                 .playToServer(OpenRopeAeTerminal.TYPE, OpenRopeAeTerminal.STREAM_CODEC,
                         SuperLeadPayloads::handleOpenRopeAeTerminal)
                 .playToServer(UpdateRopeAttachmentSignText.TYPE, UpdateRopeAttachmentSignText.STREAM_CODEC,
@@ -235,8 +243,14 @@ public final class SuperLeadPayloads {
 
     public static void sendItemPulse(ServerLevel level, ItemPulse pulse) {
         SuperLeadSavedData.get(level).find(pulse.connectionId()).ifPresent(connection -> {
+            Set<UUID> sent = new HashSet<>();
             for (long chunkKey : SuperLeadSavedData.get(level).chunksForConnection(connection.id())) {
-                PacketDistributor.sendToPlayersTrackingChunk(level, SuperLeadSavedData.chunkFromKey(chunkKey), pulse);
+                ChunkPos chunk = SuperLeadSavedData.chunkFromKey(chunkKey);
+                for (ServerPlayer player : level.getChunkSource().chunkMap.getPlayers(chunk, false)) {
+                    if (sent.add(player.getUUID())) {
+                        PacketDistributor.sendToPlayer(player, pulse);
+                    }
+                }
             }
         });
     }
@@ -246,13 +260,13 @@ public final class SuperLeadPayloads {
     }
 
     private static void handleClientRopeTripWakeRequest(ClientRopeTripWakeRequest payload, IPayloadContext context) {
-        if (!acceptRateLimit("trip_wake", context))
+        if (!acceptGameplayRateLimit("trip_wake", context))
             return;
         runOnServerPlayer(context, RopeTripController::release);
     }
 
     private static void handleStartZipline(StartZipline payload, IPayloadContext context) {
-        if (!acceptRateLimit("zipline", context))
+        if (!acceptGameplayRateLimit("zipline", context))
             return;
         runOnServer(context, (player, level) -> {
             net.minecraft.world.InteractionHand hand = hand(payload.useOffhand());
@@ -270,7 +284,7 @@ public final class SuperLeadPayloads {
     }
 
     private static void handleAddRopeAttachment(AddRopeAttachment payload, IPayloadContext context) {
-        if (!acceptRateLimit("add_attach", context))
+        if (!acceptGameplayRateLimit("add_attach", context))
             return;
         runOnServer(context, (player, level) -> {
             if (!SuperLeadNetwork.canModifyRopes(player))
@@ -303,7 +317,7 @@ public final class SuperLeadPayloads {
     }
 
     private static void handleRemoveRopeAttachment(RemoveRopeAttachment payload, IPayloadContext context) {
-        if (!acceptRateLimit("rm_attach", context))
+        if (!acceptGameplayRateLimit("rm_attach", context))
             return;
         runOnServer(context, (player, level) -> {
             if (!SuperLeadNetwork.canModifyRopes(player))
@@ -341,7 +355,7 @@ public final class SuperLeadPayloads {
     }
 
     private static void handleToggleRopeAttachmentForm(ToggleRopeAttachmentForm payload, IPayloadContext context) {
-        if (!acceptRateLimit("tgl_attach", context))
+        if (!acceptGameplayRateLimit("tgl_attach", context))
             return;
         runOnServer(context, (player, level) -> {
             if (!SuperLeadNetwork.canModifyRopes(player))
@@ -354,8 +368,38 @@ public final class SuperLeadPayloads {
         });
     }
 
+    private static void handleConfigureRopeAttachmentDisplay(ConfigureRopeAttachmentDisplay payload,
+            IPayloadContext context) {
+        if (!acceptGameplayRateLimit("cfg_attach", context))
+            return;
+        runOnServer(context, (player, level) -> {
+            if (!SuperLeadNetwork.canModifyRopes(player))
+                return;
+            if (!player.getMainHandItem().is(SuperLeadItems.ATTACHMENT_TUNER.asItem())
+                    && !player.getOffhandItem().is(SuperLeadItems.ATTACHMENT_TUNER.asItem())) {
+                return;
+            }
+            java.util.Optional<LeadConnection> opt = SuperLeadNetwork.findConnectionById(level, payload.connectionId());
+            if (opt.isEmpty())
+                return;
+            LeadConnection connection = opt.get();
+            if (!SuperLeadNetwork.canTouchConnectionForAttachment(level, player, connection))
+                return;
+            boolean ok = SuperLeadNetwork.setAttachmentDisplay(level,
+                    connection, payload.attachmentId(), payload.mountOverride(),
+                    payload.displayModeOverride(), payload.hangerOverride(), payload.piercedOverride(),
+                    payload.hangOffsetOverride(), payload.mountOffsetOverride(), payload.hangerLengthOverride(),
+                    payload.hangerSpacingOverride(), payload.scaleOverride(), payload.frontSide(),
+                    payload.modelStateOverride());
+            if (ok) {
+                player.sendSystemMessage(net.minecraft.network.chat.Component.translatable(
+                    "message.super_lead.attachment_display_changed"));
+            }
+        });
+    }
+
     private static void handleOpenRopeAeTerminal(OpenRopeAeTerminal payload, IPayloadContext context) {
-        if (!acceptRateLimit("open_ae", context))
+        if (!acceptGameplayRateLimit("open_ae", context))
             return;
         if (!net.neoforged.fml.ModList.get().isLoaded("ae2"))
             return;
@@ -381,7 +425,7 @@ public final class SuperLeadPayloads {
 
     private static void handleUpdateRopeAttachmentSignText(UpdateRopeAttachmentSignText payload,
             IPayloadContext context) {
-        if (!acceptRateLimit("sign_text", context))
+        if (!acceptGameplayRateLimit("sign_text", context))
             return;
         runOnServer(context, (player, level) -> {
             if (!SuperLeadNetwork.canModifyRopes(player))
@@ -397,7 +441,7 @@ public final class SuperLeadPayloads {
 
     private static void handleUpdateSignAttachmentAppearance(UpdateSignAttachmentAppearance payload,
             IPayloadContext context) {
-        if (!acceptRateLimit("sign_appear", context))
+        if (!acceptGameplayRateLimit("sign_appear", context))
             return;
         runOnServer(context, (player, level) -> {
             if (!SuperLeadNetwork.canModifyRopes(player))
@@ -419,7 +463,7 @@ public final class SuperLeadPayloads {
     }
 
     private static void handleUpdateCargoManifestOptions(UpdateCargoManifestOptions payload, IPayloadContext context) {
-        if (!acceptRateLimit("cargo_opt", context))
+        if (!acceptGameplayRateLimit("cargo_opt", context))
             return;
         runOnServerPlayer(context, player -> {
             if (player.containerMenu instanceof CargoManifestMenu menu
@@ -430,7 +474,7 @@ public final class SuperLeadPayloads {
     }
 
     private static void handleUpdateCargoManifestTag(UpdateCargoManifestTag payload, IPayloadContext context) {
-        if (!acceptRateLimit("cargo_tag", context))
+        if (!acceptGameplayRateLimit("cargo_tag", context))
             return;
         runOnServerPlayer(context, player -> {
             if (player.containerMenu instanceof CargoManifestMenu menu
@@ -445,7 +489,7 @@ public final class SuperLeadPayloads {
     }
 
     private static void handleSetCargoManifestGhostSlot(SetCargoManifestGhostSlot payload, IPayloadContext context) {
-        if (!acceptRateLimit("cargo_slot", context))
+        if (!acceptGameplayRateLimit("cargo_slot", context))
             return;
         runOnServerPlayer(context, player -> {
             if (player.containerMenu instanceof CargoManifestMenu menu
@@ -456,7 +500,7 @@ public final class SuperLeadPayloads {
     }
 
     private static void handleUseConnectionAction(UseConnectionAction payload, IPayloadContext context) {
-        if (!acceptRateLimit("use_action", context)) {
+        if (!acceptGameplayRateLimit("use_action", context)) {
             if (SuperLeadEvents.debugPackets) {
                 com.mojang.logging.LogUtils.getLogger().info(
                         "[super_lead DEBUG] handleUseConnectionAction DROP rate-limit connId={} action={}",
@@ -531,14 +575,13 @@ public final class SuperLeadPayloads {
     }
 
     private static void handlePresetPromptResponse(PresetPromptResponse payload, IPayloadContext context) {
-        if (!acceptRateLimit("preset_prompt", context))
-            return;
+        // UI/admin packets are intentionally not gameplay-rate-limited; server-side
+        // permission and validation are authoritative, and dropping these packets makes
+        // screens appear to desync.
         runOnServerPlayer(context, player -> PresetServerManager.handleResponse(player, payload));
     }
 
     private static void handlePresetEditKey(PresetEditKey payload, IPayloadContext context) {
-        if (!acceptRateLimit("preset_edit", context))
-            return;
         runOnServerPlayer(context, player -> {
             net.minecraft.server.MinecraftServer server = player.level().getServer();
             if (server == null)
@@ -548,13 +591,11 @@ public final class SuperLeadPayloads {
     }
 
     private static void handlePresetDetailsRequest(PresetDetailsRequest payload, IPayloadContext context) {
-        if (!acceptRateLimit("preset_det", context))
-            return;
         runOnServerPlayer(context, player -> PresetServerManager.handleDetailsRequest(player, payload.name()));
     }
 
     private static void handlePresetBinderCreate(PresetBinderCreate payload, IPayloadContext context) {
-        if (!acceptRateLimit("preset_create", context))
+        if (!acceptGameplayRateLimit("preset_create", context))
             return;
         runOnServerPlayer(context, player -> {
             net.minecraft.world.InteractionHand hand = hand(payload.useOffhand());
@@ -566,7 +607,7 @@ public final class SuperLeadPayloads {
     }
 
     private static void handlePresetBinderToggleRope(PresetBinderToggleRope payload, IPayloadContext context) {
-        if (!acceptRateLimit("preset_toggle", context))
+        if (!acceptGameplayRateLimit("preset_toggle", context))
             return;
         runOnServerPlayer(context, player -> {
             net.minecraft.world.InteractionHand hand = hand(payload.useOffhand());
@@ -579,7 +620,7 @@ public final class SuperLeadPayloads {
     }
 
     private static void handleBoostRopePerch(BoostRopePerch payload, IPayloadContext context) {
-        if (!acceptRateLimit("boost_perch", context))
+        if (!acceptGameplayRateLimit("boost_perch", context))
             return;
         runOnServerPlayer(context, player -> {
             if (!SuperLeadNetwork.canModifyRopes(player))
@@ -602,20 +643,16 @@ public final class SuperLeadPayloads {
     }
 
     private static void handleZoneSelectionClick(ZoneSelectionClick payload, IPayloadContext context) {
-        if (!acceptRateLimit("zone_click", context))
+        if (!acceptGameplayRateLimit("zone_click", context))
             return;
         runOnServerPlayer(context, player -> PhysicsZoneSelectionManager.handleClick(player, payload.pos()));
     }
 
     private static void handleZoneCreateRequest(ZoneCreateRequest payload, IPayloadContext context) {
-        if (!acceptRateLimit("zone_create", context))
-            return;
         runOnServerPlayer(context, player -> PhysicsZoneSelectionManager.createZone(player, payload));
     }
 
     private static void handleServerQuery(ServerQuery payload, IPayloadContext context) {
-        if (!acceptRateLimit("sv_query", context))
-            return;
         runOnServer(context, (player, level) -> {
             switch (payload.kind()) {
                 case PRESET_LIST -> PresetServerManager.handleListRequest(player);
@@ -632,8 +669,6 @@ public final class SuperLeadPayloads {
     }
 
     private static void handleServerConfigSet(ServerConfigSet payload, IPayloadContext context) {
-        if (!acceptRateLimit("sv_cfg", context))
-            return;
         runOnServerPlayer(context, player -> ServerConfigManager.handleSet(player, payload));
     }
 

@@ -12,7 +12,7 @@ public record ItemPulse(UUID connectionId, boolean reverse, long startTick, int 
     public static final CustomPacketPayload.Type<ItemPulse> TYPE = new CustomPacketPayload.Type<>(
             Identifier.fromNamespaceAndPath(Super_lead.MODID, "item_pulse"));
     public static final StreamCodec<RegistryFriendlyByteBuf, ItemPulse> STREAM_CODEC = CustomPacketPayload
-            .codec(ItemPulse::write, ItemPulse::read);
+            .codec((payload, buf) -> payload.write(buf), ItemPulse::read);
 
     @Override
     public Type<? extends CustomPacketPayload> type() {

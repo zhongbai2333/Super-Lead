@@ -4,6 +4,7 @@ import static com.zhongbai233.super_lead.lead.RopeContactGeometry.*;
 import static com.zhongbai233.super_lead.lead.ServerPhysicsTuning.loadServerPhysicsTuning;
 
 import com.zhongbai233.super_lead.Config;
+import com.zhongbai233.super_lead.lead.physics.RopeSagModel;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -204,20 +205,48 @@ public final class RopeContactTracker {
         float dx;
         float dy;
         float dz;
+        double maxVisualDeflect = maxVisualDeflection(report.slack(), tuning);
         if (footSupportContact) {
-            visualMag = Math.min(Math.max(contact.depth(), radius), VISUAL_MAX_DEFLECT);
+            visualMag = Math.min(Math.max(contact.depth(), radius), maxVisualDeflect);
             dx = 0.0F;
             dy = (float) -visualMag;
             dz = 0.0F;
         } else {
-            visualMag = Math.min(Math.max(contact.depth(), radius), VISUAL_MAX_DEFLECT);
+            visualMag = Math.min(Math.max(contact.depth(), radius), maxVisualDeflect);
             Vec3 n = contact.normal();
-            dx = (float) (-n.x * visualMag);
-            dy = (float) (-n.y * visualMag);
-            dz = (float) (-n.z * visualMag);
+            Vec3 visualNormal = perpendicularToTangent(n,
+                    report.tangentX(), report.tangentY(), report.tangentZ());
+            dx = (float) (-visualNormal.x * visualMag);
+            dy = (float) (-visualNormal.y * visualMag);
+            dz = (float) (-visualNormal.z * visualMag);
         }
         dimContacts.put(key, new AcceptedClientContact(connection.id(), player.getUUID(), now,
                 (float) contact.t(), dx, dy, dz, push));
+    }
+
+    private static double maxVisualDeflection(double contactSlack, ServerPhysicsTuning tuning) {
+        double slack = Double.isFinite(contactSlack) ? Math.max(0.0D, contactSlack) : 0.0D;
+        double flexible = 1.0D - RopeSagModel.tautProjectionWeight(tuning.slack());
+        double slackLimited = Math.max(0.015D, slack * 0.85D + tuning.ropeRadius() * 0.50D);
+        double tensionLimited = VISUAL_MAX_DEFLECT * (0.15D + 0.85D * flexible);
+        return Math.max(0.015D, Math.min(VISUAL_MAX_DEFLECT, Math.min(slackLimited, tensionLimited)));
+    }
+
+    private static Vec3 perpendicularToTangent(Vec3 normal, double tangentX, double tangentY, double tangentZ) {
+        double tLenSqr = tangentX * tangentX + tangentY * tangentY + tangentZ * tangentZ;
+        if (tLenSqr <= 1.0e-10D) {
+            return normal;
+        }
+        double invTLen = 1.0D / Math.sqrt(tLenSqr);
+        double tx = tangentX * invTLen;
+        double ty = tangentY * invTLen;
+        double tz = tangentZ * invTLen;
+        double along = normal.x * tx + normal.y * ty + normal.z * tz;
+        double nx = normal.x - tx * along;
+        double ny = normal.y - ty * along;
+        double nz = normal.z - tz * along;
+        Vec3 projected = normalize(nx, ny, nz);
+        return projected == null ? normal : projected;
     }
 
     private static void tickInternal(ServerLevel level) {
@@ -231,16 +260,26 @@ public final class RopeContactTracker {
                 CLIENT_CONTACT_LAST_ACCEPTED.remove(dim);
             }
         }
-        List<RopeContactPulse.Entry> pulse = new ArrayList<>();
-        if (contacts != null) {
-            contacts.entrySet().removeIf(e -> now - e.getValue().tick() > CLIENT_CONTACT_TTL_TICKS);
-            for (AcceptedClientContact c : contacts.values()) {
-                pulse.add(new RopeContactPulse.Entry(c.ropeId(), c.playerId(), c.t(), c.dx(), c.dy(), c.dz(),
-                        c.push().x(), c.push().z(), c.push().mag()));
+        if (contacts == null || contacts.isEmpty()) {
+            if (LAST_SENT_COUNT.getOrDefault(dim, 0) > 0) {
+                broadcast(level, List.of());
             }
-            if (contacts.isEmpty()) {
-                CLIENT_CONTACTS.remove(dim);
-            }
+            lastContacts = 0;
+            return;
+        }
+
+        contacts.entrySet().removeIf(e -> now - e.getValue().tick() > CLIENT_CONTACT_TTL_TICKS);
+        if (contacts.isEmpty()) {
+            CLIENT_CONTACTS.remove(dim);
+            broadcast(level, List.of());
+            lastContacts = 0;
+            return;
+        }
+
+        List<RopeContactPulse.Entry> pulse = new ArrayList<>(contacts.size());
+        for (AcceptedClientContact c : contacts.values()) {
+            pulse.add(new RopeContactPulse.Entry(c.ropeId(), c.playerId(), c.t(), c.dx(), c.dy(), c.dz(),
+                    c.push().x(), c.push().z(), c.push().mag()));
         }
         broadcast(level, pulse);
         lastContacts = pulse.size();

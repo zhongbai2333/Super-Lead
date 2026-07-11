@@ -11,7 +11,7 @@ public record ToggleRopeAttachmentForm(UUID connectionId, UUID attachmentId) imp
     public static final CustomPacketPayload.Type<ToggleRopeAttachmentForm> TYPE = new CustomPacketPayload.Type<>(
             Identifier.fromNamespaceAndPath(Super_lead.MODID, "toggle_rope_attachment_form"));
     public static final StreamCodec<RegistryFriendlyByteBuf, ToggleRopeAttachmentForm> STREAM_CODEC = CustomPacketPayload
-            .codec(ToggleRopeAttachmentForm::write, ToggleRopeAttachmentForm::read);
+            .codec((payload, buf) -> payload.write(buf), ToggleRopeAttachmentForm::read);
 
     @Override
     public Type<? extends CustomPacketPayload> type() {

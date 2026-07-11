@@ -11,7 +11,7 @@ public record UpdateCargoManifestOptions(int containerId, boolean whitelist, boo
     public static final Type<UpdateCargoManifestOptions> TYPE = new Type<>(
             Identifier.fromNamespaceAndPath(Super_lead.MODID, "update_cargo_manifest_options"));
     public static final StreamCodec<RegistryFriendlyByteBuf, UpdateCargoManifestOptions> STREAM_CODEC = CustomPacketPayload
-            .codec(UpdateCargoManifestOptions::write, UpdateCargoManifestOptions::read);
+            .codec((payload, buf) -> payload.write(buf), UpdateCargoManifestOptions::read);
 
     @Override
     public Type<? extends CustomPacketPayload> type() {

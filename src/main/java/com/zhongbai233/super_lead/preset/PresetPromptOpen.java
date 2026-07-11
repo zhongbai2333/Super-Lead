@@ -11,7 +11,7 @@ public record PresetPromptOpen(String presetName, Map<String, String> overrides)
     public static final CustomPacketPayload.Type<PresetPromptOpen> TYPE = new CustomPacketPayload.Type<>(
             Identifier.fromNamespaceAndPath(Super_lead.MODID, "preset_prompt_open"));
     public static final StreamCodec<RegistryFriendlyByteBuf, PresetPromptOpen> STREAM_CODEC = CustomPacketPayload
-            .codec(PresetPromptOpen::write, PresetPromptOpen::read);
+            .codec((payload, buf) -> payload.write(buf), PresetPromptOpen::read);
 
     public PresetPromptOpen {
         overrides = PresetPayloadCodecs.immutableCopy(overrides);

@@ -11,7 +11,7 @@ public record PresetApplyOverrides(String presetName, Map<String, String> overri
     public static final CustomPacketPayload.Type<PresetApplyOverrides> TYPE = new CustomPacketPayload.Type<>(
             Identifier.fromNamespaceAndPath(Super_lead.MODID, "preset_apply_overrides"));
     public static final StreamCodec<RegistryFriendlyByteBuf, PresetApplyOverrides> STREAM_CODEC = CustomPacketPayload
-            .codec(PresetApplyOverrides::write, PresetApplyOverrides::read);
+            .codec((payload, buf) -> payload.write(buf), PresetApplyOverrides::read);
 
     public PresetApplyOverrides {
         overrides = PresetPayloadCodecs.immutableCopy(overrides);

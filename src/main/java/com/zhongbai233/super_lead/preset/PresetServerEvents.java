@@ -1,5 +1,6 @@
 package com.zhongbai233.super_lead.preset;
 
+import com.zhongbai233.super_lead.Config;
 import com.zhongbai233.super_lead.Super_lead;
 import net.minecraft.server.level.ServerPlayer;
 import net.neoforged.bus.api.SubscribeEvent;
@@ -22,6 +23,7 @@ public final class PresetServerEvents {
     @SubscribeEvent
     public static void onLogout(PlayerEvent.PlayerLoggedOutEvent event) {
         if (event.getEntity() instanceof ServerPlayer player) {
+            Config.flushRuntimeSave();
             PhysicsZoneSelectionManager.clear(player);
             PresetServerManager.onLogout(player);
         }
@@ -37,6 +39,7 @@ public final class PresetServerEvents {
 
     @SubscribeEvent
     public static void onServerTick(ServerTickEvent.Post event) {
+        Config.tickRuntimeSave();
         PresetServerManager.tickPlayerZones(event.getServer());
     }
 }

@@ -3,6 +3,7 @@ package com.zhongbai233.super_lead.lead.client.render;
 import com.zhongbai233.super_lead.lead.LeadConnection;
 import com.zhongbai233.super_lead.lead.LeadEndpointLayout;
 import com.zhongbai233.super_lead.lead.RopeAttachment;
+import com.zhongbai233.super_lead.lead.client.chunk.StaticRopeChunkRegistry;
 import com.zhongbai233.super_lead.lead.client.sim.RopeSimulation;
 import com.zhongbai233.super_lead.lead.client.sim.RopeTuning;
 import com.zhongbai233.super_lead.lead.physics.RopeSagModel;
@@ -172,7 +173,11 @@ public final class RopeDynamicLights {
             Vec3 pa = RopeSagModel.point(a, b, ta, tuning.slack(), tuning.gravity(), fallback);
             Vec3 pb = RopeSagModel.point(a, b, tb, tuning.slack(), tuning.gravity(), fallback);
             Vec3 light = attachmentLightPosition(level, attachment.stack(), attachment.displayAsBlock(),
-                    attachment.frontSide(), p.x, p.y, p.z, pa.x, pa.y, pa.z, pb.x, pb.y, pb.z);
+                    attachment.frontSide(), p.x, p.y, p.z, pa.x, pa.y, pa.z, pb.x, pb.y, pb.z,
+                    attachment.mountOverride(), attachment.displayModeOverride(),
+                    attachment.hangerOverride(), attachment.piercedOverride(), attachment.hangOffsetOverride(),
+                    attachment.mountOffsetOverride(), attachment.hangerLengthOverride(), attachment.hangerSpacingOverride(),
+                    attachment.scaleOverride(), attachment.modelStateOverride());
             addLight(level, cameraPos, attachment.stack(), redstonePowered,
                     light.x, light.y, light.z, desired);
         }
@@ -195,14 +200,21 @@ public final class RopeDynamicLights {
         double py = ay + (by - ay) * frac;
         double pz = az + (bz - az) * frac;
         Vec3 light = attachmentLightPosition(level, attachment.stack(), attachment.displayAsBlock(),
-                attachment.frontSide(), px, py, pz, ax, ay, az, bx, by, bz);
+            attachment.frontSide(), px, py, pz, ax, ay, az, bx, by, bz,
+            attachment.mountOverride(), attachment.displayModeOverride(), attachment.hangerOverride(),
+            attachment.piercedOverride(), attachment.hangOffsetOverride(), attachment.mountOffsetOverride(),
+            attachment.hangerLengthOverride(), attachment.hangerSpacingOverride(), attachment.scaleOverride(),
+            attachment.modelStateOverride());
         addLight(level, cameraPos, attachment.stack(), redstonePowered,
                 light.x, light.y, light.z, desired);
     }
 
     private static void addLight(ClientLevel level, Vec3 cameraPos, ItemStack stack, boolean redstonePowered,
             double x, double y, double z, Map<BlockPos, Source> desired) {
-        if (stack.isEmpty() || new Vec3(x, y, z).distanceToSqr(cameraPos) > SOURCE_RENDER_DISTANCE_SQR) {
+        double dx = x - cameraPos.x;
+        double dy = y - cameraPos.y;
+        double dz = z - cameraPos.z;
+        if (stack.isEmpty() || dx * dx + dy * dy + dz * dz > SOURCE_RENDER_DISTANCE_SQR) {
             return;
         }
         BlockPos pos = lightSourcePos(level, x, y, z);
@@ -241,7 +253,28 @@ public final class RopeDynamicLights {
             double ax, double ay, double az,
             double bx, double by, double bz) {
         return RopeAttachmentRenderer.attachmentBodyCenter(level, stack, displayAsBlock, frontSide,
-                px, py, pz, ax, ay, az, bx, by, bz);
+            px, py, pz, ax, ay, az, bx, by, bz);
+    }
+
+    public static Vec3 attachmentLightPosition(ClientLevel level, ItemStack stack, boolean displayAsBlock,
+            int frontSide,
+            double px, double py, double pz,
+            double ax, double ay, double az,
+            double bx, double by, double bz,
+            int mountOverride,
+            int displayModeOverride,
+            int hangerOverride,
+            int piercedOverride,
+            double hangOffsetOverride,
+            double mountOffsetOverride,
+            double hangerLengthOverride,
+            double hangerSpacingOverride,
+            double scaleOverride,
+            java.util.Map<String, String> modelStateOverride) {
+        return RopeAttachmentRenderer.attachmentBodyCenter(level, stack, displayAsBlock, frontSide,
+            px, py, pz, ax, ay, az, bx, by, bz, mountOverride, displayModeOverride,
+                hangerOverride, piercedOverride, hangOffsetOverride, mountOffsetOverride, hangerLengthOverride,
+                hangerSpacingOverride, scaleOverride, modelStateOverride);
     }
 
     private static void apply(ClientLevel level, Map<BlockPos, Source> desired) {
@@ -255,7 +288,7 @@ public final class RopeDynamicLights {
             }
             ACTIVE.put(entry.getKey(), next);
         }
-        for (BlockPos old : List.copyOf(ACTIVE.keySet())) {
+        for (BlockPos old : ACTIVE.keySet()) {
             if (!desired.containsKey(old)) {
                 ACTIVE.remove(old);
                 dirty.add(old);
@@ -286,12 +319,16 @@ public final class RopeDynamicLights {
     private static void markDirty(ClientLevel level, Iterable<BlockPos> positions) {
         if (level == null || positions == null)
             return;
+        List<BlockPos> changed = copyPositions(positions);
+        if (changed.isEmpty())
+            return;
+        StaticRopeChunkRegistry.get().requestLightRebuildNear(level, changed, DIRTY_BLOCK_RADIUS);
         Minecraft mc = Minecraft.getInstance();
         LevelRenderer renderer = mc == null ? null : mc.levelRenderer;
         if (renderer == null)
             return;
 
-        for (BlockPos pos : positions) {
+        for (BlockPos pos : changed) {
             try {
                 renderer.setBlocksDirty(
                         pos.getX() - DIRTY_BLOCK_RADIUS,
@@ -304,6 +341,16 @@ public final class RopeDynamicLights {
                 // The renderer can be between level/view-area lifetimes while disconnecting.
             }
         }
+    }
+
+    private static List<BlockPos> copyPositions(Iterable<BlockPos> positions) {
+        java.util.ArrayList<BlockPos> out = new java.util.ArrayList<>();
+        for (BlockPos pos : positions) {
+            if (pos != null) {
+                out.add(pos);
+            }
+        }
+        return out;
     }
 
     private static int locateSegment(RopeSimulation sim, int nodeCount, double target) {

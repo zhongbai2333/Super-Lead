@@ -8,6 +8,7 @@ import com.zhongbai233.super_lead.lead.SuperLeadNetwork;
 import com.zhongbai233.super_lead.lead.SuperLeadPayloads;
 import com.zhongbai233.super_lead.lead.SuperLeadSavedData;
 import com.zhongbai233.super_lead.lead.cargo.SuperLeadDataComponents;
+import com.zhongbai233.super_lead.permissions.SuperLeadPermissions;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -25,8 +26,6 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraft.server.permissions.Permission;
-import net.minecraft.server.permissions.PermissionLevel;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
@@ -47,11 +46,41 @@ import org.slf4j.Logger;
  */
 public final class PresetServerManager {
     private static final Logger LOG = LogUtils.getLogger();
-    private static final Permission.HasCommandLevel OP = new Permission.HasCommandLevel(PermissionLevel.GAMEMASTERS);
-    private static final Permission.HasCommandLevel OP4 = new Permission.HasCommandLevel(PermissionLevel.OWNERS);
     private static final Pattern PLAYER_PRESET_BASE = Pattern.compile("^[A-Za-z0-9_\\-]{1,23}$");
 
     private PresetServerManager() {
+    }
+
+    public record PresetDeleteResult(boolean deleted, DeleteFailure failure, String detail) {
+        public static PresetDeleteResult success() {
+            return new PresetDeleteResult(true, DeleteFailure.NONE, "");
+        }
+
+        public static PresetDeleteResult fail(DeleteFailure failure, String detail) {
+            return new PresetDeleteResult(false, failure, detail == null ? "" : detail);
+        }
+
+        public String message(String presetName) {
+            return switch (failure) {
+                case NONE -> "Deleted preset '" + presetName + "'.";
+                case DISABLED -> "Preset management is disabled on this server.";
+                case INVALID_NAME -> "Invalid preset name: '" + presetName + "'.";
+                case NOT_FOUND -> "No preset named '" + presetName + "'.";
+                case NO_PERMISSION -> "Missing permission to delete preset '" + presetName + "'.";
+                case IN_USE -> "Preset '" + presetName + "' is still used by " + detail + ".";
+                case SAVE_FAILED -> "Could not delete preset '" + presetName + "' from disk.";
+            };
+        }
+    }
+
+    public enum DeleteFailure {
+        NONE,
+        DISABLED,
+        INVALID_NAME,
+        NOT_FOUND,
+        NO_PERMISSION,
+        IN_USE,
+        SAVE_FAILED
     }
 
     public static RopePresetLibrary library(MinecraftServer server) {
@@ -61,20 +90,20 @@ public final class PresetServerManager {
     public static boolean canManage(ServerPlayer player) {
         return player != null
                 && Config.allowOpVisualPresets()
-                && player.permissions().hasPermission(OP);
+                && SuperLeadPermissions.canManage(player);
     }
 
     public static boolean canManageGlobalPresets(ServerPlayer player) {
         return player != null
                 && Config.allowOpVisualPresets()
-                && player.permissions().hasPermission(OP4);
+                && SuperLeadPermissions.canAdmin(player);
     }
 
     public static boolean canEditPreset(ServerPlayer player, String presetName) {
         if (player == null || !Config.allowOpVisualPresets() || !RopePresetLibrary.isValidName(presetName)) {
             return false;
         }
-        if (player.permissions().hasPermission(OP)) {
+        if (SuperLeadPermissions.canEditPreset(player)) {
             return true;
         }
         MinecraftServer server = player.level().getServer();
@@ -207,7 +236,7 @@ public final class PresetServerManager {
         RopePresetLibrary lib = library(level.getServer());
         for (PhysicsZone z : zones) {
             Map<String, String> overrides = lib.load(z.presetName())
-                    .map(RopePreset::overrides)
+                .map(preset -> preset.overrides())
                     .orElse(Map.of());
             entries.add(SyncPhysicsZones.Entry.of(z, overrides));
         }
@@ -417,8 +446,7 @@ public final class PresetServerManager {
             return false;
         RopePresetLibrary lib = library(server);
         Optional<RopePreset> existing = lib.load(edit.presetName());
-        boolean op = player.permissions().hasPermission(OP);
-        if (existing.isEmpty() && !op)
+        if (existing.isEmpty() && !SuperLeadPermissions.canEditPreset(player))
             return false;
         RopePreset preset = existing.orElseGet(() -> new RopePreset(edit.presetName(), Map.of()));
         RopePreset updated = edit.clear()
@@ -571,7 +599,35 @@ public final class PresetServerManager {
         MinecraftServer server = player.level().getServer();
         if (server == null)
             return;
-        PacketDistributor.sendToPlayer(player, new PresetListResponse(library(server).list()));
+        RopePresetLibrary lib = library(server);
+        List<PresetListResponse.Entry> entries = lib.list().stream()
+                .map(name -> presetListEntry(server, player, lib, name))
+                .toList();
+        PacketDistributor.sendToPlayer(player, new PresetListResponse(entries));
+    }
+
+    private static PresetListResponse.Entry presetListEntry(MinecraftServer server, ServerPlayer player,
+            RopePresetLibrary lib, String name) {
+        Optional<RopePreset> preset = lib.load(name);
+        UUID owner = preset.map(p -> p.owner()).orElse(null);
+        boolean owned = preset.map(p -> p.ownedBy(player.getUUID())).orElse(false);
+        boolean canEdit = canEditPreset(player, name);
+        boolean canDelete = preset.isPresent()
+                && (SuperLeadPermissions.canDeletePreset(player) || owned)
+                && zoneUseCount(server, name) == 0;
+        return PresetListResponse.Entry.of(name, owner, owned, canEdit, canDelete, zoneUseCount(server, name));
+    }
+
+    private static int zoneUseCount(MinecraftServer server, String presetName) {
+        int count = 0;
+        for (ServerLevel level : server.getAllLevels()) {
+            for (PhysicsZone zone : PhysicsZoneSavedData.get(level).zones()) {
+                if (zone.presetName().equals(presetName)) {
+                    count++;
+                }
+            }
+        }
+        return count;
     }
 
     public static void exportPresets(ServerPlayer player) {
@@ -651,20 +707,58 @@ public final class PresetServerManager {
      * drop.
      */
     public static boolean deletePreset(MinecraftServer server, String name) {
+        return deletePresetDetailed(server, name).deleted();
+    }
+
+    public static PresetDeleteResult deletePresetDetailed(MinecraftServer server, String name) {
+        if (!Config.allowOpVisualPresets())
+            return PresetDeleteResult.fail(DeleteFailure.DISABLED, "");
+        if (!RopePresetLibrary.isValidName(name))
+            return PresetDeleteResult.fail(DeleteFailure.INVALID_NAME, "");
+        if (library(server).load(name).isEmpty())
+            return PresetDeleteResult.fail(DeleteFailure.NOT_FOUND, "");
         for (ServerLevel level : server.getAllLevels()) {
             for (PhysicsZone z : PhysicsZoneSavedData.get(level).zones()) {
                 if (z.presetName().equals(name)) {
                     LOG.info("[super_lead] preset delete refused: zone '{}' in dim {} still uses '{}'.",
                             z.name(), level.dimension(), name);
-                    return false;
+                    return PresetDeleteResult.fail(DeleteFailure.IN_USE,
+                            "zone '" + z.name() + "' in " + level.dimension());
                 }
             }
         }
         boolean deleted = library(server).delete(name);
         if (deleted) {
             refreshAllLoadedDimensions(server);
+            return PresetDeleteResult.success();
         }
-        return deleted;
+        return PresetDeleteResult.fail(DeleteFailure.SAVE_FAILED, "");
+    }
+
+    public static boolean deletePreset(MinecraftServer server, ServerPlayer player, String name) {
+        return deletePresetDetailed(server, player, name).deleted();
+    }
+
+    public static PresetDeleteResult deletePresetDetailed(MinecraftServer server, ServerPlayer player, String name) {
+        if (player == null || !Config.allowOpVisualPresets() || !RopePresetLibrary.isValidName(name)) {
+            if (player == null) {
+                return PresetDeleteResult.fail(DeleteFailure.NO_PERMISSION, "");
+            }
+            if (!Config.allowOpVisualPresets()) {
+                return PresetDeleteResult.fail(DeleteFailure.DISABLED, "");
+            }
+            return PresetDeleteResult.fail(DeleteFailure.INVALID_NAME, "");
+        }
+        Optional<RopePreset> preset = library(server).load(name);
+        if (preset.isEmpty()) {
+            return PresetDeleteResult.fail(DeleteFailure.NOT_FOUND, "");
+        }
+        boolean mayDelete = SuperLeadPermissions.canDeletePreset(player)
+                || preset.get().ownedBy(player.getUUID());
+        if (!mayDelete) {
+            return PresetDeleteResult.fail(DeleteFailure.NO_PERMISSION, "");
+        }
+        return deletePresetDetailed(server, name);
     }
 
     /**

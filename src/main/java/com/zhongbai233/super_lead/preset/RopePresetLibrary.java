@@ -4,6 +4,7 @@ import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonObject;
 import com.mojang.logging.LogUtils;
+import com.zhongbai233.super_lead.lead.ServerPhysicsTuning;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -147,6 +148,7 @@ public final class RopePresetLibrary {
             }
             root.add("overrides", ov);
             Files.writeString(p, GSON.toJson(root), StandardCharsets.UTF_8);
+            ServerPhysicsTuning.clearCache();
             return true;
         } catch (IOException | RuntimeException e) {
             LOG.warn("[super_lead] cannot save preset {}: {}", preset.name(), e.toString());
@@ -159,7 +161,11 @@ public final class RopePresetLibrary {
             return false;
         Path p = dir.resolve(name + ".json");
         try {
-            return Files.deleteIfExists(p);
+            boolean deleted = Files.deleteIfExists(p);
+            if (deleted) {
+                ServerPhysicsTuning.clearCache();
+            }
+            return deleted;
         } catch (IOException e) {
             LOG.warn("[super_lead] cannot delete preset {}: {}", name, e.toString());
             return false;
@@ -203,6 +209,9 @@ public final class RopePresetLibrary {
         } catch (IOException e) {
             LOG.warn("[super_lead] cannot import presets from {}: {}", sourceDir, e.toString());
             return -1;
+        }
+        if (imported > 0) {
+            ServerPhysicsTuning.clearCache();
         }
         return imported;
     }

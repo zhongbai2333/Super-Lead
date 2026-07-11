@@ -26,6 +26,18 @@ public final class RopeSagModel {
         return targetLength(a, b, slack, gravity) / chord;
     }
 
+    public static double slackFactor(double dx, double dy, double dz, double slack, double gravity) {
+        double chord = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        if (chord < EPS) {
+            return 1.0D;
+        }
+        if (Math.abs(gravity) < EPS) {
+            return 1.0D;
+        }
+        double horizontalRatio = Math.hypot(dx, dz) / chord;
+        return Math.max(0.0D, effectiveSlack(horizontalRatio, slack));
+    }
+
     public static double targetLength(Vec3 a, Vec3 b, double slack, double gravity) {
         double chord = a.distanceTo(b);
         if (chord < EPS || Math.abs(gravity) < EPS) {
@@ -36,6 +48,10 @@ public final class RopeSagModel {
 
     public static double physicsTargetLength(Vec3 a, Vec3 b, double slack, double gravity) {
         double chord = a.distanceTo(b);
+        return physicsTargetLength(chord, slack, gravity);
+    }
+
+    public static double physicsTargetLength(double chord, double slack, double gravity) {
         if (chord < EPS) {
             return Math.max(0.0D, chord);
         }
@@ -246,11 +262,15 @@ public final class RopeSagModel {
     }
 
     private static double effectiveSlack(Vec3 a, Vec3 b, double chord, double slack, double gravity) {
-        double requestedSlack = lengthFactor(slack);
         if (chord < EPS || Math.abs(gravity) < EPS) {
             return 1.0D;
         }
         double horizontalRatio = Math.hypot(b.x - a.x, b.z - a.z) / chord;
+        return effectiveSlack(horizontalRatio, slack);
+    }
+
+    private static double effectiveSlack(double horizontalRatio, double slack) {
+        double requestedSlack = lengthFactor(slack);
         double weight = (horizontalRatio - STEEP_LOCK_HORIZONTAL_RATIO)
                 / (FULL_SLACK_HORIZONTAL_RATIO - STEEP_LOCK_HORIZONTAL_RATIO);
         weight = smoothstep(clamp01(weight));

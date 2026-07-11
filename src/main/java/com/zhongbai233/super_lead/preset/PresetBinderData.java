@@ -11,13 +11,13 @@ import net.minecraft.network.codec.StreamCodec;
 /** Item-stack binding between a preset binder tool and one stored preset. */
 public record PresetBinderData(String presetName, UUID owner) {
     public static final Codec<PresetBinderData> CODEC = RecordCodecBuilder.create(instance -> instance.group(
-            Codec.STRING.fieldOf("presetName").forGetter(PresetBinderData::presetName),
-            UUIDUtil.CODEC.fieldOf("owner").forGetter(PresetBinderData::owner))
+            Codec.STRING.fieldOf("presetName").forGetter(data -> data.presetName()),
+            UUIDUtil.CODEC.fieldOf("owner").forGetter(data -> data.owner()))
             .apply(instance, PresetBinderData::new));
 
     public static final StreamCodec<RegistryFriendlyByteBuf, PresetBinderData> STREAM_CODEC = StreamCodec.composite(
-            ByteBufCodecs.STRING_UTF8, PresetBinderData::presetName,
-            UUIDUtil.STREAM_CODEC, PresetBinderData::owner,
+            ByteBufCodecs.STRING_UTF8, data -> data.presetName(),
+            UUIDUtil.STREAM_CODEC, data -> data.owner(),
             PresetBinderData::new);
 
     public PresetBinderData {

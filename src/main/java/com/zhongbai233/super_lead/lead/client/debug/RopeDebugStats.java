@@ -6,12 +6,14 @@ public final class RopeDebugStats {
     public static volatile int simEntries;
     public static volatile int renderEntries;
     public static volatile int chunkMeshClaimed;
+    public static volatile int chunkMeshAcceptedConnections;
     public static volatile int dynamicJobs;
     public static volatile int simCount;
     public static volatile int dynamicNodesTotal;
     public static volatile int chunkMeshNodesTotal;
     public static volatile int totalRenderNodes;
     public static volatile int chunkMeshSections;
+    public static volatile int chunkMeshAcceptedSections;
     public static volatile int chunkMeshSnapshots;
     public static volatile int attachmentsTotal;
     public static volatile int chunkMeshEligible;
@@ -21,6 +23,13 @@ public final class RopeDebugStats {
     public static volatile int chunkMeshClaimedFromSim;
     public static volatile int chunkMeshClaimedAnchorBake;
     public static volatile int chunkMeshMissingAnchors;
+    public static volatile int visibilityFarRetests;
+    public static volatile int visibilityFarDeferred;
+    public static volatile int meshDirtyQueue;
+    public static volatile int meshDirtyFlushed;
+    public static volatile int neighborCandidates;
+    public static volatile int neighborNarrowPhase;
+    public static volatile boolean neighborBuildTruncated;
 
     public static volatile int bakeCacheHits;
     public static volatile int bakeCacheMisses;
@@ -38,12 +47,14 @@ public final class RopeDebugStats {
         simEntries = 0;
         renderEntries = 0;
         chunkMeshClaimed = 0;
+        chunkMeshAcceptedConnections = 0;
         dynamicJobs = 0;
         simCount = 0;
         dynamicNodesTotal = 0;
         chunkMeshNodesTotal = 0;
         totalRenderNodes = 0;
         chunkMeshSections = 0;
+        chunkMeshAcceptedSections = 0;
         chunkMeshSnapshots = 0;
         attachmentsTotal = 0;
         chunkMeshEligible = 0;
@@ -53,6 +64,13 @@ public final class RopeDebugStats {
         chunkMeshClaimedFromSim = 0;
         chunkMeshClaimedAnchorBake = 0;
         chunkMeshMissingAnchors = 0;
+        visibilityFarRetests = 0;
+        visibilityFarDeferred = 0;
+        meshDirtyQueue = 0;
+        meshDirtyFlushed = 0;
+        neighborCandidates = 0;
+        neighborNarrowPhase = 0;
+        neighborBuildTruncated = false;
         bakeCacheHits = 0;
         bakeCacheMisses = 0;
         verticesEmitted = 0;

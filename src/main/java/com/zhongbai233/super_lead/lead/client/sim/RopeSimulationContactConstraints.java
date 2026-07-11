@@ -30,17 +30,19 @@ abstract class RopeSimulationContactConstraints extends RopeSimulationTerrainCon
     // ============================================================================================
     // Constraint: distance (XPBD)
     // ============================================================================================
-    protected void solveDistanceConstraints(double targetLen, double alphaTilde, boolean forward) {
+    protected double solveDistanceConstraints(double targetLen, double alphaTilde, boolean forward) {
+        double maxAbsError = 0.0D;
         if (forward) {
             for (int i = 0; i < segments; i++)
-                solveDistance(i, targetLen, alphaTilde);
+                maxAbsError = Math.max(maxAbsError, solveDistance(i, targetLen, alphaTilde));
         } else {
             for (int i = segments - 1; i >= 0; i--)
-                solveDistance(i, targetLen, alphaTilde);
+                maxAbsError = Math.max(maxAbsError, solveDistance(i, targetLen, alphaTilde));
         }
+        return maxAbsError;
     }
 
-    private void solveDistance(int seg, double targetLen, double alphaTilde) {
+    private double solveDistance(int seg, double targetLen, double alphaTilde) {
         int i = seg;
         int j = seg + 1;
         double dx = x[j] - x[i];
@@ -48,12 +50,12 @@ abstract class RopeSimulationContactConstraints extends RopeSimulationTerrainCon
         double dz = z[j] - z[i];
         double len = Math.sqrt(dx * dx + dy * dy + dz * dz);
         if (len < 1e-9)
-            return;
+            return 0.0D;
         double w1 = pinned[i] ? 0.0D : 1.0D;
         double w2 = pinned[j] ? 0.0D : 1.0D;
         double wsum = w1 + w2;
         if (wsum == 0.0D)
-            return;
+            return 0.0D;
         double C = len - targetLen;
         double dlambda = (-C - alphaTilde * lambdaDistance[seg]) / (wsum + alphaTilde);
         lambdaDistance[seg] += dlambda;
@@ -61,6 +63,7 @@ abstract class RopeSimulationContactConstraints extends RopeSimulationTerrainCon
         double cx = nx * dlambda, cy = ny * dlambda, cz = nz * dlambda;
         applyCorrection(i, -cx * w1, -cy * w1, -cz * w1);
         applyCorrection(j, cx * w2, cy * w2, cz * w2);
+        return Math.abs(C);
     }
 
     // ============================================================================================
@@ -204,6 +207,9 @@ abstract class RopeSimulationContactConstraints extends RopeSimulationTerrainCon
         if (!resolveEntityPush(a, b, box, contact, verticality, footSupportContact, radius, entityPush)) {
             return;
         }
+        if (!footSupportContact && !removeSegmentTangentPush(contact, entityPush)) {
+            return;
+        }
         entityPush.length *= entityVolumeScale;
         if (entityPush.length <= 1.0e-6D) {
             return;
@@ -232,6 +238,30 @@ abstract class RopeSimulationContactConstraints extends RopeSimulationTerrainCon
             applyTerrainCorrection(b, entityPush.nx * kb * horizontalPushScale, entityPush.ny * kb,
                     entityPush.nz * kb * horizontalPushScale);
         }
+    }
+
+    private static boolean removeSegmentTangentPush(SegmentBoxContact contact, EntityPush push) {
+        if (contact.segLenSqr <= 1.0e-12D) {
+            return true;
+        }
+        double invLen = 1.0D / Math.sqrt(contact.segLenSqr);
+        double tx = contact.ux * invLen;
+        double ty = contact.uy * invLen;
+        double tz = contact.uz * invLen;
+        double along = push.nx * tx + push.ny * ty + push.nz * tz;
+        push.nx -= tx * along;
+        push.ny -= ty * along;
+        push.nz -= tz * along;
+        double len = Math.sqrt(push.nx * push.nx + push.ny * push.ny + push.nz * push.nz);
+        if (len <= 1.0e-5D) {
+            return false;
+        }
+        double inv = 1.0D / len;
+        push.nx *= inv;
+        push.ny *= inv;
+        push.nz *= inv;
+        push.length *= len;
+        return true;
     }
 
     private boolean resolveEntityPush(int a, int b, AABB box, SegmentBoxContact contact,

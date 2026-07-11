@@ -25,21 +25,22 @@ public record LeadConnection(UUID id, LeadAnchor from, LeadAnchor to, LeadKind k
     public static final int MAX_LENGTH_UNITS = 4;
 
     public static final Codec<LeadConnection> CODEC = RecordCodecBuilder.create(instance -> instance.group(
-            UUIDUtil.CODEC.fieldOf("id").forGetter(LeadConnection::id),
-            LeadAnchor.CODEC.fieldOf("from").forGetter(LeadConnection::from),
-            LeadAnchor.CODEC.fieldOf("to").forGetter(LeadConnection::to),
-            LeadKind.CODEC.optionalFieldOf("kind", LeadKind.NORMAL).forGetter(LeadConnection::kind),
-            Codec.INT.optionalFieldOf("power", 0).forGetter(LeadConnection::power),
-            Codec.INT.optionalFieldOf("tier", 0).forGetter(LeadConnection::tier),
-            Codec.INT.optionalFieldOf("extract", 0).forGetter(LeadConnection::extractAnchor),
-            Codec.INT.optionalFieldOf("lengthUnits", MIN_LENGTH_UNITS).forGetter(LeadConnection::lengthUnits),
+                UUIDUtil.CODEC.fieldOf("id").forGetter(connection -> connection.id()),
+                LeadAnchor.CODEC.fieldOf("from").forGetter(connection -> connection.from()),
+                LeadAnchor.CODEC.fieldOf("to").forGetter(connection -> connection.to()),
+                LeadKind.CODEC.optionalFieldOf("kind", LeadKind.NORMAL).forGetter(connection -> connection.kind()),
+                Codec.INT.optionalFieldOf("power", 0).forGetter(connection -> connection.power()),
+                Codec.INT.optionalFieldOf("tier", 0).forGetter(connection -> connection.tier()),
+                Codec.INT.optionalFieldOf("extract", 0).forGetter(connection -> connection.extractAnchor()),
+                Codec.INT.optionalFieldOf("lengthUnits", MIN_LENGTH_UNITS).forGetter(connection -> connection.lengthUnits()),
             RopeAttachment.CODEC.listOf().optionalFieldOf("attachments", List.of())
-                    .forGetter(LeadConnection::attachments),
-            Codec.STRING.optionalFieldOf("physicsPreset", NO_PHYSICS_PRESET).forGetter(LeadConnection::physicsPreset),
+                    .forGetter(connection -> connection.attachments()),
+                Codec.STRING.optionalFieldOf("physicsPreset", NO_PHYSICS_PRESET)
+                    .forGetter(connection -> connection.physicsPreset()),
             Codec.STRING.optionalFieldOf("manualPhysicsPreset", NO_PHYSICS_PRESET)
-                    .forGetter(LeadConnection::manualPhysicsPreset),
+                    .forGetter(connection -> connection.manualPhysicsPreset()),
             UUIDUtil.CODEC.optionalFieldOf("adventureOwner", NO_ADVENTURE_OWNER)
-                    .forGetter(LeadConnection::adventureOwner))
+                    .forGetter(connection -> connection.adventureOwner()))
             .apply(instance,
                     (id, from, to, kind, power, tier, extract, lengthUnits, attachments, physicsPreset,
                             manualPhysicsPreset, adventureOwner) -> new LeadConnection(id, from, to, kind, power, tier,
@@ -183,6 +184,28 @@ public record LeadConnection(UUID id, LeadAnchor from, LeadAnchor to, LeadKind k
             if (a.id().equals(attachmentId) && RopeAttachmentItems.isBlockItem(a.stack())) {
                 list.add(a.withDisplayAsBlock(!a.displayAsBlock()));
                 changed = true;
+            } else {
+                list.add(a);
+            }
+        }
+        return changed ? withAttachments(list) : this;
+    }
+
+    public LeadConnection setAttachmentDisplay(UUID attachmentId, int mountOverride,
+            int displayModeOverride, int hangerOverride, int piercedOverride, double hangOffsetOverride,
+            double mountOffsetOverride, double hangerLengthOverride, double hangerSpacingOverride, double scaleOverride,
+            int frontSide, java.util.Map<String, String> modelStateOverride) {
+        if (attachments.isEmpty())
+            return this;
+        List<RopeAttachment> list = new ArrayList<>(attachments.size());
+        boolean changed = false;
+        for (RopeAttachment a : attachments) {
+            if (a.id().equals(attachmentId)) {
+                RopeAttachment next = a.withDisplayOverrides(mountOverride, displayModeOverride,
+                        hangerOverride, piercedOverride, hangOffsetOverride, mountOffsetOverride, hangerLengthOverride,
+                    hangerSpacingOverride, scaleOverride, frontSide, modelStateOverride);
+                list.add(next);
+                changed = changed || !next.equals(a);
             } else {
                 list.add(a);
             }

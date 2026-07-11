@@ -13,7 +13,7 @@ public record ZoneCreateRequest(String name, String presetName, BlockPos from, B
     public static final CustomPacketPayload.Type<ZoneCreateRequest> TYPE = new CustomPacketPayload.Type<>(
             Identifier.fromNamespaceAndPath(Super_lead.MODID, "zone_create_request"));
     public static final StreamCodec<RegistryFriendlyByteBuf, ZoneCreateRequest> STREAM_CODEC = CustomPacketPayload
-            .codec(ZoneCreateRequest::write, ZoneCreateRequest::read);
+            .codec((payload, buf) -> payload.write(buf), ZoneCreateRequest::read);
 
     @Override
     public Type<? extends CustomPacketPayload> type() {

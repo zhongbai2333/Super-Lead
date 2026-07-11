@@ -19,15 +19,15 @@ public final class EmptySectionRescuer {
 
     @SubscribeEvent
     public static void onClientTick(ClientTickEvent.Post event) {
-        StaticRopeChunkRegistry reg = StaticRopeChunkRegistry.get();
-        reg.flushPendingDirtySections();
-        if (!reg.isActive())
-            return;
-
         Minecraft mc = Minecraft.getInstance();
         ClientLevel level = mc.level;
         LevelRenderer levelRenderer = mc.levelRenderer;
         if (level == null || levelRenderer == null)
+            return;
+
+        StaticRopeChunkRegistry reg = StaticRopeChunkRegistry.get();
+        reg.flushPendingDirtySections();
+        if (!reg.isActive())
             return;
 
         LongOpenHashSet emptySet = level.getChunkSource().getLoadedEmptySections();

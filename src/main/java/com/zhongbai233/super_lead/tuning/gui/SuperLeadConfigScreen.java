@@ -7,6 +7,7 @@ import com.zhongbai233.super_lead.tuning.IntTuningType;
 import com.zhongbai233.super_lead.tuning.TuningKey;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.AbstractSliderButton;
@@ -45,6 +46,7 @@ public final class SuperLeadConfigScreen extends Screen {
     private static final int VALUE_TEXT_W = 76;
     private static final int INPUT_W = 56;
     private static final int SCROLLBAR_W = 4;
+    private static final int SEARCH_W = 150;
     private static boolean lowPowerPreview;
 
     private final PreviewRope preview = new PreviewRope();
@@ -56,6 +58,9 @@ public final class SuperLeadConfigScreen extends Screen {
     private int bodyBottom;
     private int contentHeight;
     private int scrollOffset;
+    private String searchText = "";
+    private EditBox searchBox;
+    private boolean restoreSearchFocus;
 
     public SuperLeadConfigScreen() {
         super(Component.translatable("super_lead.config.title"));
@@ -110,6 +115,29 @@ public final class SuperLeadConfigScreen extends Screen {
         }).bounds(this.width - PADDING - 60 - 86 - 90 - 92, topBarY, 88, 14).build();
         addRenderableWidget(previewMode);
 
+        searchBox = new EditBox(this.font, PADDING + SIDEBAR_W, topBarY,
+                Math.min(SEARCH_W, Math.max(80, this.width / 4)), 14,
+                Component.translatable("super_lead.config.search"));
+        searchBox.setMaxLength(64);
+        searchBox.setHint(Component.translatable("super_lead.config.search"));
+        searchBox.setValue(searchText);
+        searchBox.setResponder(value -> {
+            String next = value == null ? "" : value;
+            if (next.equals(searchText)) {
+                return;
+            }
+            searchText = next;
+            scrollOffset = 0;
+            restoreSearchFocus = true;
+            rebuildWidgets();
+        });
+        addRenderableWidget(searchBox);
+        if (restoreSearchFocus) {
+            setFocused(searchBox);
+            searchBox.setFocused(true);
+            restoreSearchFocus = false;
+        }
+
         // --- Left sidebar: vertical tab buttons ---
         int sidebarTop = topBarY + 20;
         int tabY = sidebarTop;
@@ -137,6 +165,7 @@ public final class SuperLeadConfigScreen extends Screen {
         }
 
         String group = groups.get(activeTab);
+        String filter = normalizedSearchText();
         bodyTop = startY;
         bodyBottom = this.height - PADDING;
         int contentX = PADDING + SIDEBAR_W;
@@ -154,7 +183,7 @@ public final class SuperLeadConfigScreen extends Screen {
 
         int baseY = startY;
         for (TuningKey<?> key : ClientTuning.allKeys()) {
-            if (!key.group.equals(group)) {
+            if (filter.isEmpty() ? !key.group.equals(group) : !matchesSearch(key, filter)) {
                 continue;
             }
             int rowHeight = rowHeightFor(key);
@@ -184,6 +213,18 @@ public final class SuperLeadConfigScreen extends Screen {
         }
         contentHeight = Math.max(0, baseY - startY);
         clampScroll();
+    }
+
+    private String normalizedSearchText() {
+        return searchText == null ? "" : searchText.trim().toLowerCase(Locale.ROOT);
+    }
+
+    private boolean matchesSearch(TuningKey<?> key, String filter) {
+        return key.id.toLowerCase(Locale.ROOT).contains(filter)
+                || key.group.toLowerCase(Locale.ROOT).contains(filter)
+                || localizedKeyLabel(key).getString().toLowerCase(Locale.ROOT).contains(filter)
+                || localizedKeyDescription(key).getString().toLowerCase(Locale.ROOT).contains(filter)
+                || groupLabel(key.group).getString().toLowerCase(Locale.ROOT).contains(filter);
     }
 
     private void clampScroll() {
@@ -329,9 +370,14 @@ public final class SuperLeadConfigScreen extends Screen {
             TuningKey<?> key = row.key();
             syncColorInput(row, key);
             int rowY = widget.getY() + (widget.getHeight() - this.font.lineHeight) / 2;
-            Component label = Component.translatableWithFallback(
-                    "super_lead.tuning." + key.id + ".label", key.id);
+            Component label = localizedKeyLabel(key);
             graphics.text(this.font, label, contentX, rowY, 0xFFE8E8E8);
+
+            if (!normalizedSearchText().isEmpty()) {
+                Component group = groupLabel(key.group);
+                int groupX = contentX + Math.min(this.font.width(label) + 8, 120);
+                graphics.text(this.font, Component.literal("[" + group.getString() + "]"), groupX, rowY, 0xFF6FA8DC);
+            }
 
             String value = key.formatEffective();
             int color = key.isPresetActive() ? 0xFFFFAAFF
@@ -344,12 +390,19 @@ public final class SuperLeadConfigScreen extends Screen {
             if (key.description != null && !key.description.isEmpty()) {
                 int descY = widget.getY() + widget.getHeight() + DESC_GAP;
                 int maxWidth = this.width - contentX - PADDING - SCROLLBAR_W - 2;
-                Component desc = Component.translatableWithFallback(
-                        "super_lead.tuning." + key.id + ".desc", key.description);
+                Component desc = localizedKeyDescription(key);
                 String descStr = truncateToWidth(desc.getString(), maxWidth);
                 graphics.text(this.font, Component.literal(descStr), contentX, descY, 0xFF8090A0);
             }
         }
+    }
+
+    private static Component localizedKeyLabel(TuningKey<?> key) {
+        return Component.translatableWithFallback("super_lead.tuning." + key.id + ".label", key.id);
+    }
+
+    private static Component localizedKeyDescription(TuningKey<?> key) {
+        return Component.translatableWithFallback("super_lead.tuning." + key.id + ".desc", key.description);
     }
 
     private void renderScrollbar(GuiGraphicsExtractor graphics) {
@@ -383,6 +436,7 @@ public final class SuperLeadConfigScreen extends Screen {
             case "render.geom" -> "Geometry";
             case "render.color" -> "Color";
             case "render.lod" -> "LOD";
+            case "render.performance" -> "Performance";
             case "render.attach" -> "Attach";
             case "misc" -> "Misc";
             default -> group;

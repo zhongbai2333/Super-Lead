@@ -19,7 +19,7 @@ public record ServerQuery(Kind kind) implements CustomPacketPayload {
     public static final CustomPacketPayload.Type<ServerQuery> TYPE = new CustomPacketPayload.Type<>(
             Identifier.fromNamespaceAndPath(Super_lead.MODID, "server_query"));
     public static final StreamCodec<RegistryFriendlyByteBuf, ServerQuery> STREAM_CODEC = CustomPacketPayload
-            .codec(ServerQuery::write, ServerQuery::read);
+            .codec((payload, buffer) -> payload.write(buffer), ServerQuery::read);
 
     public ServerQuery {
         kind = kind == null ? Kind.PRESET_LIST : kind;

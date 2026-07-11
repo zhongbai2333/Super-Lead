@@ -1,13 +1,13 @@
 package com.zhongbai233.super_lead.lead;
 
-import com.zhongbai233.super_lead.preset.RopePreset;
 import com.zhongbai233.super_lead.preset.RopePresetLibrary;
 import com.zhongbai233.super_lead.tuning.ClientTuning;
 import com.zhongbai233.super_lead.tuning.TuningKey;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import net.minecraft.server.level.ServerLevel;
 
-record ServerPhysicsTuning(
+public record ServerPhysicsTuning(
         boolean physicsEnabled,
         double gravity,
         double slack,
@@ -68,11 +68,21 @@ record ServerPhysicsTuning(
     private static final double MAX_SOLVED_SAG_FALLBACK = 64.0D;
     private static final double SAG_ARC_APPROX_FACTOR_FALLBACK = 0.375D;
     private static final double FULL_SLACK_HORIZONTAL_RATIO_FALLBACK = 0.45D;
+        private static final Map<CacheKey, ServerPhysicsTuning> CACHE = new ConcurrentHashMap<>();
 
     static ServerPhysicsTuning loadServerPhysicsTuning(ServerLevel level, String presetName) {
+                CacheKey key = CacheKey.of(level, presetName);
+                return CACHE.computeIfAbsent(key, ignored -> loadUncached(level, presetName));
+        }
+
+        public static void clearCache() {
+                CACHE.clear();
+        }
+
+        private static ServerPhysicsTuning loadUncached(ServerLevel level, String presetName) {
         Map<String, String> overrides = RopePresetLibrary.forServer(level.getServer())
                 .load(presetName)
-                .map(RopePreset::overrides)
+                .map(preset -> preset.overrides())
                 .orElse(Map.of());
         boolean physicsEnabled = parseBool(overrides.get(ClientTuning.MODE_PHYSICS.id),
                 ClientTuning.MODE_PHYSICS.defaultValue);
@@ -187,6 +197,13 @@ record ServerPhysicsTuning(
                 windWaveLength, windSpeed, windDuty, windDurationJitter, windPauseJitter, windRampBias,
                 windVerticalLift);
     }
+
+        private record CacheKey(String worldPresetDirectory, String presetName) {
+                private static CacheKey of(ServerLevel level, String presetName) {
+                        String dir = RopePresetLibrary.worldDirectory(level.getServer()).toAbsolutePath().normalize().toString();
+                        return new CacheKey(dir, presetName == null ? "" : presetName);
+        }
+        }
 
     private static double parseDouble(String raw, TuningKey<Double> key, double fallback) {
         return parseDouble(raw, key, fallback, false);

@@ -10,7 +10,7 @@ public record PresetDetailsRequest(String name) implements CustomPacketPayload {
     public static final CustomPacketPayload.Type<PresetDetailsRequest> TYPE = new CustomPacketPayload.Type<>(
             Identifier.fromNamespaceAndPath(Super_lead.MODID, "preset_details_request"));
     public static final StreamCodec<RegistryFriendlyByteBuf, PresetDetailsRequest> STREAM_CODEC = CustomPacketPayload
-            .codec(PresetDetailsRequest::write, PresetDetailsRequest::read);
+            .codec((payload, buf) -> payload.write(buf), PresetDetailsRequest::read);
 
     @Override
     public Type<? extends CustomPacketPayload> type() {

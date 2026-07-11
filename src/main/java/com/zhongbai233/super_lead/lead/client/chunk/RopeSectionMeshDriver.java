@@ -24,21 +24,35 @@ public final class RopeSectionMeshDriver {
      * Static ropes are vertex-colored, but the chunk solid buffer still requires
      * UVs. This neutral atlas sprite is only used as a UV source.
      */
-    private static final Identifier NEUTRAL_UV_SPRITE_ID = Identifier.withDefaultNamespace("misc/white");
+    private static final Identifier NEUTRAL_UV_SPRITE_ID = Identifier.withDefaultNamespace("block/white_stained_glass");
+    private static final float ATTACHMENT_LINE_HALF_THICKNESS = 0.012F;
+    private static volatile long debugCallbacks;
+    private static volatile long debugHits;
 
     private RopeSectionMeshDriver() {
     }
 
     @SubscribeEvent
     public static void onAddSectionGeometry(AddSectionGeometryEvent event) {
+        debugCallbacks++;
         if (!ClientTuning.MODE_CHUNK_MESH_STATIC_ROPES.get())
             return;
 
         BlockPos origin = event.getSectionOrigin();
+        StaticRopeChunkRegistry registry = StaticRopeChunkRegistry.get();
         long key = SectionPos.asLong(origin);
-        List<RopeSectionSnapshot> snaps = StaticRopeChunkRegistry.get().snapshotsFor(key);
+        List<RopeSectionSnapshot> snaps = registry.snapshotsFor(key);
+        if (snaps.isEmpty()) {
+            long directKey = SectionPos.asLong(origin.getX(), origin.getY(), origin.getZ());
+            List<RopeSectionSnapshot> directSnaps = registry.snapshotsFor(directKey);
+            if (!directSnaps.isEmpty()) {
+                key = directKey;
+                snaps = directSnaps;
+            }
+        }
         if (snaps.isEmpty())
             return;
+        debugHits++;
         TextureAtlasSprite sprite = neutralSprite();
         if (sprite == null)
             return;
@@ -59,20 +73,28 @@ public final class RopeSectionMeshDriver {
         StaticRopeChunkRegistry.get().markSectionMeshAccepted(key);
     }
 
+    public static long debugCallbacks() {
+        return debugCallbacks;
+    }
+
+    public static long debugHits() {
+        return debugHits;
+    }
+
     private static TextureAtlasSprite neutralSprite() {
         Minecraft mc = Minecraft.getInstance();
         if (mc == null)
             return null;
         try {
             TextureAtlas atlas = mc.getAtlasManager().getAtlasOrThrow(AtlasIds.BLOCKS);
-            return atlas.getTextures().get(NEUTRAL_UV_SPRITE_ID);
+            return atlas.getSprite(NEUTRAL_UV_SPRITE_ID);
         } catch (RuntimeException ignored) {
             return null;
         }
     }
 
     private static void emit(VertexConsumer vc, RopeSectionSnapshot s,
-            int ox, int oy, int oz, float u, float v) {
+            float ox, float oy, float oz, float u, float v) {
         int last = s.nodeCount - 1;
         int start = Math.max(0, Math.min(s.segmentStart, last));
         int end = Math.max(start, Math.min(s.segmentEndExclusive, last));
@@ -131,6 +153,13 @@ public final class RopeSectionMeshDriver {
             int idx = last;
             emitEndCap(vc, s, idx, ox, oy, oz, u, v, nodeScale(s, idx), true);
         }
+
+        for (RopeSectionLine line : s.attachmentLines) {
+            emitLineQuads(vc,
+                    line.ax() - ox, line.ay() - oy, line.az() - oz,
+                    line.bx() - ox, line.by() - oy, line.bz() - oz,
+                    line.color(), line.light(), u, v);
+        }
     }
 
     private static float nodeScale(RopeSectionSnapshot s, int idx) {
@@ -140,7 +169,7 @@ public final class RopeSectionMeshDriver {
     }
 
     private static void emitEndCap(VertexConsumer vc, RopeSectionSnapshot s, int idx,
-            int ox, int oy, int oz, float u, float v, float scale, boolean flipWinding) {
+            float ox, float oy, float oz, float u, float v, float scale, boolean flipWinding) {
         float px = s.x[idx] - ox;
         float py = s.y[idx] - oy;
         float pz = s.z[idx] - oz;
@@ -220,6 +249,70 @@ public final class RopeSectionMeshDriver {
                 .setUv(u, v)
                 .setLight(light)
                 .setNormal(nx, ny, nz);
+    }
+
+    private static void emitLineQuads(VertexConsumer vc,
+            float ax, float ay, float az,
+            float bx, float by, float bz,
+            int color, int light, float u, float v) {
+        float dx = bx - ax, dy = by - ay, dz = bz - az;
+        float len = (float) Math.sqrt(dx * dx + dy * dy + dz * dz);
+        if (len < 1.0e-5F)
+            return;
+        float udx = dx / len, udy = dy / len, udz = dz / len;
+        float n1x, n1y, n1z;
+        if (Math.abs(udy) > 0.99F) {
+            n1x = 1.0F;
+            n1y = 0.0F;
+            n1z = 0.0F;
+        } else {
+            n1x = udz;
+            n1y = 0.0F;
+            n1z = -udx;
+            float l1 = (float) Math.sqrt(n1x * n1x + n1z * n1z);
+            n1x /= l1;
+            n1z /= l1;
+        }
+        float n2x = udy * n1z - udz * n1y;
+        float n2y = udz * n1x - udx * n1z;
+        float n2z = udx * n1y - udy * n1x;
+        float w = ATTACHMENT_LINE_HALF_THICKNESS;
+        n1x *= w;
+        n1y *= w;
+        n1z *= w;
+        n2x *= w;
+        n2y *= w;
+        n2z *= w;
+        linePlane(vc, ax, ay, az, bx, by, bz, n1x, n1y, n1z, color, light, u, v);
+        linePlane(vc, ax, ay, az, bx, by, bz, n2x, n2y, n2z, color, light, u, v);
+    }
+
+    private static void linePlane(VertexConsumer vc,
+            float ax, float ay, float az,
+            float bx, float by, float bz,
+            float nx, float ny, float nz,
+            int color, int light, float u, float v) {
+        Normal faceNormal = normal(
+                (by - ay) * nz - (bz - az) * ny,
+                (bz - az) * nx - (bx - ax) * nz,
+                (bx - ax) * ny - (by - ay) * nx,
+                0.0F, 1.0F, 0.0F);
+        vertex(vc, ax - nx, ay - ny, az - nz, color, u, v, light,
+                faceNormal.x, faceNormal.y, faceNormal.z);
+        vertex(vc, bx - nx, by - ny, bz - nz, color, u, v, light,
+                faceNormal.x, faceNormal.y, faceNormal.z);
+        vertex(vc, bx + nx, by + ny, bz + nz, color, u, v, light,
+                faceNormal.x, faceNormal.y, faceNormal.z);
+        vertex(vc, ax + nx, ay + ny, az + nz, color, u, v, light,
+                faceNormal.x, faceNormal.y, faceNormal.z);
+        vertex(vc, ax + nx, ay + ny, az + nz, color, u, v, light,
+                -faceNormal.x, -faceNormal.y, -faceNormal.z);
+        vertex(vc, bx + nx, by + ny, bz + nz, color, u, v, light,
+                -faceNormal.x, -faceNormal.y, -faceNormal.z);
+        vertex(vc, bx - nx, by - ny, bz - nz, color, u, v, light,
+                -faceNormal.x, -faceNormal.y, -faceNormal.z);
+        vertex(vc, ax - nx, ay - ny, az - nz, color, u, v, light,
+                -faceNormal.x, -faceNormal.y, -faceNormal.z);
     }
 
     private record Normal(float x, float y, float z) {

@@ -192,6 +192,28 @@ public final class ClientTuning {
     public static final TuningKey<Double> LOD_STRIDE4_DISTANCE = registerD(
             "lod.stride4Distance", "render.lod", 20.0D, 4.0D, 96.0D,
             "Distance where every four physics segments merge for rendering.");
+    public static final TuningKey<Double> LOD_PHYSICS_DISTANCE = registerD(
+            "lod.physicsDistance", "render.lod", 48.0D, 8.0D, 256.0D,
+            "Nearest-rope distance where full rope interaction is allowed. Beyond this, ropes use sparse terrain-only maintenance until they leave render range.");
+
+    public static final TuningKey<Integer> DYNAMIC_PHYSICS_BUDGET = registerI(
+            "dynamic.physicsBudget", "render.performance", 48, 4, 512,
+            "Maximum number of visible dynamic ropes allowed to run full physics in one client tick. Extra ropes reuse their last visual state.");
+    public static final TuningKey<Integer> DYNAMIC_SETTLED_STEP_INTERVAL = registerI(
+            "dynamic.settledStepInterval", "render.performance", 8, 1, 40,
+            "Minimum tick interval for settled dynamic ropes with no interaction, wind, or external contact. Higher values sleep stable ropes more aggressively.");
+    public static final TuningKey<Double> DYNAMIC_STEP_INTERVAL2_DISTANCE = registerD(
+            "dynamic.stepInterval2Distance", "render.performance", 18.0D, 4.0D, 128.0D,
+            "Distance where dynamic rope physics starts updating every 2 ticks instead of every tick.");
+    public static final TuningKey<Double> DYNAMIC_STEP_INTERVAL4_DISTANCE = registerD(
+            "dynamic.stepInterval4Distance", "render.performance", 32.0D, 8.0D, 192.0D,
+            "Distance where dynamic rope physics starts updating every 4 ticks instead of every tick.");
+    public static final TuningKey<Double> DYNAMIC_COARSE_TOPOLOGY_DISTANCE = registerD(
+            "dynamic.coarseTopologyDistance", "render.performance", 24.0D, 8.0D, 192.0D,
+            "Distance where newly created dynamic rope simulations use a coarser segment length and lower max segment count.");
+    public static final TuningKey<Double> DYNAMIC_PULSE_DISTANCE = registerD(
+            "dynamic.pulseDistance", "render.performance", 36.0D, 8.0D, 256.0D,
+            "Maximum distance for item/energy pulse thickness animation on dynamic ropes. Farther ropes keep the base mesh cache stable.");
 
     public static final TuningKey<Double> ATTACH_ITEM_SCALE = registerD(
             "attach.itemScale", "render.attach", 0.85D, 0.30D, 2.0D,
@@ -210,8 +232,8 @@ public final class ClientTuning {
             "pick.attachRadius", "misc", 0.50D, 0.10D, 1.50D,
             "Client pick radius for placing attachments on a rope.");
     public static final TuningKey<Double> RENDER_MAX_DISTANCE = registerD(
-            "render.maxDistance", "misc", 96.0D, 16.0D, 256.0D,
-            "Distance beyond which ropes do not render or simulate.");
+            "render.maxDistance", "misc", 192.0D, 16.0D, 512.0D,
+            "Upper bound for rope render distance. The effective value is capped by the client's current render distance; physics is controlled separately by lod.physicsDistance.");
 
     // ====================================================================================
     // Physics geometry (physics.geom)
@@ -282,10 +304,10 @@ public final class ClientTuning {
             "wind.physicsDistance", "physics.wind", 32.0D, 0.0D, 96.0D,
             "Maximum nearest-rope distance where wind applies real rope physics. Beyond this, wind is skipped.");
     public static final TuningKey<Double> WIND_STRENGTH = registerD(
-            "wind.strength", "physics.wind", 0.035D, 0.0D, 0.45D,
+            "wind.strength", "physics.wind", 0.026D, 0.0D, 0.45D,
             "Horizontal wind acceleration in blocks per tick squared.");
     public static final TuningKey<Double> WIND_STRENGTH_JITTER = registerD(
-            "wind.strengthJitter", "physics.wind", 0.65D, 0.0D, 1.0D,
+            "wind.strengthJitter", "physics.wind", 0.38D, 0.0D, 1.0D,
             "Per-gust strength variation. 0 is steady, 1 allows very soft and strong gusts.");
     public static final TuningKey<Double> WIND_DIRECTION_DEG = registerD(
             "wind.directionDeg", "physics.wind", 35.0D, -360.0D, 360.0D,
@@ -294,7 +316,7 @@ public final class ClientTuning {
             "wind.directionJitterDeg", "physics.wind", 14.0D, 0.0D, 90.0D,
             "Maximum per-gust direction drift around wind.directionDeg.");
     public static final TuningKey<Double> WIND_CELL_DIRECTION_SPREAD_DEG = registerD(
-            "wind.cellDirectionSpreadDeg", "physics.wind", 60.0D, 0.0D, 180.0D,
+            "wind.cellDirectionSpreadDeg", "physics.wind", 28.0D, 0.0D, 180.0D,
             "Maximum per-cell persistent direction offset. Each 24×24 wind cell gets a random"
                     + " fixed direction bias within this range, so different areas blow in different directions.");
     public static final TuningKey<Double> WIND_WAVELENGTH = registerD(
@@ -313,10 +335,10 @@ public final class ClientTuning {
             "wind.pauseJitter", "physics.wind", 0.40D, 0.0D, 1.0D,
             "Per-gust pause-duration variation around wind.duty.");
     public static final TuningKey<Double> WIND_RAMP_BIAS = registerD(
-            "wind.rampBias", "physics.wind", 0.35D, 0.0D, 1.0D,
+            "wind.rampBias", "physics.wind", 0.55D, 0.0D, 1.0D,
             "How often gusts build from small wind to stronger wind before fading.");
     public static final TuningKey<Double> WIND_VERTICAL_LIFT = registerD(
-            "wind.verticalLift", "physics.wind", 0.12D, -1.0D, 1.0D,
+            "wind.verticalLift", "physics.wind", 0.06D, -1.0D, 1.0D,
             "Vertical lift as a fraction of horizontal wind strength.");
 
     // ====================================================================================

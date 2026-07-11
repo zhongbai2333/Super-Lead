@@ -162,6 +162,7 @@ abstract class RopeSimulationCore {
     protected float[] bakedSegMidX, bakedSegMidY, bakedSegMidZ;
     protected float[] bakedSegSideX, bakedSegSideY, bakedSegSideZ;
     protected float[] bakedSegUpX, bakedSegUpY, bakedSegUpZ;
+    protected int[] bakedSegSourceSegment;
     protected int bakedSegmentCount;
     // Cache key fields. Equality across all of these = bake is reusable.
     protected int bakedNodeCount;
@@ -276,14 +277,18 @@ abstract class RopeSimulationCore {
     protected boolean blockHashInit;
     protected boolean terrainNearbyLast;
     protected boolean windPhysicsEnabled = true;
+    protected long lastWindActiveTick = UNINIT;
     protected int settledTicks;
     protected int quietTicks;
+    protected int ropeStackQuietTicks;
 
     protected boolean boundsDirty = true;
     protected double minX, maxX, minY, maxY, minZ, maxZ;
 
     protected int anchorAColX = Integer.MIN_VALUE, anchorAColY = 0, anchorAColZ = 0;
     protected int anchorBColX = Integer.MIN_VALUE, anchorBColY = 0, anchorBColZ = 0;
+    protected double wallRopeNormalX, wallRopeNormalZ;
+    protected boolean wallRopeNormalValid;
 
     protected RopeSimulationCore(Vec3 a, Vec3 b, long seed, RopeTuning tuning) {
         this.tuning = tuning != null ? tuning : RopeTuning.localDefaults();
@@ -397,6 +402,19 @@ abstract class RopeSimulationCore {
         return Math.abs(segmentCount(a, b, tuning) - segments) <= 1;
     }
 
+    /** Exact topology check used at an explicit LOD boundary. */
+    public boolean matchesTopology(Vec3 a, Vec3 b, RopeTuning tuning) {
+        return segmentCount(a, b, tuning) == segments;
+    }
+
+    public boolean matchesTopologyProfile(RopeTuning other) {
+        return other != null
+                && Double.doubleToLongBits(tuning.segmentLength())
+                        == Double.doubleToLongBits(other.segmentLength())
+                && tuning.segmentMax() == other.segmentMax()
+                && tuning.minSegments() == other.minSegments();
+    }
+
     public RopeTuning tuning() {
         return tuning;
     }
@@ -429,6 +447,31 @@ abstract class RopeSimulationCore {
             snapPreviousStateToCurrent();
         }
         return true;
+    }
+
+    /** Invalidates every physics conclusion that depends on the current node topology. */
+    public void invalidatePhysicsHistoryForRefinement() {
+        lastSteppedTick = UNINIT;
+        settledTicks = 0;
+        quietTicks = 0;
+        ropeStackQuietTicks = 0;
+        endpointInit = false;
+        blockHashInit = false;
+        lastBlockHashCheckTick = UNINIT;
+        terrainNearbyLast = false;
+        wallRopeNormalValid = false;
+        precomputeReady = false;
+        blockCache.reset();
+        segAabb = null;
+        renderStable = false;
+        for (int i = 0; i < nodes; i++) {
+            vx[i] = vy[i] = vz[i] = 0.0D;
+            entityPushAccum[i] = 0.0D;
+            supportNode[i] = false;
+            contactNode[i] = false;
+        }
+        java.util.Arrays.fill(lambdaDistance, 0.0D);
+        markBoundsDirty();
     }
 
     protected void applyTautProjection(Vec3 a, Vec3 b, double weight, boolean preserveContactNodes) {
@@ -503,7 +546,6 @@ abstract class RopeSimulationCore {
             throw new IllegalArgumentException("Cannot copy rope state across different topologies");
         }
 
-        this.tuning = other.tuning;
         copy(other.x, x);
         copy(other.y, y);
         copy(other.z, z);
@@ -541,8 +583,13 @@ abstract class RopeSimulationCore {
         lastBlockHashCheckTick = other.lastBlockHashCheckTick;
         blockHashInit = other.blockHashInit;
         terrainNearbyLast = other.terrainNearbyLast;
+        lastWindActiveTick = other.lastWindActiveTick;
+        wallRopeNormalX = other.wallRopeNormalX;
+        wallRopeNormalZ = other.wallRopeNormalZ;
+        wallRopeNormalValid = other.wallRopeNormalValid;
         settledTicks = other.settledTicks;
         quietTicks = other.quietTicks;
+        ropeStackQuietTicks = other.ropeStackQuietTicks;
         renderStable = other.renderStable;
 
         precomputeReady = false;
@@ -559,6 +606,234 @@ abstract class RopeSimulationCore {
         }
     }
 
+    /**
+    * Transfer complete mutable state from a worker simulation with a different
+    * topology by sampling it along the current arc length. Unlike an LOD refinement,
+    * async publication intentionally preserves velocity and physics history.
+     */
+    public void resampleMutableStateFrom(RopeSimulation other, Vec3 a, Vec3 b) {
+        if (other == null || other.nodes < 2 || nodes < 2) {
+            return;
+        }
+
+        double[] lengths = cumulativeLengths(other.x, other.y, other.z, other.nodes);
+        double total = lengths[other.nodes - 1];
+        double[] lastLengths = cumulativeLengths(other.xLastTick, other.yLastTick, other.zLastTick, other.nodes);
+        double lastTotal = lastLengths[other.nodes - 1];
+        double[] prevLengths = cumulativeLengths(other.xPrev, other.yPrev, other.zPrev, other.nodes);
+        double prevTotal = prevLengths[other.nodes - 1];
+
+        for (int i = 0; i < nodes; i++) {
+            double t = i / (double) (nodes - 1);
+            samplePolyline(other.x, other.y, other.z, lengths, total, t, x, y, z, i);
+            samplePolyline(other.xLastTick, other.yLastTick, other.zLastTick, lastLengths, lastTotal, t,
+                    xLastTick, yLastTick, zLastTick, i);
+            samplePolyline(other.xPrev, other.yPrev, other.zPrev, prevLengths, prevTotal, t,
+                    xPrev, yPrev, zPrev, i);
+            sampleVectorByIndex(other.vx, other.vy, other.vz, t, vx, vy, vz, i);
+            entityPushAccum[i] = sampleScalarByIndex(other.entityPushAccum, t);
+            supportNode[i] = false;
+            contactNode[i] = false;
+            pinned[i] = i == 0 || i == nodes - 1;
+        }
+        x[0] = a.x;
+        y[0] = a.y;
+        z[0] = a.z;
+        x[nodes - 1] = b.x;
+        y[nodes - 1] = b.y;
+        z[nodes - 1] = b.z;
+
+        contactT = other.contactT;
+        contactDx = other.contactDx;
+        contactDy = other.contactDy;
+        contactDz = other.contactDz;
+        contactRefreshTick = other.contactRefreshTick;
+
+        lastSteppedTick = other.lastSteppedTick;
+        lastTouchTick = other.lastTouchTick;
+        endpointInit = false;
+        lastBlockHash = other.lastBlockHash;
+        lastBlockHashCheckTick = other.lastBlockHashCheckTick;
+        blockHashInit = other.blockHashInit;
+        terrainNearbyLast = other.terrainNearbyLast;
+        lastWindActiveTick = other.lastWindActiveTick;
+        wallRopeNormalX = other.wallRopeNormalX;
+        wallRopeNormalZ = other.wallRopeNormalZ;
+        wallRopeNormalValid = other.wallRopeNormalValid;
+        settledTicks = Math.min(other.settledTicks, settleThresholdTicks);
+        quietTicks = other.quietTicks;
+        ropeStackQuietTicks = other.ropeStackQuietTicks;
+        renderStable = other.renderStable;
+        useCollisionProxy = other.useCollisionProxy;
+
+        precomputeReady = false;
+        blockCache.reset();
+        java.util.Arrays.fill(lambdaDistance, 0.0D);
+        segAabb = null;
+        markBoundsDirty();
+    }
+
+    /**
+     * Transfers only the currently visible shape across an LOD topology change.
+     * Physics history from the coarse simulation is intentionally discarded: its
+     * settled flags, block hash, contacts, velocities and interpolation history are
+     * not valid evidence for the newly inserted fine nodes.
+     */
+    public void resampleShapeForTopologyChange(RopeSimulation other, Vec3 a, Vec3 b) {
+        if (other == null || other.nodes < 2 || nodes < 2) {
+            return;
+        }
+        double[] lengths = cumulativeLengths(other.x, other.y, other.z, other.nodes);
+        double total = lengths[other.nodes - 1];
+        for (int i = 0; i < nodes; i++) {
+            double t = i / (double) (nodes - 1);
+            samplePolyline(other.x, other.y, other.z, lengths, total, t, x, y, z, i);
+            xPrev[i] = xLastTick[i] = x[i];
+            yPrev[i] = yLastTick[i] = y[i];
+            zPrev[i] = zLastTick[i] = z[i];
+            vx[i] = vy[i] = vz[i] = 0.0D;
+            entityPushAccum[i] = 0.0D;
+            supportNode[i] = false;
+            contactNode[i] = false;
+            pinned[i] = i == 0 || i == nodes - 1;
+        }
+        pinRestoredEndpoints(a, b);
+
+        contactT = -1.0F;
+        contactDx = contactDy = contactDz = 0.0D;
+        contactRefreshTick = UNINIT;
+        useCollisionProxy = other.useCollisionProxy;
+        invalidatePhysicsHistoryForRefinement();
+    }
+
+    public void restoreShapeForRefinement(float[] sourceX, float[] sourceY, float[] sourceZ, Vec3 a, Vec3 b) {
+        if (sourceX == null || sourceY == null || sourceZ == null
+                || sourceX.length < 2 || sourceY.length != sourceX.length || sourceZ.length != sourceX.length) {
+            invalidatePhysicsHistoryForRefinement();
+            return;
+        }
+        double[] lengths = cumulativeLengths(sourceX, sourceY, sourceZ);
+        double total = lengths[lengths.length - 1];
+        for (int i = 0; i < nodes; i++) {
+            double t = i / (double) (nodes - 1);
+            samplePolyline(sourceX, sourceY, sourceZ, lengths, total, t, x, y, z, i);
+            xPrev[i] = xLastTick[i] = x[i];
+            yPrev[i] = yLastTick[i] = y[i];
+            zPrev[i] = zLastTick[i] = z[i];
+        }
+        pinRestoredEndpoints(a, b);
+        contactT = -1.0F;
+        contactDx = contactDy = contactDz = 0.0D;
+        contactRefreshTick = UNINIT;
+        invalidatePhysicsHistoryForRefinement();
+    }
+
+    private void pinRestoredEndpoints(Vec3 a, Vec3 b) {
+        x[0] = xPrev[0] = xLastTick[0] = a.x;
+        y[0] = yPrev[0] = yLastTick[0] = a.y;
+        z[0] = zPrev[0] = zLastTick[0] = a.z;
+        int last = nodes - 1;
+        x[last] = xPrev[last] = xLastTick[last] = b.x;
+        y[last] = yPrev[last] = yLastTick[last] = b.y;
+        z[last] = zPrev[last] = zLastTick[last] = b.z;
+    }
+
+    private static double[] cumulativeLengths(double[] xs, double[] ys, double[] zs, int count) {
+        double[] lengths = new double[count];
+        for (int i = 1; i < count; i++) {
+            double dx = xs[i] - xs[i - 1];
+            double dy = ys[i] - ys[i - 1];
+            double dz = zs[i] - zs[i - 1];
+            lengths[i] = lengths[i - 1] + Math.sqrt(dx * dx + dy * dy + dz * dz);
+        }
+        return lengths;
+    }
+
+    private static double[] cumulativeLengths(float[] xs, float[] ys, float[] zs) {
+        double[] lengths = new double[xs.length];
+        for (int i = 1; i < xs.length; i++) {
+            double dx = xs[i] - xs[i - 1];
+            double dy = ys[i] - ys[i - 1];
+            double dz = zs[i] - zs[i - 1];
+            lengths[i] = lengths[i - 1] + Math.sqrt(dx * dx + dy * dy + dz * dz);
+        }
+        return lengths;
+    }
+
+    private static void samplePolyline(float[] srcX, float[] srcY, float[] srcZ, double[] lengths,
+            double totalLength, double t, double[] dstX, double[] dstY, double[] dstZ, int dstIndex) {
+        double target = totalLength * clamp01(t);
+        int segment = 0;
+        while (segment + 1 < lengths.length && lengths[segment + 1] < target) {
+            segment++;
+        }
+        int next = Math.min(segment + 1, lengths.length - 1);
+        double span = lengths[next] - lengths[segment];
+        double local = span <= 1.0e-9D ? 0.0D : (target - lengths[segment]) / span;
+        dstX[dstIndex] = lerp(srcX[segment], srcX[next], local);
+        dstY[dstIndex] = lerp(srcY[segment], srcY[next], local);
+        dstZ[dstIndex] = lerp(srcZ[segment], srcZ[next], local);
+    }
+
+    private static void samplePolyline(double[] srcX, double[] srcY, double[] srcZ, double[] lengths,
+            double totalLength, double t, double[] dstX, double[] dstY, double[] dstZ, int dstIndex) {
+        if (totalLength <= 1.0e-9D) {
+            sampleVectorByIndex(srcX, srcY, srcZ, t, dstX, dstY, dstZ, dstIndex);
+            return;
+        }
+        double target = totalLength * clamp01(t);
+        int segment = 0;
+        while (segment + 1 < lengths.length && lengths[segment + 1] < target) {
+            segment++;
+        }
+        if (segment + 1 >= lengths.length) {
+            int last = lengths.length - 1;
+            dstX[dstIndex] = srcX[last];
+            dstY[dstIndex] = srcY[last];
+            dstZ[dstIndex] = srcZ[last];
+            return;
+        }
+        double span = lengths[segment + 1] - lengths[segment];
+        double local = span <= 1.0e-9D ? 0.0D : (target - lengths[segment]) / span;
+        dstX[dstIndex] = lerp(srcX[segment], srcX[segment + 1], local);
+        dstY[dstIndex] = lerp(srcY[segment], srcY[segment + 1], local);
+        dstZ[dstIndex] = lerp(srcZ[segment], srcZ[segment + 1], local);
+    }
+
+    private static void sampleVectorByIndex(double[] srcX, double[] srcY, double[] srcZ, double t,
+            double[] dstX, double[] dstY, double[] dstZ, int dstIndex) {
+        double scaled = clamp01(t) * (srcX.length - 1);
+        int i = (int) Math.floor(scaled);
+        if (i >= srcX.length - 1) {
+            int last = srcX.length - 1;
+            dstX[dstIndex] = srcX[last];
+            dstY[dstIndex] = srcY[last];
+            dstZ[dstIndex] = srcZ[last];
+            return;
+        }
+        double local = scaled - i;
+        dstX[dstIndex] = lerp(srcX[i], srcX[i + 1], local);
+        dstY[dstIndex] = lerp(srcY[i], srcY[i + 1], local);
+        dstZ[dstIndex] = lerp(srcZ[i], srcZ[i + 1], local);
+    }
+
+    private static double sampleScalarByIndex(double[] src, double t) {
+        double scaled = clamp01(t) * (src.length - 1);
+        int i = (int) Math.floor(scaled);
+        if (i >= src.length - 1) {
+            return src[src.length - 1];
+        }
+        return lerp(src[i], src[i + 1], scaled - i);
+    }
+
+    private static double lerp(double a, double b, double t) {
+        return a + (b - a) * clamp01(t);
+    }
+
+    private static double clamp01(double value) {
+        return value < 0.0D ? 0.0D : (value > 1.0D ? 1.0D : value);
+    }
+
     private static void copy(double[] src, double[] dst) {
         System.arraycopy(src, 0, dst, 0, dst.length);
     }
@@ -571,12 +846,24 @@ abstract class RopeSimulationCore {
         return lastTouchTick;
     }
 
+    public long lastSteppedTick() {
+        return lastSteppedTick;
+    }
+
     public boolean isSettled() {
         return settledTicks >= settleThresholdTicks;
     }
 
     public int quietTicks() {
         return quietTicks;
+    }
+
+    public int ropeStackQuietTicks() {
+        return ropeStackQuietTicks;
+    }
+
+    public long lastWindActiveTick() {
+        return lastWindActiveTick;
     }
 
     public double maxNodeMotionSqr() {
@@ -638,9 +925,11 @@ abstract class RopeSimulationCore {
     }
 
     private double desiredProxyLength(double ax, double ay, double az, double bx, double by, double bz) {
-        Vec3 a = new Vec3(ax, ay, az);
-        Vec3 b = new Vec3(bx, by, bz);
-        return RopeSagModel.physicsTargetLength(a, b, tuning.slack(), tuning.gravity());
+        double dx = bx - ax;
+        double dy = by - ay;
+        double dz = bz - az;
+        return RopeSagModel.physicsTargetLength(Math.sqrt(dx * dx + dy * dy + dz * dz), tuning.slack(),
+                tuning.gravity());
     }
 
     public boolean boundsOverlap(RopeSimulation other, double margin) {
@@ -780,6 +1069,10 @@ abstract class RopeSimulationCore {
     }
 
     protected void updateSettleState() {
+        updateSettleState(false);
+    }
+
+    protected void updateSettleState(boolean ropeStackContact) {
         double maxMotionSqr = 0.0D;
         for (int i = 1; i < nodes - 1; i++) {
             double dx = x[i] - xLastTick[i];
@@ -797,6 +1090,10 @@ abstract class RopeSimulationCore {
             quietTicks++;
         else
             quietTicks = 0;
+        if (ropeStackContact && maxMotionSqr < settleMotionSqr * 16.0D)
+            ropeStackQuietTicks++;
+        else
+            ropeStackQuietTicks = 0;
     }
 
     protected boolean blockHashUnchanged(Level level, long currentTick) {

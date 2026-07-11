@@ -16,7 +16,7 @@ public record UpdateRopeAttachmentSignText(UUID connectionId, UUID attachmentId,
     public static final CustomPacketPayload.Type<UpdateRopeAttachmentSignText> TYPE = new CustomPacketPayload.Type<>(
             Identifier.fromNamespaceAndPath(Super_lead.MODID, "update_rope_attachment_sign_text"));
     public static final StreamCodec<RegistryFriendlyByteBuf, UpdateRopeAttachmentSignText> STREAM_CODEC = CustomPacketPayload
-            .codec(UpdateRopeAttachmentSignText::write, UpdateRopeAttachmentSignText::read);
+            .codec((payload, buf) -> payload.write(buf), UpdateRopeAttachmentSignText::read);
 
     public UpdateRopeAttachmentSignText {
         line0 = sanitize(line0);

@@ -45,9 +45,19 @@ public final class RopeVisibility {
     private static final double SEGMENT_FRUSTUM_MARGIN = 0.25D;
     private static final double VISIBILITY_RAY_TARGET_BIAS = 0.06D;
     private static final double CAMERA_SHIFT_INVALIDATE_SQR = 1.5D * 1.5D;
+    // Remote ropes share a small per-frame occlusion refresh budget. If hundreds of
+    // far, 2D/no-physics ropes are in range, stale cached visibility is reused for
+    // the overflow instead of ray-testing all of them in the same submit pass.
+    private static final int FAR_OCCLUSION_RETEST_BUDGET = 24;
+    private static final int STALE_FAR_OCCLUSION_RETEST_BUDGET = 4;
+    private static final int STALE_FAR_CACHE_MAX_AGE = 48;
 
     private static long frameSeq;
     private static double lastFrameCamX, lastFrameCamY, lastFrameCamZ;
+    private static int farOcclusionRetestsRemaining;
+    private static int staleFarOcclusionRetestsRemaining;
+    private static int debugFarRetests;
+    private static int debugFarDeferred;
 
     private RopeVisibility() {
     }
@@ -71,6 +81,10 @@ public final class RopeVisibility {
         lastFrameCamX = cameraPos.x;
         lastFrameCamY = cameraPos.y;
         lastFrameCamZ = cameraPos.z;
+        farOcclusionRetestsRemaining = FAR_OCCLUSION_RETEST_BUDGET;
+        staleFarOcclusionRetestsRemaining = STALE_FAR_OCCLUSION_RETEST_BUDGET;
+        debugFarRetests = 0;
+        debugFarDeferred = 0;
     }
 
     public static boolean shouldRender(Level level, Entity sourceEntity, Frustum frustum,
@@ -92,6 +106,20 @@ public final class RopeVisibility {
         if (cached != Long.MIN_VALUE && (frameSeq - cached) < interval) {
             return sim.visOcclusionResult();
         }
+        if (dSqr >= PER_SEGMENT_DIST_SQR && cached != Long.MIN_VALUE) {
+            long age = frameSeq - cached;
+            if (farOcclusionRetestsRemaining > 0) {
+                farOcclusionRetestsRemaining--;
+                debugFarRetests++;
+            } else if (age >= STALE_FAR_CACHE_MAX_AGE && staleFarOcclusionRetestsRemaining > 0) {
+                staleFarOcclusionRetestsRemaining--;
+                debugFarRetests++;
+            } else {
+                debugFarDeferred++;
+                sim.setVisOcclusionCache(frameSeq - interval + 1, sim.visOcclusionResult());
+                return sim.visOcclusionResult();
+            }
+        }
         boolean visible;
         if (dSqr < PER_SEGMENT_DIST_SQR) {
             // Close-up: CPU line-of-sight culling is too coarse for ropes. A single block
@@ -110,6 +138,14 @@ public final class RopeVisibility {
         }
         sim.setVisOcclusionCache(frameSeq, visible);
         return visible;
+    }
+
+    public static int debugFarRetests() {
+        return debugFarRetests;
+    }
+
+    public static int debugFarDeferred() {
+        return debugFarDeferred;
     }
 
     /**

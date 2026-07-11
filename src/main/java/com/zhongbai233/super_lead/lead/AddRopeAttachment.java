@@ -12,7 +12,7 @@ public record AddRopeAttachment(UUID connectionId, double t, boolean useOffhand,
     public static final CustomPacketPayload.Type<AddRopeAttachment> TYPE = new CustomPacketPayload.Type<>(
             Identifier.fromNamespaceAndPath(Super_lead.MODID, "add_rope_attachment"));
     public static final StreamCodec<RegistryFriendlyByteBuf, AddRopeAttachment> STREAM_CODEC = CustomPacketPayload
-            .codec(AddRopeAttachment::write, AddRopeAttachment::read);
+            .codec((payload, buf) -> payload.write(buf), AddRopeAttachment::read);
 
     @Override
     public Type<? extends CustomPacketPayload> type() {

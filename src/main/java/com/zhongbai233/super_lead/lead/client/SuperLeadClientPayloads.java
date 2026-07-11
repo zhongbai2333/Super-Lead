@@ -112,9 +112,11 @@ public final class SuperLeadClientPayloads {
         if (level == null)
             return;
         var staticRopes = StaticRopeChunkRegistry.get();
+                java.util.HashSet<java.util.UUID> affected = new java.util.HashSet<>();
         for (RopeContactPulse.Entry entry : payload.contacts()) {
-            staticRopes.invalidateConnection(level, entry.ropeId());
+                        affected.add(entry.ropeId());
         }
+                staticRopes.invalidateConnections(level, affected);
     }
 
     private static void handleSyncRopeTripState(SyncRopeTripState payload, IPayloadContext context) {

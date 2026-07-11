@@ -14,6 +14,9 @@ import net.minecraft.world.phys.Vec3;
  * allocation-light; it runs frequently for every visible dynamic rope.
  */
 abstract class RopeSimulationTerrainConstraints extends RopeSimulationVisualState {
+    private static final double ANCHOR_FACE_DETECT_MARGIN = 0.14D;
+    private static final int ANCHOR_COLLISION_SKIP_SEGMENTS = 1;
+
     private final SegmentBoxContact terrainSegmentBoxContact = new SegmentBoxContact();
 
     protected RopeSimulationTerrainConstraints(Vec3 a, Vec3 b, long seed, RopeTuning tuning) {
@@ -104,7 +107,7 @@ abstract class RopeSimulationTerrainConstraints extends RopeSimulationVisualStat
         for (int cx = bxMin; cx <= bxMax; cx++) {
             for (int cy = byMin; cy <= byMax; cy++) {
                 for (int cz = bzMin; cz <= bzMax; cz++) {
-                    if (isAnchorColumn(cx, cy, cz))
+                    if (isAnchorColumnForSegment(cx, cy, cz, a, b))
                         continue;
                     for (AABB box : blockCache.aabbsAt(level, cx, cy, cz)) {
                         pushSegmentOutOfBox(a, b, box, terrainRadius + collisionEps);
@@ -194,7 +197,7 @@ abstract class RopeSimulationTerrainConstraints extends RopeSimulationVisualStat
                 for (int by = byMin; by <= byMax; by++) {
                     for (int bz = bzMin; bz <= bzMax; bz++) {
                         AABB[] boxes = blockCache.aabbsAt(level, bx, by, bz);
-                        if (isAnchorColumn(bx, by, bz))
+                        if (isAnchorColumnForNode(bx, by, bz, node))
                             continue;
                         for (AABB box : boxes) {
                             if (projectNodeOutOfBox(level, node, box))
@@ -241,6 +244,15 @@ abstract class RopeSimulationTerrainConstraints extends RopeSimulationVisualStat
         // inside another
         // block.
         AABB box = original.inflate(terrainRadius);
+        if (wallRopeNormalValid) {
+            double wallDelta = wallEscapeDelta(px, pz, box);
+            if (Math.abs(wallDelta) > 1.0e-7D
+                    && !isInsideAnyInflatedBox(level, px + wallRopeNormalX * wallDelta, py,
+                            pz + wallRopeNormalZ * wallDelta)) {
+                applyTerrainCorrection(node, wallRopeNormalX * wallDelta, 0.0D, wallRopeNormalZ * wallDelta);
+                return true;
+            }
+        }
         double dxMin = box.minX - collisionEps - px;
         double dxMax = box.maxX + collisionEps - px;
         double dyMin = box.minY - collisionEps - py;
@@ -274,6 +286,22 @@ abstract class RopeSimulationTerrainConstraints extends RopeSimulationVisualStat
         return true;
     }
 
+    private double wallEscapeDelta(double px, double pz, AABB box) {
+        if (wallRopeNormalX > 0.0D) {
+            return box.maxX + collisionEps - px;
+        }
+        if (wallRopeNormalX < 0.0D) {
+            return px - box.minX + collisionEps;
+        }
+        if (wallRopeNormalZ > 0.0D) {
+            return box.maxZ + collisionEps - pz;
+        }
+        if (wallRopeNormalZ < 0.0D) {
+            return pz - box.minZ + collisionEps;
+        }
+        return 0.0D;
+    }
+
     private static void sortBySmallestAbs(double[] vals, int[] axes) {
         for (int i = 0; i < 5; i++) {
             int min = i;
@@ -302,7 +330,7 @@ abstract class RopeSimulationTerrainConstraints extends RopeSimulationVisualStat
         for (int bx = bxMin; bx <= bxMax; bx++) {
             for (int by = byMin; by <= byMax; by++) {
                 for (int bz = bzMin; bz <= bzMax; bz++) {
-                    if (isAnchorColumn(bx, by, bz))
+                    if (wallRopeNormalValid && isAnchorColumn(bx, by, bz))
                         continue;
                     for (AABB box : blockCache.aabbsAt(level, bx, by, bz)) {
                         if (RopeMath.containsInclusive(box.inflate(terrainRadius), wx, wy, wz))
@@ -329,7 +357,7 @@ abstract class RopeSimulationTerrainConstraints extends RopeSimulationVisualStat
         for (int bx = bxMin; bx <= bxMax; bx++) {
             for (int by = byMin; by <= byMax; by++) {
                 for (int bz = bzMin; bz <= bzMax; bz++) {
-                    if (isAnchorColumn(bx, by, bz))
+                    if (isAnchorColumnForSegment(bx, by, bz, a, b))
                         continue;
                     for (AABB box : blockCache.aabbsAt(level, bx, by, bz)) {
                         AABB inflated = box.inflate(terrainRadius);
@@ -370,31 +398,96 @@ abstract class RopeSimulationTerrainConstraints extends RopeSimulationVisualStat
         int last = nodes - 1;
         detectAnchorAt(level, x[0], y[0], z[0], true);
         detectAnchorAt(level, x[last], y[last], z[last], false);
+        updateWallRopeNormal();
     }
 
     protected void clearAnchorColumns() {
         anchorAColX = Integer.MIN_VALUE;
         anchorBColX = Integer.MIN_VALUE;
+        wallRopeNormalValid = false;
+    }
+
+    private void updateWallRopeNormal() {
+        wallRopeNormalValid = false;
+        if (anchorAColX == Integer.MIN_VALUE || anchorBColX == Integer.MIN_VALUE) {
+            return;
+        }
+        double dx = x[nodes - 1] - x[0];
+        double dy = y[nodes - 1] - y[0];
+        double dz = z[nodes - 1] - z[0];
+        double horizontalSqr = dx * dx + dz * dz;
+        if (dy * dy < 1.0e-4D || horizontalSqr > 0.20D * 0.20D) {
+            return;
+        }
+        double ax = x[0] - (anchorAColX + 0.5D);
+        double az = z[0] - (anchorAColZ + 0.5D);
+        double bx = x[nodes - 1] - (anchorBColX + 0.5D);
+        double bz = z[nodes - 1] - (anchorBColZ + 0.5D);
+        double nx = Math.abs(ax) >= Math.abs(az) ? Math.copySign(1.0D, ax) : 0.0D;
+        double nz = nx == 0.0D ? Math.copySign(1.0D, az) : 0.0D;
+        double n2x = Math.abs(bx) >= Math.abs(bz) ? Math.copySign(1.0D, bx) : 0.0D;
+        double n2z = n2x == 0.0D ? Math.copySign(1.0D, bz) : 0.0D;
+        if (nx * n2x + nz * n2z < 0.5D) {
+            return;
+        }
+        wallRopeNormalX = nx;
+        wallRopeNormalZ = nz;
+        wallRopeNormalValid = true;
     }
 
     private void detectAnchorAt(Level level, double px, double py, double pz, boolean isA) {
         int bx = (int) Math.floor(px);
         int by = (int) Math.floor(py);
         int bz = (int) Math.floor(pz);
-        for (AABB box : blockCache.aabbsAt(level, bx, by, bz)) {
-            if (strictlyContains(box, px, py, pz)) {
-                if (isA) {
-                    anchorAColX = bx;
-                    anchorAColY = by;
-                    anchorAColZ = bz;
-                } else {
-                    anchorBColX = bx;
-                    anchorBColY = by;
-                    anchorBColZ = bz;
+        for (int cx = bx - 1; cx <= bx + 1; cx++) {
+            for (int cy = by - 1; cy <= by + 1; cy++) {
+                for (int cz = bz - 1; cz <= bz + 1; cz++) {
+                    for (AABB box : blockCache.aabbsAt(level, cx, cy, cz)) {
+                        if (isAnchorAttachmentBox(box, px, py, pz)) {
+                            setAnchorColumn(cx, cy, cz, isA);
+                            return;
+                        }
+                    }
                 }
-                return;
             }
         }
+    }
+
+    private void setAnchorColumn(int bx, int by, int bz, boolean isA) {
+        if (isA) {
+            anchorAColX = bx;
+            anchorAColY = by;
+            anchorAColZ = bz;
+        } else {
+            anchorBColX = bx;
+            anchorBColY = by;
+            anchorBColZ = bz;
+        }
+    }
+
+    private boolean isAnchorAttachmentBox(AABB box, double px, double py, double pz) {
+        if (strictlyContains(box, px, py, pz)) {
+            return true;
+        }
+        double margin = Math.max(ANCHOR_FACE_DETECT_MARGIN, terrainRadius + collisionEps + 0.06D);
+        if (!RopeMath.containsInclusive(box.inflate(margin), px, py, pz)) {
+            return false;
+        }
+        double dx = distanceOutside(px, box.minX, box.maxX);
+        double dy = distanceOutside(py, box.minY, box.maxY);
+        double dz = distanceOutside(pz, box.minZ, box.maxZ);
+        double outsideSqr = dx * dx + dy * dy + dz * dz;
+        return outsideSqr <= margin * margin;
+    }
+
+    private static double distanceOutside(double value, double min, double max) {
+        if (value < min) {
+            return min - value;
+        }
+        if (value > max) {
+            return value - max;
+        }
+        return 0.0D;
     }
 
     private boolean isAnchorColumn(int bx, int by, int bz) {
@@ -405,6 +498,30 @@ abstract class RopeSimulationTerrainConstraints extends RopeSimulationVisualStat
         return anchorBColX != Integer.MIN_VALUE
                 && bx == anchorBColX && bz == anchorBColZ
                 && (by == anchorBColY || by == anchorBColY - 1);
+    }
+
+    private boolean isAnchorColumnForNode(int bx, int by, int bz, int node) {
+        if (!wallRopeNormalValid) {
+            return false;
+        }
+        if (!isAnchorColumn(bx, by, bz)) {
+            return false;
+        }
+        int last = nodes - 1;
+        return node <= ANCHOR_COLLISION_SKIP_SEGMENTS
+                || node >= last - ANCHOR_COLLISION_SKIP_SEGMENTS;
+    }
+
+    private boolean isAnchorColumnForSegment(int bx, int by, int bz, int a, int b) {
+        if (!wallRopeNormalValid) {
+            return false;
+        }
+        if (!isAnchorColumn(bx, by, bz)) {
+            return false;
+        }
+        int last = nodes - 1;
+        return a <= ANCHOR_COLLISION_SKIP_SEGMENTS
+                || b >= last - ANCHOR_COLLISION_SKIP_SEGMENTS;
     }
 
     private static boolean strictlyContains(AABB box, double px, double py, double pz) {

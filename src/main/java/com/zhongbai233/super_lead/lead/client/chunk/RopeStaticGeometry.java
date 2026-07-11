@@ -4,6 +4,7 @@ import com.zhongbai233.super_lead.lead.LeadConnection;
 import com.zhongbai233.super_lead.lead.LeadEndpointLayout;
 import com.zhongbai233.super_lead.lead.LeadKind;
 import com.zhongbai233.super_lead.lead.client.render.LeashBuilder;
+import com.zhongbai233.super_lead.lead.client.render.RopeAttachmentRenderer;
 import com.zhongbai233.super_lead.lead.client.render.RopeDynamicLights;
 import com.zhongbai233.super_lead.lead.client.sim.RopeSimulation;
 import com.zhongbai233.super_lead.lead.client.sim.RopeTuning;
@@ -52,7 +53,7 @@ public final class RopeStaticGeometry {
         int extractEnd = extractEnd(connection);
         return build(connection.id(), a, b, clientLevel,
                 connection.kind(), connection.powered(), connection.tier(), RopeTuning.forConnection(connection),
-                extractEnd);
+            extractEnd, connection);
     }
 
     public static RopeStaticGeometryResult build(java.util.UUID id, Vec3 a, Vec3 b, Level clientLevel) {
@@ -71,6 +72,11 @@ public final class RopeStaticGeometry {
 
     public static RopeStaticGeometryResult build(java.util.UUID id, Vec3 a, Vec3 b, Level clientLevel,
             LeadKind kind, boolean powered, int tier, RopeTuning tuning, int extractEnd) {
+        return build(id, a, b, clientLevel, kind, powered, tier, tuning, extractEnd, null);
+        }
+
+        private static RopeStaticGeometryResult build(java.util.UUID id, Vec3 a, Vec3 b, Level clientLevel,
+            LeadKind kind, boolean powered, int tier, RopeTuning tuning, int extractEnd, LeadConnection connection) {
         double len = a.distanceTo(b);
         if (len < 1.0e-6D) {
             return RopeStaticGeometryResult.EMPTY;
@@ -91,14 +97,17 @@ public final class RopeStaticGeometry {
             z[i] = (float) cz[i];
         }
 
-        return finalizeSnapshot(id, x, y, z, clientLevel, kind, powered, tier, effectiveTuning, extractEnd);
+        Points3 visualPoints = densifyForVisualStripes(x, y, z, effectiveTuning);
+        return finalizeSnapshot(id, visualPoints.x(), visualPoints.y(), visualPoints.z(), clientLevel, kind, powered, tier, effectiveTuning, extractEnd,
+            connection);
     }
 
     public static RopeStaticGeometryResult buildFromSim(LeadConnection connection,
             RopeSimulation sim,
             Level clientLevel) {
         return buildFromSim(connection.id(), sim, clientLevel,
-                connection.kind(), connection.powered(), connection.tier(), sim.tuning(), extractEnd(connection));
+            connection.kind(), connection.powered(), connection.tier(), sim.tuning(), extractEnd(connection),
+            connection);
     }
 
     public static RopeStaticGeometryResult buildFromSim(java.util.UUID id,
@@ -125,6 +134,13 @@ public final class RopeStaticGeometry {
             RopeSimulation sim,
             Level clientLevel,
             LeadKind kind, boolean powered, int tier, RopeTuning tuning, int extractEnd) {
+        return buildFromSim(id, sim, clientLevel, kind, powered, tier, tuning, extractEnd, null);
+        }
+
+        private static RopeStaticGeometryResult buildFromSim(java.util.UUID id,
+            RopeSimulation sim,
+            Level clientLevel,
+            LeadKind kind, boolean powered, int tier, RopeTuning tuning, int extractEnd, LeadConnection connection) {
         int n = sim.nodeCount();
         if (n < 2)
             return RopeStaticGeometryResult.EMPTY;
@@ -140,13 +156,71 @@ public final class RopeStaticGeometry {
         double dx = x[n - 1] - x[0], dy = y[n - 1] - y[0], dz = z[n - 1] - z[0];
         if (dx * dx + dy * dy + dz * dz < 1.0e-8D)
             return RopeStaticGeometryResult.EMPTY;
-        return finalizeSnapshot(id, x, y, z, clientLevel, kind, powered, tier, tuning, extractEnd);
+        RopeTuning effectiveTuning = tuning != null ? tuning : sim.tuning();
+        Points3 visualPoints = densifyForVisualStripes(x, y, z, effectiveTuning);
+        return finalizeSnapshot(id, visualPoints.x(), visualPoints.y(), visualPoints.z(), clientLevel, kind, powered, tier,
+            effectiveTuning, extractEnd, connection);
+    }
+
+    private static Points3 densifyForVisualStripes(float[] x, float[] y, float[] z, RopeTuning tuning) {
+        if (x.length < 2) {
+            return new Points3(x, y, z);
+        }
+        double stripeLength = Math.max(0.05D, tuning.visualSegmentLength());
+        double visualScale = visualArcScale(x, y, z, tuning);
+        double geometryStripeLength = stripeLength / visualScale;
+        ArrayList<Float> outX = new ArrayList<>(x.length * 2);
+        ArrayList<Float> outY = new ArrayList<>(y.length * 2);
+        ArrayList<Float> outZ = new ArrayList<>(z.length * 2);
+        outX.add(x[0]);
+        outY.add(y[0]);
+        outZ.add(z[0]);
+
+        double arcStart = 0.0D;
+        for (int i = 0; i < x.length - 1; i++) {
+            float ax = x[i], ay = y[i], az = z[i];
+            float bx = x[i + 1], by = y[i + 1], bz = z[i + 1];
+            double dx = bx - ax, dy = by - ay, dz = bz - az;
+            double segmentLength = Math.sqrt(dx * dx + dy * dy + dz * dz);
+            if (segmentLength <= 1.0e-6D) {
+                continue;
+            }
+            double arcEnd = arcStart + segmentLength;
+            int firstBoundary = (int) Math.floor(arcStart / geometryStripeLength) + 1;
+            int lastBoundary = (int) Math.floor((arcEnd - 1.0e-6D) / geometryStripeLength);
+            for (int stripe = firstBoundary; stripe <= lastBoundary; stripe++) {
+                double boundary = stripe * geometryStripeLength;
+                double t = (boundary - arcStart) / segmentLength;
+                if (t > 1.0e-5D && t < 1.0D - 1.0e-5D) {
+                    outX.add((float) (ax + dx * t));
+                    outY.add((float) (ay + dy * t));
+                    outZ.add((float) (az + dz * t));
+                }
+            }
+            outX.add(bx);
+            outY.add(by);
+            outZ.add(bz);
+            arcStart = arcEnd;
+        }
+        return new Points3(toFloatArray(outX), toFloatArray(outY), toFloatArray(outZ));
+    }
+
+    private static float[] toFloatArray(List<Float> values) {
+        float[] out = new float[values.size()];
+        for (int i = 0; i < values.size(); i++) {
+            out[i] = values.get(i);
+        }
+        return out;
+    }
+
+    private record Points3(float[] x, float[] y, float[] z) {
     }
 
     private static RopeStaticGeometryResult finalizeSnapshot(java.util.UUID id,
             float[] x, float[] y, float[] z,
             Level clientLevel,
-            LeadKind kind, boolean powered, int tier, RopeTuning tuning, int extractEnd) {
+            LeadKind kind, boolean powered, int tier, RopeTuning tuning, int extractEnd,
+            LeadConnection connection) {
         int n = x.length;
         RopeTuning effectiveTuning = tuning != null ? tuning : RopeTuning.localDefaults();
         float halfThickness = (float) effectiveTuning.halfThickness();
@@ -159,32 +233,26 @@ public final class RopeStaticGeometry {
         buildFrames(x, y, z, halfThickness, sx, sy, sz, ux, uy, uz);
         float[] nodeThicknessScale = buildNodeThicknessScale(x, y, z, extractEnd);
 
-        BlockPos endA = BlockPos.containing(x[0], y[0], z[0]);
-        BlockPos endB = BlockPos.containing(x[n - 1], y[n - 1], z[n - 1]);
         boolean glow = powered && (kind == LeadKind.REDSTONE || kind == LeadKind.ENERGY);
-        int blockA = glow ? 15
-                : RopeDynamicLights.boostBlockLight(endA,
-                        clientLevel.getBrightness(LightLayer.BLOCK, endA));
-        int blockB = glow ? 15
-                : RopeDynamicLights.boostBlockLight(endB,
-                        clientLevel.getBrightness(LightLayer.BLOCK, endB));
-        int skyA = clientLevel.getBrightness(LightLayer.SKY, endA);
-        int skyB = clientLevel.getBrightness(LightLayer.SKY, endB);
         int[] nodeLight = new int[n];
         for (int i = 0; i < n; i++) {
-            float t = (n == 1) ? 0f : (i / (float) (n - 1));
-            int bL = (int) (blockA + (blockB - blockA) * t);
-            int sL = (int) (skyA + (skyB - skyA) * t);
-            nodeLight[i] = LightCoordsUtil.pack(bL, sL);
+            BlockPos nodePos = BlockPos.containing(x[i], y[i], z[i]);
+            int blockLight = glow ? 15
+                : RopeDynamicLights.boostBlockLight(nodePos,
+                    clientLevel.getBrightness(LightLayer.BLOCK, nodePos));
+            int skyLight = clientLevel.getBrightness(LightLayer.SKY, nodePos);
+            nodeLight[i] = LightCoordsUtil.pack(blockLight, skyLight);
         }
 
+        int[] segmentStripes = buildSegmentStripeIndices(x, y, z, effectiveTuning);
         int[] segColor = new int[(n - 1) * 4];
         for (int s = 0; s < n - 1; s++) {
             int base = s * 4;
-            segColor[base] = LeashBuilder.ropeColor(s, 0, kind, powered, tier, tuning);
-            segColor[base + 1] = LeashBuilder.ropeColor(s, 1, kind, powered, tier, tuning);
-            segColor[base + 2] = LeashBuilder.ropeColor(s, 2, kind, powered, tier, tuning);
-            segColor[base + 3] = LeashBuilder.ropeColor(s, 3, kind, powered, tier, tuning);
+            int stripe = segmentStripes[s];
+            segColor[base] = LeashBuilder.ropeColor(stripe, 0, kind, powered, tier, tuning);
+            segColor[base + 1] = LeashBuilder.ropeColor(stripe, 1, kind, powered, tier, tuning);
+            segColor[base + 2] = LeashBuilder.ropeColor(stripe, 2, kind, powered, tier, tuning);
+            segColor[base + 3] = LeashBuilder.ropeColor(stripe, 3, kind, powered, tier, tuning);
         }
 
         Map<Long, List<int[]>> rangesBySection = new HashMap<>();
@@ -201,18 +269,101 @@ public final class RopeStaticGeometry {
             }
         }
 
+        Map<Long, List<RopeSectionLine>> attachmentLinesBySection = connection == null
+            ? Map.of()
+            : RopeAttachmentRenderer.bakeStaticHangerLines(clientLevel, connection, x, y, z);
+        sections.addAll(attachmentLinesBySection.keySet());
+
         Map<Long, List<RopeSectionSnapshot>> snapshotsBySection = new HashMap<>(rangesBySection.size());
         for (Map.Entry<Long, List<int[]>> e : rangesBySection.entrySet()) {
             List<RopeSectionSnapshot> snapshots = new ArrayList<>(e.getValue().size());
+            boolean firstRangeInSection = true;
             for (int[] range : e.getValue()) {
                 snapshots.add(new RopeSectionSnapshot(
                         id, x, y, z, sx, sy, sz, ux, uy, uz, nodeLight, segColor,
                         nodeThicknessScale, extractEnd,
+                        firstRangeInSection ? attachmentLinesBySection.getOrDefault(e.getKey(), List.of())
+                                : List.of(),
                         range[0], range[1]));
+                firstRangeInSection = false;
             }
             snapshotsBySection.put(e.getKey(), List.copyOf(snapshots));
         }
+        for (Map.Entry<Long, List<RopeSectionLine>> e : attachmentLinesBySection.entrySet()) {
+            if (snapshotsBySection.containsKey(e.getKey())) {
+                continue;
+            }
+            snapshotsBySection.put(e.getKey(), List.of(new RopeSectionSnapshot(
+                    id, x, y, z, sx, sy, sz, ux, uy, uz, nodeLight, segColor,
+                    nodeThicknessScale, extractEnd, e.getValue(), 0, 0)));
+        }
         return new RopeStaticGeometryResult(snapshotsBySection, sections);
+    }
+
+    /**
+     * Maps every generated mesh segment back to the same world-length stripe used
+     * by the dynamic renderer. Static geometry inserts nodes both at stripe
+     * boundaries and at original simulation nodes, so using the generated segment
+     * index directly would introduce an extra color transition at every original
+     * node and make the pattern look compressed and uneven.
+     */
+    static int[] buildSegmentStripeIndices(float[] x, float[] y, float[] z, double stripeLength) {
+        return buildSegmentStripeIndices(x, y, z, stripeLength, 1.0D);
+    }
+
+    static int[] buildSegmentStripeIndices(float[] x, float[] y, float[] z, RopeTuning tuning) {
+        RopeTuning effectiveTuning = tuning != null ? tuning : RopeTuning.localDefaults();
+        return buildSegmentStripeIndices(
+                x, y, z,
+                Math.max(0.05D, effectiveTuning.visualSegmentLength()),
+                visualArcScale(x, y, z, effectiveTuning));
+    }
+
+    private static int[] buildSegmentStripeIndices(
+            float[] x, float[] y, float[] z, double stripeLength, double visualScale) {
+        int segmentCount = Math.max(0, x.length - 1);
+        int[] stripes = new int[segmentCount];
+        double safeStripeLength = Math.max(0.05D, stripeLength);
+        double safeVisualScale = Math.max(1.0e-6D, visualScale);
+        double arcStart = 0.0D;
+        for (int i = 0; i < segmentCount; i++) {
+            double dx = x[i + 1] - x[i];
+            double dy = y[i + 1] - y[i];
+            double dz = z[i + 1] - z[i];
+            double segmentLength = Math.sqrt(dx * dx + dy * dy + dz * dz);
+            // Densification already splits segments at visual stripe boundaries.
+            // Sampling the midpoint avoids assigning a boundary-adjacent segment to
+            // the previous stripe because of float-coordinate rounding.
+            double arcMid = (arcStart + segmentLength * 0.5D) * safeVisualScale;
+            stripes[i] = (int) Math.floor(Math.max(0.0D, arcMid) / safeStripeLength + 1.0e-6D);
+            arcStart += segmentLength;
+        }
+        return stripes;
+    }
+
+    private static double visualArcScale(float[] x, float[] y, float[] z, RopeTuning tuning) {
+        if (x.length < 2) {
+            return 1.0D;
+        }
+        double geometryLength = 0.0D;
+        for (int i = 1; i < x.length; i++) {
+            double dx = x[i] - x[i - 1];
+            double dy = y[i] - y[i - 1];
+            double dz = z[i] - z[i - 1];
+            geometryLength += Math.sqrt(dx * dx + dy * dy + dz * dz);
+        }
+        if (geometryLength < 1.0e-6D) {
+            return 1.0D;
+        }
+        int last = x.length - 1;
+        double endpointDx = x[last] - x[0];
+        double endpointDy = y[last] - y[0];
+        double endpointDz = z[last] - z[0];
+        double endpointDistance = Math.sqrt(
+                endpointDx * endpointDx + endpointDy * endpointDy + endpointDz * endpointDz);
+        double visualLength = RopeSagModel.physicsTargetLength(
+                endpointDistance, tuning.slack(), tuning.gravity());
+        return Math.max(1.0e-6D, visualLength / geometryLength);
     }
 
     private static int extractEnd(LeadConnection connection) {

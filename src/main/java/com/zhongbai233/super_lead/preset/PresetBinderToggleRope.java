@@ -19,7 +19,7 @@ public record PresetBinderToggleRope(UUID connectionId, boolean useOffhand, Vec3
     public static final CustomPacketPayload.Type<PresetBinderToggleRope> TYPE = new CustomPacketPayload.Type<>(
             Identifier.fromNamespaceAndPath(Super_lead.MODID, "preset_binder_toggle_rope"));
     public static final StreamCodec<RegistryFriendlyByteBuf, PresetBinderToggleRope> STREAM_CODEC = CustomPacketPayload
-            .codec(PresetBinderToggleRope::write, PresetBinderToggleRope::read);
+            .codec((payload, buf) -> payload.write(buf), PresetBinderToggleRope::read);
 
     @Override
     public Type<? extends CustomPacketPayload> type() {

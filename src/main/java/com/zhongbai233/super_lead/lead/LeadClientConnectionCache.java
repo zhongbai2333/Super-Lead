@@ -36,7 +36,11 @@ final class LeadClientConnectionCache {
     }
 
     static List<LeadConnection> connections(Level level) {
-        return CONNECTIONS.getOrDefault(NetworkKey.of(level), List.of());
+        return connections(NetworkKey.of(level));
+    }
+
+    static List<LeadConnection> connections(NetworkKey key) {
+        return CONNECTIONS.getOrDefault(key, List.of());
     }
 
     static Optional<LeadConnection> find(Level level, UUID id) {
@@ -45,7 +49,10 @@ final class LeadClientConnectionCache {
     }
 
     static void replaceAll(Level level, List<LeadConnection> connections) {
-        NetworkKey key = NetworkKey.of(level);
+        replaceAll(NetworkKey.of(level), connections);
+    }
+
+    static void replaceAll(NetworkKey key, List<LeadConnection> connections) {
         CONNECTIONS.put(key, new ArrayList<>(connections));
         Map<UUID, LeadConnection> byId = new LinkedHashMap<>();
         for (LeadConnection connection : connections) {
@@ -72,8 +79,14 @@ final class LeadClientConnectionCache {
     }
 
     static void replaceChunk(Level level, ChunkPos chunk, List<LeadConnection> connections) {
-        NetworkKey key = NetworkKey.of(level);
-        long chunkKey = SuperLeadSavedData.chunkKey(chunk);
+        replaceChunk(NetworkKey.of(level), chunk, connections);
+    }
+
+    static void replaceChunk(NetworkKey key, ChunkPos chunk, List<LeadConnection> connections) {
+        replaceChunk(key, SuperLeadSavedData.chunkKey(chunk), connections);
+    }
+
+    static void replaceChunk(NetworkKey key, long chunkKey, List<LeadConnection> connections) {
         Map<Long, Set<UUID>> byChunk = CHUNK_CONNECTIONS.computeIfAbsent(key, ignored -> new HashMap<>());
         Map<UUID, Integer> refCounts = CONNECTION_REFCOUNTS.computeIfAbsent(key, ignored -> new HashMap<>());
         Map<UUID, LeadConnection> byId = CONNECTIONS_BY_ID.computeIfAbsent(key, ignored -> new LinkedHashMap<>());

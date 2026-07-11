@@ -35,7 +35,7 @@ public record ClientRopeContactReport(
     public static final CustomPacketPayload.Type<ClientRopeContactReport> TYPE = new CustomPacketPayload.Type<>(
             Identifier.fromNamespaceAndPath(Super_lead.MODID, "client_rope_contact_report"));
     public static final StreamCodec<RegistryFriendlyByteBuf, ClientRopeContactReport> STREAM_CODEC = CustomPacketPayload
-            .codec(ClientRopeContactReport::write, ClientRopeContactReport::read);
+            .codec((payload, buf) -> payload.write(buf), ClientRopeContactReport::read);
 
     @Override
     public Type<? extends CustomPacketPayload> type() {

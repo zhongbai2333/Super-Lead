@@ -18,7 +18,7 @@ public record BoostRopePerch(UUID connectionId, Vec3 hitPoint, double hitT)
     public static final CustomPacketPayload.Type<BoostRopePerch> TYPE = new CustomPacketPayload.Type<>(
             Identifier.fromNamespaceAndPath(Super_lead.MODID, "boost_rope_perch"));
     public static final StreamCodec<RegistryFriendlyByteBuf, BoostRopePerch> STREAM_CODEC = CustomPacketPayload
-            .codec(BoostRopePerch::write, BoostRopePerch::read);
+            .codec((payload, buf) -> payload.write(buf), BoostRopePerch::read);
 
     @Override
     public Type<? extends CustomPacketPayload> type() {

@@ -8,6 +8,7 @@ import com.zhongbai233.super_lead.lead.LeadEndpointLayout;
 import com.zhongbai233.super_lead.lead.LeadKind;
 import com.zhongbai233.super_lead.lead.OpenRopeAeTerminal;
 import com.zhongbai233.super_lead.lead.RemoveRopeAttachment;
+import com.zhongbai233.super_lead.lead.RopeAttachment;
 import com.zhongbai233.super_lead.lead.StartZipline;
 import com.zhongbai233.super_lead.lead.SuperLeadNetwork;
 import com.zhongbai233.super_lead.lead.ToggleRopeAttachmentForm;
@@ -246,6 +247,45 @@ public final class ClientRopeInteractions {
         }
         ClientPacketDistributor.sendToServer(new ToggleRopeAttachmentForm(pick.connectionId, pick.attachmentId));
         return true;
+    }
+
+    static boolean trySendConfigureRopeAttachmentDisplay() {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.player == null || mc.level == null) {
+            return false;
+        }
+        if (!SuperLeadNetwork.canModifyRopes(mc.player)) {
+            return false;
+        }
+        AttachmentPick pick = pickAttachment(mc, mc.getDeltaTracker().getGameTimeDeltaPartialTick(false));
+        if (pick == null) {
+            return false;
+        }
+        RopeAttachment attachment = findAttachment(mc.level, pick.connectionId, pick.attachmentId);
+        if (attachment == null) {
+            return false;
+        }
+        mc.setScreen(new RopeAttachmentDisplayConfigScreen(mc.screen, pick.connectionId, pick.attachmentId,
+            attachment.stack(), attachment.mountOverride(),
+            attachment.displayModeOverride(), attachment.hangerOverride(), attachment.piercedOverride(),
+            attachment.hangOffsetOverride(), attachment.mountOffsetOverride(), attachment.hangerLengthOverride(),
+            attachment.hangerSpacingOverride(), attachment.scaleOverride(), attachment.frontSide(),
+            attachment.modelStateOverride()));
+        return true;
+    }
+
+    private static RopeAttachment findAttachment(ClientLevel level, UUID connectionId, UUID attachmentId) {
+        for (LeadConnection connection : SuperLeadNetwork.connections(level)) {
+            if (!connection.id().equals(connectionId)) {
+                continue;
+            }
+            for (RopeAttachment attachment : connection.attachments()) {
+                if (attachment.id().equals(attachmentId)) {
+                    return attachment;
+                }
+            }
+        }
+        return null;
     }
 
     /** Open the vanilla sign editor for a sign stored as a rope attachment. */
@@ -769,7 +809,11 @@ public final class ClientRopeInteractions {
                         attachment.stack(), attachment.displayAsBlock(), attachment.frontSide(),
                         px, py, pz,
                         sim.renderX(seg), sim.renderY(seg), sim.renderZ(seg),
-                        sim.renderX(seg + 1), sim.renderY(seg + 1), sim.renderZ(seg + 1));
+                    sim.renderX(seg + 1), sim.renderY(seg + 1), sim.renderZ(seg + 1),
+                    attachment.mountOverride(), attachment.displayModeOverride(),
+                    attachment.hangerOverride(), attachment.piercedOverride(), attachment.hangOffsetOverride(),
+                    attachment.mountOffsetOverride(), attachment.hangerLengthOverride(), attachment.hangerSpacingOverride(),
+                    attachment.scaleOverride(), attachment.modelStateOverride());
                 double d2 = RopePickMath.distancePointToRaySqr(bodyCenter.x, bodyCenter.y, bodyCenter.z,
                         cameraPos.x, cameraPos.y, cameraPos.z, dirX, dirY, dirZ, maxDistance);
                 double d = Math.min(d1, d2);

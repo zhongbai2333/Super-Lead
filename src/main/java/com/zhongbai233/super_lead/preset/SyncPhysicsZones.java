@@ -46,7 +46,7 @@ public record SyncPhysicsZones(List<Entry> zones) implements CustomPacketPayload
     public static final CustomPacketPayload.Type<SyncPhysicsZones> TYPE = new CustomPacketPayload.Type<>(
             Identifier.fromNamespaceAndPath(Super_lead.MODID, "sync_physics_zones"));
     public static final StreamCodec<RegistryFriendlyByteBuf, SyncPhysicsZones> STREAM_CODEC = CustomPacketPayload
-            .codec(SyncPhysicsZones::write, SyncPhysicsZones::read);
+            .codec((payload, buf) -> payload.write(buf), SyncPhysicsZones::read);
 
     @Override
     public Type<? extends CustomPacketPayload> type() {

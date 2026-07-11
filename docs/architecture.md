@@ -333,6 +333,23 @@
 - 服务端接受后广播 `RopeContactPulse`；LOD 无物理绳和静态区块绳收到接触脉冲后会退出静态网格并叠加外部接触偏移。
 - `RopeContactPulse` 还携带服务端实际施加到本地玩家的水平 `dV`，F3 覆盖层显示 `push dV`、方向和接触数。
 
+### 7.4 当前目标变更：服务端不计算视觉风
+
+服务端绳索曲线现在只作为玩法校验/滑索/接触/鹦鹉等权威逻辑的粗曲线使用，不参与任何视觉风模拟。
+
+本约束的原因：
+
+- 风是客户端视觉效果，不影响方块连接、资源传输、红石、滑索合法性或玩家接触的基础校验。
+- 服务端风会让 `ServerRopeCurve` 随游戏 tick 变化，导致曲线缓存按 tick 失效。
+- 多绳场景下，服务端每根绳、每个节点计算风的成本收益比很低。
+
+当前边界：
+
+- 客户端 `RopeSimulationStepper` 仍可计算风，用于近距离动态视觉绳。
+- 服务端 `ServerRopeCurve` 不再保存 `windTick`，也不再采样/叠加 wind force。
+- `ServerPhysicsTuning` 可以继续解析 preset 中的风参数以保持预设结构兼容，但服务端曲线不得消费这些风参数。
+- 以后如果需要“风影响玩法”，必须先新增明确的 gameplay 需求和独立性能预算，不能把视觉风直接加回服务端曲线。
+
 ## 8. 服务端 tick 系统
 
 `SuperLeadEvents.onLevelTick(LevelTickEvent.Post)` 是服务端绳索逻辑总调度。
@@ -340,11 +357,17 @@
 每 tick：
 
 - 服务端：
-  - `tickRedstone`
-  - `tickEnergy`
-  - `tickItem`
-  - `tickFluid`
-  - `RopeContactTracker.tickRopeContacts`
+   - `tickRedstone`
+   - `tickEnergy`
+   - `tickItem`
+   - `tickFluid`
+   - `tickPressurized`
+   - `tickThermal`
+   - `tickAeNetwork`
+   - `RopeContactTracker.tickRopeContacts`
+   - `RopeTripController.tick`
+   - `ParrotRopePerchController.tick`
+   - `ZiplineController.tick`
 
 每 20 tick：
 
@@ -378,6 +401,28 @@
 配置值来自 `Config` 的 volatile 缓存，例如最大距离、物品/流体最大 tier、传输间隔、桶容量等。
 
 ## 9. 客户端渲染与物理生命周期
+
+当前优化目标是让动态绳只为“玩家能明显看见或正在交互”的情况支付完整成本。普通远处绳、稳定绳和被静态网格接管的绳，应尽量走低频、休眠、静态或 ribbon 路径。
+
+动态绳后续优化优先级：
+
+1. 稳定绳休眠：节点速度低、端点不变、无接触/无有效风时停止完整 step，复用最后形状。
+2. 距离分级更新：近距离完整物理，中距离降低 step 频率，远距离只保留视觉 sag/ribbon。
+3. 动态 mesh 构建预算：每帧限制完整几何重建数量，未获得预算的绳复用上一帧结果。
+4. 物理节点数和渲染段数分离：中远距离减少物理节点，用插值保持视觉连续。
+5. light/pulse/highlight 局部化：避免只因流动脉冲或高亮导致整根绳每帧全量重建。
+
+当前已实现的第一阶段客户端调度键：
+
+- `dynamic.physicsBudget`：每个客户端 tick 最多允许多少根动态绳运行完整物理。
+- `dynamic.settledStepInterval`：稳定且无交互绳的最低物理更新间隔。
+- `dynamic.stepInterval2Distance` / `dynamic.stepInterval4Distance`：按距离把动态物理降到 10 TPS / 5 TPS。
+- `dynamic.coarseTopologyDistance`：中远距离新建 simulation 时使用更粗的段长和更低最大段数。
+- `dynamic.pulseDistance`：超过该距离后不再让流动脉冲改变动态绳粗细，避免远处绳因 pulse 每帧打破 mesh/bake 缓存。
+
+带服务端接触脉冲、滑索骑乘、鹦鹉/外力或极近距离的绳会绕过普通分频，优先保持完整动态响应。
+
+该目标只约束客户端视觉/渲染路径，不改变服务端权威数据、资源传输或权限系统。
 
 主循环在 `SuperLeadClientEvents.onSubmitCustomGeometry(SubmitCustomGeometryEvent)`。
 

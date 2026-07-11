@@ -12,7 +12,7 @@ public record PresetDetailsResponse(String name, boolean exists, Map<String, Str
     public static final CustomPacketPayload.Type<PresetDetailsResponse> TYPE = new CustomPacketPayload.Type<>(
             Identifier.fromNamespaceAndPath(Super_lead.MODID, "preset_details_response"));
     public static final StreamCodec<RegistryFriendlyByteBuf, PresetDetailsResponse> STREAM_CODEC = CustomPacketPayload
-            .codec(PresetDetailsResponse::write, PresetDetailsResponse::read);
+            .codec((payload, buf) -> payload.write(buf), PresetDetailsResponse::read);
 
     public PresetDetailsResponse {
         overrides = PresetPayloadCodecs.immutableCopy(overrides);

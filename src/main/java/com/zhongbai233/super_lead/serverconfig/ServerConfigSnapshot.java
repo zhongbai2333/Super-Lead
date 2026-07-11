@@ -13,7 +13,7 @@ public record ServerConfigSnapshot(Map<String, String> values) implements Custom
     public static final CustomPacketPayload.Type<ServerConfigSnapshot> TYPE = new CustomPacketPayload.Type<>(
             Identifier.fromNamespaceAndPath(Super_lead.MODID, "server_config_snapshot"));
     public static final StreamCodec<RegistryFriendlyByteBuf, ServerConfigSnapshot> STREAM_CODEC = CustomPacketPayload
-            .codec(ServerConfigSnapshot::write, ServerConfigSnapshot::read);
+            .codec((payload, buf) -> payload.write(buf), ServerConfigSnapshot::read);
 
     public ServerConfigSnapshot {
         values = PresetPayloadCodecs.immutableCopy(values);

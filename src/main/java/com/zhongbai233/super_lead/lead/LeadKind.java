@@ -12,7 +12,7 @@ public enum LeadKind {
     THERMAL("thermal"),
     AE_NETWORK("ae_network");
 
-    public static final Codec<LeadKind> CODEC = Codec.STRING.xmap(LeadKind::byName, LeadKind::serializedName);
+    public static final Codec<LeadKind> CODEC = Codec.STRING.xmap(name -> byName(name), kind -> kind.serializedName());
 
     private final String serializedName;
 

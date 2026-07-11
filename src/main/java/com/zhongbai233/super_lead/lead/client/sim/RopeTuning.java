@@ -5,6 +5,7 @@ import com.zhongbai233.super_lead.lead.LeadKind;
 import com.zhongbai233.super_lead.preset.client.PhysicsZonesClient;
 import com.zhongbai233.super_lead.tuning.ClientTuning;
 import com.zhongbai233.super_lead.tuning.TuningKey;
+import java.util.HashMap;
 import java.util.Map;
 import net.minecraft.world.phys.Vec3;
 
@@ -18,6 +19,7 @@ import net.minecraft.world.phys.Vec3;
 public record RopeTuning(
         double slack,
         double segmentLength,
+        double visualSegmentLength,
         int segmentMax,
         double gravity,
         double damping,
@@ -84,6 +86,83 @@ public record RopeTuning(
         double windPauseJitter,
         double windRampBias,
         double windVerticalLift) {
+    private static final HashMap<PresetCacheKey, RopeTuning> PRESET_CACHE = new HashMap<>();
+    private static RopeTuning localDefaultsCache;
+    private static long localDefaultsRenderEpoch = Long.MIN_VALUE;
+    private static long localDefaultsPhysicsEpoch = Long.MIN_VALUE;
+
+    public RopeTuning withTopology(double segmentLength, int segmentMax) {
+        return new RopeTuning(
+                slack,
+                segmentLength,
+                visualSegmentLength,
+                Math.max(minSegments, segmentMax),
+                gravity,
+                damping,
+                iterAir,
+                iterContact,
+                iterRope,
+                compliance,
+                halfThickness,
+                ribbonWidthFactor,
+                normalBaseColor,
+                normalAccentColor,
+                redstoneBaseColor,
+                redstoneAccentColor,
+                energyBaseColor,
+                energyAccentColor,
+                itemBaseColor,
+                itemAccentColor,
+                fluidBaseColor,
+                fluidAccentColor,
+                pressurizedBaseColor,
+                pressurizedAccentColor,
+                thermalBaseColor,
+                thermalAccentColor,
+                aeNetworkBaseColor,
+                aeNetworkAccentColor,
+                modePhysics,
+                ropeRadius,
+                terrainRadius,
+                ropeRepelDistance,
+                collisionEps,
+                terrainProximityMargin,
+                segmentCornerPushFactor,
+                segmentTopSupportFactor,
+                minSegments,
+                maxSubsteps,
+                substepSpeedTier1,
+                substepSpeedTier2,
+                substepSpeedTier3,
+                supportDownInvMass,
+                contactPushGain,
+                entityPushGain,
+                ropeRopeParallelRelax,
+                contactNodeDamping,
+                initialVelocityKick,
+                settleThresholdTicks,
+                settleMotionSqr,
+                endpointWakeDistanceSqr,
+                sagArcApproxFactor,
+                fullSlackHorizontalRatio,
+                steepAngleDeg,
+                maxTickDelta,
+                tunnelThresholdSqr,
+                windEnabled,
+                windPhysicsDistance,
+                windStrength,
+                windStrengthJitter,
+                windDirectionDeg,
+                windDirectionJitterDeg,
+                windCellDirectionSpreadDeg,
+                windWaveLength,
+                windSpeed,
+                windDuty,
+                windDurationJitter,
+                windPauseJitter,
+                windRampBias,
+                windVerticalLift);
+    }
 
     public static RopeTuning forMidpoint(Vec3 a, Vec3 b) {
         ClientTuning.loadOnce();
@@ -92,7 +171,24 @@ public record RopeTuning(
 
     public static RopeTuning forConnection(LeadConnection connection) {
         ClientTuning.loadOnce();
-        return fromOverrides(PhysicsZonesClient.overridesForPreset(connection.physicsPreset()));
+        String preset = connection.physicsPreset();
+        if (preset == null || preset.isBlank()) {
+            return localDefaults();
+        }
+        long presetEpoch = PhysicsZonesClient.epoch();
+        long renderEpoch = ClientTuning.renderEpoch();
+        long physicsEpoch = ClientTuning.physicsEpoch();
+        PresetCacheKey key = new PresetCacheKey(preset, presetEpoch, renderEpoch, physicsEpoch);
+        RopeTuning cached = PRESET_CACHE.get(key);
+        if (cached != null) {
+            return cached;
+        }
+        RopeTuning resolved = fromOverrides(PhysicsZonesClient.overridesForPreset(preset));
+        if (PRESET_CACHE.size() > 128) {
+            PRESET_CACHE.clear();
+        }
+        PRESET_CACHE.put(key, resolved);
+        return resolved;
     }
 
     public static RopeTuning at(double x, double y, double z) {
@@ -102,12 +198,30 @@ public record RopeTuning(
 
     public static RopeTuning localDefaults() {
         ClientTuning.loadOnce();
-        return fromOverrides(Map.of());
+        long renderEpoch = ClientTuning.renderEpoch();
+        long physicsEpoch = ClientTuning.physicsEpoch();
+        RopeTuning cached = localDefaultsCache;
+        if (cached != null && localDefaultsRenderEpoch == renderEpoch && localDefaultsPhysicsEpoch == physicsEpoch) {
+            return cached;
+        }
+        RopeTuning resolved = fromOverrides(Map.of());
+        localDefaultsCache = resolved;
+        localDefaultsRenderEpoch = renderEpoch;
+        localDefaultsPhysicsEpoch = physicsEpoch;
+        return resolved;
+    }
+
+    public static void clearCache() {
+        PRESET_CACHE.clear();
+        localDefaultsCache = null;
+        localDefaultsRenderEpoch = Long.MIN_VALUE;
+        localDefaultsPhysicsEpoch = Long.MIN_VALUE;
     }
 
     private static RopeTuning fromOverrides(Map<String, String> overrides) {
         return new RopeTuning(
                 resolve(overrides, ClientTuning.SLACK),
+                resolve(overrides, ClientTuning.SEGMENT_LENGTH),
                 resolve(overrides, ClientTuning.SEGMENT_LENGTH),
                 resolve(overrides, ClientTuning.SEGMENT_MAX),
                 resolve(overrides, ClientTuning.GRAVITY),
@@ -229,5 +343,8 @@ public record RopeTuning(
             return false;
         }
         return parsed instanceof Double d && Double.isFinite(d);
+    }
+
+    private record PresetCacheKey(String preset, long presetEpoch, long renderEpoch, long physicsEpoch) {
     }
 }

@@ -11,7 +11,7 @@ public record UnloadRopeChunk(ChunkPos chunk) implements CustomPacketPayload {
     public static final CustomPacketPayload.Type<UnloadRopeChunk> TYPE = new CustomPacketPayload.Type<>(
             Identifier.fromNamespaceAndPath(Super_lead.MODID, "unload_rope_chunk"));
     public static final StreamCodec<RegistryFriendlyByteBuf, UnloadRopeChunk> STREAM_CODEC = CustomPacketPayload
-            .codec(UnloadRopeChunk::write, UnloadRopeChunk::read);
+            .codec((payload, buf) -> payload.write(buf), UnloadRopeChunk::read);
 
     @Override
     public Type<? extends CustomPacketPayload> type() {

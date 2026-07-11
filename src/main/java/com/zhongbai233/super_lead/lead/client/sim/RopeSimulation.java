@@ -1,5 +1,6 @@
 package com.zhongbai233.super_lead.lead.client.sim;
 
+import com.zhongbai233.super_lead.lead.physics.RopeSagModel;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 
@@ -17,6 +18,12 @@ public final class RopeSimulation extends RopeSimulationStepper {
     private static final double TOP_SUPPORT_SNAP = 0.025D;
 
     private final SegmentBoxContact playerContactScratch = new SegmentBoxContact();
+    private final PlayerContactCurve playerContactCurveScratch = new PlayerContactCurve();
+    private final PlayerContactContext playerContactContextScratch = new PlayerContactContext();
+    private final PlayerContactGeometry playerContactGeometryScratch = new PlayerContactGeometry();
+    private final PlayerContactAccumulator playerContactAccumulatorScratch = new PlayerContactAccumulator();
+    private final double[] normalScratch = new double[3];
+    private final double[] smoothNormalScratch = new double[3];
 
     public RopeSimulation(Vec3 a, Vec3 b) {
         this(a, b, 0L, RopeTuning.forMidpoint(a, b));
@@ -56,16 +63,16 @@ public final class RopeSimulation extends RopeSimulationStepper {
     }
 
     public ContactSample findPlayerContact(AABB box, double radius, double topPadding) {
-        PlayerContactCurve curve = preparePlayerContactCurve();
+        PlayerContactCurve curve = preparePlayerContactCurve(playerContactCurveScratch);
         if (curve.totalLen < 1.0e-6D)
             return null;
 
-        PlayerContactContext context = new PlayerContactContext(
+        PlayerContactContext context = playerContactContextScratch.set(
                 box, radius, Math.max(0.0D, topPadding),
                 (box.minX + box.maxX) * 0.5D,
                 (box.minY + box.maxY) * 0.5D,
                 (box.minZ + box.maxZ) * 0.5D);
-        PlayerContactAccumulator accumulator = new PlayerContactAccumulator();
+        PlayerContactAccumulator accumulator = playerContactAccumulatorScratch.reset();
         double walked = 0.0D;
         for (int s = 0; s < segments; s++) {
             walked += samplePlayerContactSegment(curve, context, s, walked, accumulator);
@@ -73,7 +80,7 @@ public final class RopeSimulation extends RopeSimulationStepper {
         return accumulator.result();
     }
 
-    private PlayerContactCurve preparePlayerContactCurve() {
+    private PlayerContactCurve preparePlayerContactCurve(PlayerContactCurve out) {
         double[] sampleX = x;
         double[] sampleY = y;
         double[] sampleZ = z;
@@ -92,12 +99,15 @@ public final class RopeSimulation extends RopeSimulationStepper {
                 totalLen += Math.sqrt(sx * sx + sy * sy + sz * sz);
             }
         }
-        Vec3 endpointA = new Vec3(sampleX[0], sampleY[0], sampleZ[0]);
-        Vec3 endpointB = new Vec3(sampleX[nodes - 1], sampleY[nodes - 1], sampleZ[nodes - 1]);
-        double chordLen = endpointA.distanceTo(endpointB);
-        double targetLen = chordLen > 1.0e-6D ? chordLen * slackFactor(endpointA, endpointB) / segments : 0.0D;
+            double dx = sampleX[nodes - 1] - sampleX[0];
+            double dy = sampleY[nodes - 1] - sampleY[0];
+            double dz = sampleZ[nodes - 1] - sampleZ[0];
+            double chordLen = Math.sqrt(dx * dx + dy * dy + dz * dz);
+            double targetLen = chordLen > 1.0e-6D
+                ? chordLen * RopeSagModel.slackFactor(dx, dy, dz, tuning.slack(), tuning.gravity()) / segments
+                : 0.0D;
         double freeSlack = Math.max(0.0D, targetLen * segments - chordLen);
-        return new PlayerContactCurve(sampleX, sampleY, sampleZ, totalLen, targetLen, freeSlack);
+            return out.set(sampleX, sampleY, sampleZ, totalLen, targetLen, freeSlack);
     }
 
     private double samplePlayerContactSegment(
@@ -112,7 +122,8 @@ public final class RopeSimulation extends RopeSimulationStepper {
         double segLen = Math.sqrt(sx * sx + sy * sy + sz * sz);
         SegmentBoxContact contact = playerContactScratch.compute(
                 ax, ay, az, bx, by, bz, context.box, 1.0e-9D);
-        PlayerContactGeometry geometry = playerContactGeometry(context, contact, sx, sy, sz, segLen);
+        PlayerContactGeometry geometry = playerContactGeometry(context, contact, sx, sy, sz, segLen,
+            playerContactGeometryScratch);
         if (geometry == null)
             return 0.0D;
 
@@ -144,11 +155,12 @@ public final class RopeSimulation extends RopeSimulationStepper {
             double sx,
             double sy,
             double sz,
-            double segLen) {
+            double segLen,
+            PlayerContactGeometry out) {
         if (insideBox(context.box, contact.spx, contact.spy, contact.spz)) {
-            return insidePlayerContactGeometry(context, contact, sx, sy, sz, segLen);
+            return insidePlayerContactGeometry(context, contact, sx, sy, sz, segLen, out);
         }
-        return outsidePlayerContactGeometry(context, contact);
+        return outsidePlayerContactGeometry(context, contact, out);
     }
 
     private PlayerContactGeometry insidePlayerContactGeometry(
@@ -157,20 +169,21 @@ public final class RopeSimulation extends RopeSimulationStepper {
             double sx,
             double sy,
             double sz,
-            double segLen) {
-        double[] normal = stableSegmentNormal(
+            double segLen,
+            PlayerContactGeometry out) {
+        stableSegmentNormal(
                 context.centerX - contact.spx,
                 context.centerY - contact.spy,
                 context.centerZ - contact.spz,
-                sx, sy, sz, segLen);
+                sx, sy, sz, segLen, normalScratch);
         double exit = Math.min(Math.min(contact.spx - context.box.minX, context.box.maxX - contact.spx),
                 Math.min(Math.min(contact.spy - context.box.minY, context.box.maxY - contact.spy),
                         Math.min(contact.spz - context.box.minZ, context.box.maxZ - contact.spz)));
-        return PlayerContactGeometry.set(contact, normal[0], normal[1], normal[2], -Math.max(0.0D, exit));
+        return out.set(contact, normalScratch[0], normalScratch[1], normalScratch[2], -Math.max(0.0D, exit));
     }
 
     private PlayerContactGeometry outsidePlayerContactGeometry(
-            PlayerContactContext context, SegmentBoxContact contact) {
+            PlayerContactContext context, SegmentBoxContact contact, PlayerContactGeometry out) {
         double rawNx = contact.cpx - contact.spx;
         double rawNy = contact.cpy - contact.spy;
         double rawNz = contact.cpz - contact.spz;
@@ -184,7 +197,7 @@ public final class RopeSimulation extends RopeSimulationStepper {
         if (nLen < 1.0e-5D)
             return null;
         double invLen = 1.0D / nLen;
-        return PlayerContactGeometry.set(contact,
+        return out.set(contact,
                 rawNx * invLen, rawNy * invLen, rawNz * invLen, Math.sqrt(contact.distSqr));
     }
 
@@ -194,21 +207,21 @@ public final class RopeSimulation extends RopeSimulationStepper {
                 && z >= box.minZ && z <= box.maxZ;
     }
 
-    private static void smoothPlayerContactNormal(
+    private void smoothPlayerContactNormal(
             PlayerContactContext context,
             PlayerContactGeometry geometry,
             double sx,
             double sy,
             double sz,
             double segLen) {
-        double[] smoothed = smoothSideNormal(
+        smoothSideNormal(
                 context.centerX - geometry.qx,
                 context.centerY - geometry.qy,
-                context.centerZ - geometry.qz,
-                geometry.nx, geometry.ny, geometry.nz, sx, sy, sz, segLen);
-        geometry.nx = smoothed[0];
-        geometry.ny = smoothed[1];
-        geometry.nz = smoothed[2];
+            context.centerZ - geometry.qz,
+            geometry.nx, geometry.ny, geometry.nz, sx, sy, sz, segLen, smoothNormalScratch);
+        geometry.nx = smoothNormalScratch[0];
+        geometry.ny = smoothNormalScratch[1];
+        geometry.nz = smoothNormalScratch[2];
     }
 
     private static boolean topSupportCandidate(PlayerContactContext context, PlayerContactGeometry geometry) {
@@ -243,8 +256,8 @@ public final class RopeSimulation extends RopeSimulationStepper {
         return value < min ? min : (value > max ? max : value);
     }
 
-    private static double[] stableSegmentNormal(double vx, double vy, double vz,
-            double sx, double sy, double sz, double segLen) {
+    private static void stableSegmentNormal(double vx, double vy, double vz,
+            double sx, double sy, double sz, double segLen, double[] out) {
         if (segLen > 1.0e-6D) {
             double tx = sx / segLen;
             double ty = sy / segLen;
@@ -263,16 +276,24 @@ public final class RopeSimulation extends RopeSimulationStepper {
                 double sideZ = tx;
                 double sideLen = Math.sqrt(sideX * sideX + sideZ * sideZ);
                 if (sideLen > 1.0e-5D) {
-                    return new double[] { sideX / sideLen, 0.0D, sideZ / sideLen };
+                    out[0] = sideX / sideLen;
+                    out[1] = 0.0D;
+                    out[2] = sideZ / sideLen;
+                    return;
                 }
             }
-            return new double[] { 1.0D, 0.0D, 0.0D };
+            out[0] = 1.0D;
+            out[1] = 0.0D;
+            out[2] = 0.0D;
+            return;
         }
-        return new double[] { vx / len, vy / len, vz / len };
+        out[0] = vx / len;
+        out[1] = vy / len;
+        out[2] = vz / len;
     }
 
-    private static double[] smoothSideNormal(double centerX, double centerY, double centerZ,
-            double nx, double ny, double nz, double sx, double sy, double sz, double segLen) {
+    private static void smoothSideNormal(double centerX, double centerY, double centerZ,
+            double nx, double ny, double nz, double sx, double sy, double sz, double segLen, double[] out) {
         double vx = centerX;
         double vy = Math.abs(ny) > 0.35D ? centerY : 0.0D;
         double vz = centerZ;
@@ -287,7 +308,10 @@ public final class RopeSimulation extends RopeSimulationStepper {
         }
         double len = Math.sqrt(vx * vx + vy * vy + vz * vz);
         if (len < 1.0e-5D || vx * nx + vy * ny + vz * nz <= 0.0D) {
-            return new double[] { nx, ny, nz };
+            out[0] = nx;
+            out[1] = ny;
+            out[2] = nz;
+            return;
         }
         vx /= len;
         vy /= len;
@@ -297,9 +321,15 @@ public final class RopeSimulation extends RopeSimulationStepper {
         ny = ny * (1.0D - blend) + vy * blend;
         nz = nz * (1.0D - blend) + vz * blend;
         len = Math.sqrt(nx * nx + ny * ny + nz * nz);
-        if (len < 1.0e-5D)
-            return new double[] { vx, vy, vz };
-        return new double[] { nx / len, ny / len, nz / len };
+        if (len < 1.0e-5D) {
+            out[0] = vx;
+            out[1] = vy;
+            out[2] = vz;
+            return;
+        }
+        out[0] = nx / len;
+        out[1] = ny / len;
+        out[2] = nz / len;
     }
 
     private static double contactBlendWeight(double depth, double radius) {
@@ -308,14 +338,14 @@ public final class RopeSimulation extends RopeSimulationStepper {
     }
 
     private static final class PlayerContactCurve {
-        final double[] x;
-        final double[] y;
-        final double[] z;
-        final double totalLen;
-        final double targetLen;
-        final double freeSlack;
+        double[] x;
+        double[] y;
+        double[] z;
+        double totalLen;
+        double targetLen;
+        double freeSlack;
 
-        PlayerContactCurve(double[] x, double[] y, double[] z,
+        PlayerContactCurve set(double[] x, double[] y, double[] z,
                 double totalLen, double targetLen, double freeSlack) {
             this.x = x;
             this.y = y;
@@ -323,18 +353,19 @@ public final class RopeSimulation extends RopeSimulationStepper {
             this.totalLen = totalLen;
             this.targetLen = targetLen;
             this.freeSlack = freeSlack;
+            return this;
         }
     }
 
     private static final class PlayerContactContext {
-        final AABB box;
-        final double radius;
-        final double topPadding;
-        final double centerX;
-        final double centerY;
-        final double centerZ;
+        AABB box;
+        double radius;
+        double topPadding;
+        double centerX;
+        double centerY;
+        double centerZ;
 
-        PlayerContactContext(AABB box, double radius, double topPadding,
+        PlayerContactContext set(AABB box, double radius, double topPadding,
                 double centerX, double centerY, double centerZ) {
             this.box = box;
             this.radius = radius;
@@ -342,21 +373,22 @@ public final class RopeSimulation extends RopeSimulationStepper {
             this.centerX = centerX;
             this.centerY = centerY;
             this.centerZ = centerZ;
+            return this;
         }
     }
 
     private static final class PlayerContactGeometry {
-        final double qx;
-        final double qy;
-        final double qz;
-        final double cx;
-        final double cz;
-        final double separation;
+        double qx;
+        double qy;
+        double qz;
+        double cx;
+        double cz;
+        double separation;
         double nx;
         double ny;
         double nz;
 
-        private PlayerContactGeometry(SegmentBoxContact contact,
+        PlayerContactGeometry set(SegmentBoxContact contact,
                 double nx, double ny, double nz, double separation) {
             this.qx = contact.spx;
             this.qy = contact.spy;
@@ -367,11 +399,7 @@ public final class RopeSimulation extends RopeSimulationStepper {
             this.ny = ny;
             this.nz = nz;
             this.separation = separation;
-        }
-
-        static PlayerContactGeometry set(SegmentBoxContact contact,
-                double nx, double ny, double nz, double separation) {
-            return new PlayerContactGeometry(contact, nx, ny, nz, separation);
+            return this;
         }
     }
 
@@ -391,6 +419,23 @@ public final class RopeSimulation extends RopeSimulationStepper {
         private double sumTz;
         private double sumDepth;
         private double sumSlack;
+        private double outNx;
+        private double outNy;
+        private double outNz;
+        private double outTx;
+        private double outTy;
+        private double outTz;
+
+        PlayerContactAccumulator reset() {
+            best = null;
+            bestSeparation = Double.POSITIVE_INFINITY;
+            weightSum = 0.0D;
+            sumX = sumY = sumZ = sumT = 0.0D;
+            sumNx = sumNy = sumNz = 0.0D;
+            sumTx = sumTy = sumTz = 0.0D;
+            sumDepth = sumSlack = 0.0D;
+            return this;
+        }
 
         void add(PlayerContactGeometry geometry,
                 double t, double tx, double ty, double tz,
@@ -432,25 +477,44 @@ public final class RopeSimulation extends RopeSimulationStepper {
             if (best == null || weightSum <= 1.0e-9D)
                 return best;
             double invWeight = 1.0D / weightSum;
-            double[] normal = normalizedOrBest(sumNx * invWeight, sumNy * invWeight, sumNz * invWeight,
+            setNormalOrBest(sumNx * invWeight, sumNy * invWeight, sumNz * invWeight,
                     best.normalX(), best.normalY(), best.normalZ());
-            double[] tangent = normalizedOrBest(sumTx * invWeight, sumTy * invWeight, sumTz * invWeight,
+            setTangentOrBest(sumTx * invWeight, sumTy * invWeight, sumTz * invWeight,
                     best.tangentX(), best.tangentY(), best.tangentZ());
             double depth = Math.max(sumDepth * invWeight, best.depth() * 0.65D);
             return new ContactSample(sumX * invWeight, sumY * invWeight, sumZ * invWeight,
                     clamp(sumT * invWeight, 0.0D, 1.0D),
-                    normal[0], normal[1], normal[2],
-                    tangent[0], tangent[1], tangent[2],
+                    outNx, outNy, outNz,
+                    outTx, outTy, outTz,
                     depth, sumSlack * invWeight);
         }
 
-        private static double[] normalizedOrBest(
-                double x, double y, double z, double bestX, double bestY, double bestZ) {
+        private void setNormalOrBest(double x, double y, double z, double bestX, double bestY, double bestZ) {
             double len = Math.sqrt(x * x + y * y + z * z);
-            if (len < 1.0e-5D)
-                return new double[] { bestX, bestY, bestZ };
+            if (len < 1.0e-5D) {
+                outNx = bestX;
+                outNy = bestY;
+                outNz = bestZ;
+                return;
+            }
             double invLen = 1.0D / len;
-            return new double[] { x * invLen, y * invLen, z * invLen };
+            outNx = x * invLen;
+            outNy = y * invLen;
+            outNz = z * invLen;
+        }
+
+        private void setTangentOrBest(double x, double y, double z, double bestX, double bestY, double bestZ) {
+            double len = Math.sqrt(x * x + y * y + z * z);
+            if (len < 1.0e-5D) {
+                outTx = bestX;
+                outTy = bestY;
+                outTz = bestZ;
+                return;
+            }
+            double invLen = 1.0D / len;
+            outTx = x * invLen;
+            outTy = y * invLen;
+            outTz = z * invLen;
         }
     }
 

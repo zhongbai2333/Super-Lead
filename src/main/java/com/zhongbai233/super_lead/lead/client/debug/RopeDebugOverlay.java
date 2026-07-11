@@ -1,6 +1,7 @@
 package com.zhongbai233.super_lead.lead.client.debug;
 
 import com.zhongbai233.super_lead.Super_lead;
+import com.zhongbai233.super_lead.lead.client.chunk.RopeSectionMeshDriver;
 import com.zhongbai233.super_lead.preset.client.PhysicsZonesClient;
 import com.zhongbai233.super_lead.tuning.ClientTuning;
 import java.util.List;
@@ -44,6 +45,7 @@ public final class RopeDebugOverlay implements DebugScreenEntry {
                         + " render=" + RopeDebugStats.renderEntries,
                 "[SuperLead] dyn=" + RopeDebugStats.dynamicJobs
                         + " claimed=" + RopeDebugStats.chunkMeshClaimed
+                    + " acc=" + RopeDebugStats.chunkMeshAcceptedConnections
                         + " elig=" + RopeDebugStats.chunkMeshEligible
                         + " wait=" + RopeDebugStats.chunkMeshWaitingQuiet,
                 "[SuperLead] mesh src sim=" + RopeDebugStats.chunkMeshClaimedFromSim
@@ -60,7 +62,16 @@ public final class RopeDebugOverlay implements DebugScreenEntry {
                         + " mesh=" + RopeDebugStats.chunkMeshNodesTotal + ")"
                         + " verts=" + RopeDebugStats.verticesEmitted,
                 "[SuperLead] meshSec=" + RopeDebugStats.chunkMeshSections
-                        + " snap=" + RopeDebugStats.chunkMeshSnapshots,
+                    + "/" + RopeDebugStats.chunkMeshAcceptedSections
+                    + " snap=" + RopeDebugStats.chunkMeshSnapshots
+                    + " evt=" + RopeSectionMeshDriver.debugCallbacks() + "/" + RopeSectionMeshDriver.debugHits()
+                    + " dirty=" + RopeDebugStats.meshDirtyFlushed + "/"
+                    + RopeDebugStats.meshDirtyQueue,
+                "[SuperLead] vis far retest=" + RopeDebugStats.visibilityFarRetests
+                    + " defer=" + RopeDebugStats.visibilityFarDeferred,
+                "[SuperLead] neighbor candidates=" + RopeDebugStats.neighborCandidates
+                        + " narrow=" + RopeDebugStats.neighborNarrowPhase
+                        + " guard=" + (RopeDebugStats.neighborBuildTruncated ? "TRIPPED" : "ok"),
                 "[SuperLead] zones=" + PhysicsZonesClient.zones().size()
                         + " overrides=" + zoneOverrideCount()
                         + " zoneEpoch=" + PhysicsZonesClient.epoch(),

@@ -7,6 +7,7 @@ import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import com.zhongbai233.super_lead.Super_lead;
+import com.zhongbai233.super_lead.permissions.SuperLeadPermissions;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
@@ -22,8 +23,6 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraft.server.permissions.Permission;
-import net.minecraft.server.permissions.PermissionLevel;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.Vec3;
 import net.neoforged.bus.api.SubscribeEvent;
@@ -34,7 +33,6 @@ import net.neoforged.neoforge.event.tick.LevelTickEvent;
 /** Server-side rope-curve particle visualizer for debugging zipline physics. */
 @EventBusSubscriber(modid = Super_lead.MODID)
 public final class ServerRopeDebugCommand {
-    private static final Permission.HasCommandLevel OP = new Permission.HasCommandLevel(PermissionLevel.GAMEMASTERS);
     private static final double DEFAULT_RADIUS = 24.0D;
     private static final int DEFAULT_SECONDS = 10;
     private static final int MAX_SECONDS = 120;
@@ -53,8 +51,8 @@ public final class ServerRopeDebugCommand {
     public static void onRegister(RegisterCommandsEvent event) {
         CommandDispatcher<CommandSourceStack> dispatcher = event.getDispatcher();
         LiteralArgumentBuilder<CommandSourceStack> root = Commands.literal("superlead")
-                .requires(src -> src.permissions().hasPermission(OP))
                 .then(Commands.literal("serverrope")
+                .requires(SuperLeadPermissions::sourceCanDebug)
                         .then(Commands.literal("show")
                                 .executes(ctx -> show(ctx, DEFAULT_RADIUS, DEFAULT_SECONDS))
                                 .then(Commands.argument("radius", DoubleArgumentType.doubleArg(1.0D, 128.0D))
@@ -71,6 +69,7 @@ public final class ServerRopeDebugCommand {
                                                 DoubleArgumentType.getDouble(ctx, "radius"), 1))))
                         .then(Commands.literal("clear").executes(ServerRopeDebugCommand::clear)));
         root.then(Commands.literal("debug")
+            .requires(SuperLeadPermissions::sourceCanDebug)
                 .then(Commands.literal("trip")
                         .executes(ServerRopeDebugCommand::debugTripSelf)
                         .then(Commands.argument("player", EntityArgument.player())

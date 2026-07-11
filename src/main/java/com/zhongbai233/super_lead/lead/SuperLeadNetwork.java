@@ -197,6 +197,10 @@ public final class SuperLeadNetwork {
         return LeadClientConnectionCache.connections(level);
     }
 
+    static Iterable<LeadConnection> serverConnectionsView(ServerLevel level) {
+        return SuperLeadSavedData.get(level).connectionsView();
+    }
+
     private static List<LeadConnection> connectionsOfKind(Level level, LeadKind kind) {
         if (!level.isClientSide() && level instanceof ServerLevel serverLevel) {
             return SuperLeadSavedData.get(serverLevel).connectionsOfKind(kind);
@@ -239,7 +243,7 @@ public final class SuperLeadNetwork {
         if (!level.isClientSide() && level instanceof ServerLevel serverLevel) {
             SuperLeadSavedData data = SuperLeadSavedData.get(serverLevel);
             List<LeadConnection> invalidConnections = new ArrayList<>();
-            for (LeadConnection connection : data.connections()) {
+            for (LeadConnection connection : data.connectionsView()) {
                 if (invalid(level, connection)) {
                     invalidConnections.add(connection);
                 }
@@ -383,10 +387,9 @@ public final class SuperLeadNetwork {
             return false;
         }
         SuperLeadSavedData data = SuperLeadSavedData.get(serverLevel);
-        List<LeadConnection> all = data.connectionsOfKindFast(kind);
         // Collect only connections anchored at this position.
         List<LeadConnection> atPos = new ArrayList<>();
-        for (LeadConnection c : all) {
+        for (LeadConnection c : data.connectionsOfKindView(kind)) {
             if (c.from().pos().equals(pos) || c.to().pos().equals(pos)) {
                 atPos.add(c);
             }
@@ -681,6 +684,22 @@ public final class SuperLeadNetwork {
         RopeAttachment attachment = RopeAttachment.create(t, stack, frontSide);
         boolean ok = SuperLeadSavedData.get(level).update(connection.id(),
                 c -> c.addAttachment(attachment), true);
+        if (ok) {
+            SuperLeadPayloads.sendDirtyToDimension(level);
+        }
+        return ok;
+    }
+
+    public static boolean setAttachmentDisplay(ServerLevel level, LeadConnection connection,
+            java.util.UUID attachmentId, int mountOverride, int displayModeOverride,
+            int hangerOverride, int piercedOverride, double hangOffsetOverride, double mountOffsetOverride,
+            double hangerLengthOverride, double hangerSpacingOverride, double scaleOverride, int frontSide,
+            java.util.Map<String, String> modelStateOverride) {
+        boolean ok = SuperLeadSavedData.get(level).update(connection.id(),
+            c -> c.setAttachmentDisplay(attachmentId, mountOverride, displayModeOverride,
+                hangerOverride, piercedOverride, hangOffsetOverride, mountOffsetOverride, hangerLengthOverride,
+                hangerSpacingOverride, scaleOverride, frontSide, modelStateOverride),
+                true);
         if (ok) {
             SuperLeadPayloads.sendDirtyToDimension(level);
         }
@@ -1106,7 +1125,10 @@ public final class SuperLeadNetwork {
             Predicate<LeadConnection> predicate) {
         LeadConnection closest = null;
         double closestDistance = maxDistance * maxDistance;
-        for (LeadConnection connection : connections(level)) {
+        Iterable<LeadConnection> candidates = level instanceof ServerLevel serverLevel
+                ? serverConnectionsView(serverLevel)
+                : connections(level);
+        for (LeadConnection connection : candidates) {
             if (!predicate.test(connection)) {
                 continue;
             }
@@ -1127,7 +1149,10 @@ public final class SuperLeadNetwork {
         double radiusSqr = radius * radius;
         ConnectionPick best = null;
 
-        for (LeadConnection connection : connections(level)) {
+        Iterable<LeadConnection> candidates = level instanceof ServerLevel serverLevel
+                ? serverConnectionsView(serverLevel)
+                : connections(level);
+        for (LeadConnection connection : candidates) {
             if (!predicate.test(connection)) {
                 continue;
             }
@@ -1289,9 +1314,8 @@ public final class SuperLeadNetwork {
             return 0;
         }
 
-        List<LeadConnection> connections = SuperLeadSavedData.get(serverLevel).connections();
         List<LeadConnection> removedConnections = new ArrayList<>();
-        for (LeadConnection connection : connections) {
+        for (LeadConnection connection : SuperLeadSavedData.get(serverLevel).connectionsView()) {
             if (connection.from().equals(anchor) || connection.to().equals(anchor)) {
                 removedConnections.add(connection);
             }
@@ -1347,7 +1371,10 @@ public final class SuperLeadNetwork {
 
     public static boolean hasConnectionNear(Level level, Vec3 point, double maxDistance) {
         double maxDistanceSqr = maxDistance * maxDistance;
-        for (LeadConnection connection : connections(level)) {
+        Iterable<LeadConnection> candidates = level instanceof ServerLevel serverLevel
+            ? serverConnectionsView(serverLevel)
+            : connections(level);
+        for (LeadConnection connection : candidates) {
             if (distanceToConnectionSqr(level, connection, point) <= maxDistanceSqr) {
                 return true;
             }
@@ -1356,7 +1383,10 @@ public final class SuperLeadNetwork {
     }
 
     public static boolean hasConnectionAttachedTo(Level level, LeadAnchor anchor) {
-        for (LeadConnection connection : connections(level)) {
+        Iterable<LeadConnection> candidates = level instanceof ServerLevel serverLevel
+            ? serverConnectionsView(serverLevel)
+            : connections(level);
+        for (LeadConnection connection : candidates) {
             if (connection.from().equals(anchor) || connection.to().equals(anchor)) {
                 return true;
             }
@@ -1366,7 +1396,10 @@ public final class SuperLeadNetwork {
 
     public static int countConnectionsAtAnchor(Level level, LeadAnchor anchor) {
         int count = 0;
-        for (LeadConnection connection : connections(level)) {
+        Iterable<LeadConnection> candidates = level instanceof ServerLevel serverLevel
+            ? serverConnectionsView(serverLevel)
+            : connections(level);
+        for (LeadConnection connection : candidates) {
             if (connection.from().equals(anchor))
                 count++;
             if (connection.to().equals(anchor))
@@ -1404,7 +1437,7 @@ public final class SuperLeadNetwork {
     }
 
     private static void ensureFenceKnots(ServerLevel level) {
-        for (LeadConnection connection : SuperLeadSavedData.get(level).connections()) {
+        for (LeadConnection connection : SuperLeadSavedData.get(level).connectionsView()) {
             ensureFenceKnot(level, connection.from());
             ensureFenceKnot(level, connection.to());
         }
@@ -1423,10 +1456,10 @@ public final class SuperLeadNetwork {
         if (!(level.getBlockState(anchor.pos()).getBlock() instanceof FenceBlock)) {
             return;
         }
-        boolean stillUsed = SuperLeadSavedData.get(level).connections().stream()
-                .anyMatch(connection -> connection.from().equals(anchor) || connection.to().equals(anchor));
-        if (stillUsed) {
-            return;
+        for (LeadConnection connection : SuperLeadSavedData.get(level).connectionsView()) {
+            if (connection.from().equals(anchor) || connection.to().equals(anchor)) {
+                return;
+            }
         }
         LeashFenceKnotEntity.getKnot(level, anchor.pos()).ifPresent(knot -> {
             if (Leashable.leashableLeashedTo(knot).isEmpty()) {

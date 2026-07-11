@@ -12,7 +12,7 @@ public record ServerConfigSet(String key, String value) implements CustomPacketP
     public static final CustomPacketPayload.Type<ServerConfigSet> TYPE = new CustomPacketPayload.Type<>(
             Identifier.fromNamespaceAndPath(Super_lead.MODID, "server_config_set"));
     public static final StreamCodec<RegistryFriendlyByteBuf, ServerConfigSet> STREAM_CODEC = CustomPacketPayload
-            .codec(ServerConfigSet::write, ServerConfigSet::read);
+            .codec((payload, buf) -> payload.write(buf), ServerConfigSet::read);
 
     @Override
     public Type<? extends CustomPacketPayload> type() {

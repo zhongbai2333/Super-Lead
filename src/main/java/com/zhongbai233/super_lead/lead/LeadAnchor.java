@@ -14,8 +14,8 @@ import net.minecraft.world.phys.shapes.VoxelShape;
 
 public record LeadAnchor(BlockPos pos, Direction face) {
     public static final Codec<LeadAnchor> CODEC = RecordCodecBuilder.create(instance -> instance.group(
-            BlockPos.CODEC.fieldOf("pos").forGetter(LeadAnchor::pos),
-            Direction.CODEC.fieldOf("face").forGetter(LeadAnchor::face))
+            BlockPos.CODEC.fieldOf("pos").forGetter(anchor -> anchor.pos()),
+            Direction.CODEC.fieldOf("face").forGetter(anchor -> anchor.face()))
             .apply(instance, LeadAnchor::new));
 
     private static final double EXTRUDE = 0.06D;

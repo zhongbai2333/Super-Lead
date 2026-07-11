@@ -11,7 +11,7 @@ public record OpenRopeAeTerminal(UUID connectionId, UUID attachmentId) implement
     public static final CustomPacketPayload.Type<OpenRopeAeTerminal> TYPE = new CustomPacketPayload.Type<>(
             Identifier.fromNamespaceAndPath(Super_lead.MODID, "open_rope_ae_terminal"));
     public static final StreamCodec<RegistryFriendlyByteBuf, OpenRopeAeTerminal> STREAM_CODEC = CustomPacketPayload
-            .codec(OpenRopeAeTerminal::write, OpenRopeAeTerminal::read);
+            .codec((payload, buf) -> payload.write(buf), OpenRopeAeTerminal::read);
 
     @Override
     public Type<? extends CustomPacketPayload> type() {

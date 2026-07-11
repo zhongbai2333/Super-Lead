@@ -1,6 +1,7 @@
 package com.zhongbai233.super_lead.preset.client;
 
 import com.zhongbai233.super_lead.Config;
+import com.zhongbai233.super_lead.preset.PresetListResponse;
 import com.zhongbai233.super_lead.preset.ServerQuery;
 import com.zhongbai233.super_lead.preset.RopePresetLibrary;
 import com.zhongbai233.super_lead.preset.SyncPhysicsZones;
@@ -19,6 +20,7 @@ import net.minecraft.client.gui.components.AbstractWidget;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
 import net.minecraft.util.Mth;
 import net.neoforged.neoforge.client.network.ClientPacketDistributor;
@@ -41,6 +43,7 @@ public final class ServerConfigScreen extends Screen {
     private final Screen parent;
     private int activeTab; // 0 = server, 1 = presets, 2 = zones
     private List<String> presets = new ArrayList<>();
+    private List<PresetListResponse.Entry> presetEntries = new ArrayList<>();
     private int selectedPreset = -1;
     private int selectedZone = -1;
     private long lastListMs;
@@ -98,12 +101,14 @@ public final class ServerConfigScreen extends Screen {
         // listener for preset list
         PresetClientHandler.setListListener(list -> {
             this.presets = new ArrayList<>(list);
+            this.presetEntries = new ArrayList<>(PresetClientHandler.lastPresetEntries());
             if (selectedPreset >= presets.size())
                 selectedPreset = -1;
             this.rebuildWidgets();
         });
         if (PresetClientHandler.lastPresetList() != null) {
             this.presets = new ArrayList<>(PresetClientHandler.lastPresetList());
+            this.presetEntries = new ArrayList<>(PresetClientHandler.lastPresetEntries());
         }
 
         if (activeTab == 0) {
@@ -179,13 +184,33 @@ public final class ServerConfigScreen extends Screen {
      * before the server's snapshot echo arrives.
      */
     private final Map<String, String> overrides = new HashMap<>();
+    private final Map<String, String> pendingSliderValues = new HashMap<>();
+    private final Map<String, String> pendingServerValues = new HashMap<>();
+    private final Map<String, Status> valueStatus = new HashMap<>();
+
+    private enum Status {
+        PENDING,
+        OK,
+        REJECTED
+    }
 
     private void buildServerTab() {
         // ensure we have a snapshot listener and request fresh data
         ServerConfigClient.setListener(map -> {
             // server-confirmed snapshot — drop optimistic overrides for keys it covers
-            for (String k : map.keySet())
-                overrides.remove(k);
+            for (String k : map.keySet()) {
+                String pending = pendingServerValues.get(k);
+                if (pending != null && pending.equals(map.get(k))) {
+                    pendingServerValues.remove(k);
+                    valueStatus.put(k, Status.OK);
+                } else if (pending != null) {
+                    pendingServerValues.remove(k);
+                    valueStatus.put(k, Status.REJECTED);
+                }
+                if (!pendingSliderValues.containsKey(k)) {
+                    overrides.remove(k);
+                }
+            }
             this.rebuildWidgets();
         });
         ClientPacketDistributor.sendToServer(ServerQuery.serverConfig());
@@ -241,7 +266,8 @@ public final class ServerConfigScreen extends Screen {
                 cur = Mth.clamp(cur, min, max);
                 double t = max == min ? 0.0 : (double) (cur - min) / (double) (max - min);
                 final FieldDef capture = def;
-                return new ServerIntSlider(x, y, w, h, min, max, t, v -> sendValue(capture.id(), Integer.toString(v)));
+                return new ServerIntSlider(x, y, w, h, min, max, t,
+                    v -> queueSliderValue(capture.id(), Integer.toString(v)));
             }
             case DOUBLE -> {
                 double min = def.min();
@@ -256,7 +282,7 @@ public final class ServerConfigScreen extends Screen {
                 double t = max == min ? 0.0 : (cur - min) / (max - min);
                 final FieldDef capture = def;
                 return new ServerDoubleSlider(x, y, w, h, min, max, t,
-                        v -> sendValue(capture.id(), Double.toString(v)));
+                    v -> queueSliderValue(capture.id(), Double.toString(v)));
             }
         }
         throw new IllegalStateException("unreachable");
@@ -264,8 +290,37 @@ public final class ServerConfigScreen extends Screen {
 
     private void sendValue(String key, String value) {
         overrides.put(key, value);
+        pendingServerValues.put(key, value);
+        valueStatus.put(key, Status.PENDING);
         ClientPacketDistributor.sendToServer(new ServerConfigSet(key, value));
         this.rebuildWidgets();
+    }
+
+    private void queueSliderValue(String key, String value) {
+        overrides.put(key, value);
+        pendingSliderValues.put(key, value);
+    }
+
+    private void flushPendingSliderValues() {
+        if (pendingSliderValues.isEmpty()) {
+            return;
+        }
+        Map<String, String> pending = new HashMap<>(pendingSliderValues);
+        pendingSliderValues.clear();
+        for (Map.Entry<String, String> entry : pending.entrySet()) {
+            overrides.put(entry.getKey(), entry.getValue());
+            pendingServerValues.put(entry.getKey(), entry.getValue());
+            valueStatus.put(entry.getKey(), Status.PENDING);
+            ClientPacketDistributor.sendToServer(new ServerConfigSet(entry.getKey(), entry.getValue()));
+        }
+        this.rebuildWidgets();
+    }
+
+    @Override
+    public boolean mouseReleased(MouseButtonEvent event) {
+        boolean handled = super.mouseReleased(event);
+        flushPendingSliderValues();
+        return handled;
     }
 
     private String currentValue(String key) {
@@ -332,9 +387,12 @@ public final class ServerConfigScreen extends Screen {
             int idx = i;
             int yReal = y - scrollOffset;
             String name = presets.get(i);
+                PresetListResponse.Entry meta = presetEntry(name);
             boolean sel = i == selectedPreset;
+                String badge = meta == null ? "" : meta.ownedByCurrentPlayer() ? " [mine]"
+                    : meta.global() ? " [global]" : " [owned]";
             Button row = Button.builder(
-                    Component.literal((sel ? "▶ " : "  ") + name),
+                    Component.literal((sel ? "▶ " : "  ") + name + badge),
                     b -> {
                         selectedPreset = idx;
                         rebuildWidgets();
@@ -350,24 +408,40 @@ public final class ServerConfigScreen extends Screen {
         // detail panel (only when selected)
         if (selectedPreset >= 0 && selectedPreset < presets.size()) {
             String name = presets.get(selectedPreset);
+            PresetListResponse.Entry meta = presetEntry(name);
             int dy = btnY;
-            addRenderableWidget(Button.builder(
+            Button edit = Button.builder(
                     Component.translatable("super_lead.preset.op_screen.edit"),
                     b -> PresetEditScreen.open(this, name))
-                    .bounds(detailX, dy, 160, 18).build());
+                .bounds(detailX, dy, 160, 18).build();
+            edit.active = meta == null || meta.canEdit();
+            addRenderableWidget(edit);
             dy += 22;
-            addRenderableWidget(Button.builder(
+            Button delete = Button.builder(
                     Component.translatable("super_lead.preset.op_screen.delete"),
                     b -> {
                         // Send delete via command rather than a new payload to keep scope tight.
                         if (this.minecraft != null && this.minecraft.player != null
                                 && this.minecraft.player.connection != null) {
                             this.minecraft.player.connection.sendCommand("superlead preset delete " + name);
+                            lastListMs = 0;
+                            requestList();
                         }
                     })
-                    .bounds(detailX, dy, 160, 18).build());
+                    .bounds(detailX, dy, 160, 18).build();
+            delete.active = meta == null || meta.canDelete();
+            addRenderableWidget(delete);
         }
         clampScroll();
+    }
+
+    private PresetListResponse.Entry presetEntry(String name) {
+        for (PresetListResponse.Entry entry : presetEntries) {
+            if (entry.name().equals(name)) {
+                return entry;
+            }
+        }
+        return null;
     }
 
     private void buildZonesTab() {
@@ -534,12 +608,30 @@ public final class ServerConfigScreen extends Screen {
                         PADDING + 200, y + 4, 0xFF888888);
                 String value = currentValue(field.id());
                 graphics.text(this.font, Component.literal(value), valueX, y + 4, 0xFFCCCCCC);
+                Status status = valueStatus.get(field.id());
+                if (status != null) {
+                    int color = switch (status) {
+                        case PENDING -> 0xFFFFD24F;
+                        case OK -> 0xFF55DD77;
+                        case REJECTED -> 0xFFFF6666;
+                    };
+                    graphics.text(this.font, Component.literal(statusLabel(status)),
+                            valueX + 104, y + 4, color);
+                }
             }
             y += ROW_H + ROW_GAP;
         }
         graphics.text(this.font,
                 Component.translatable("super_lead.server_config.hint"),
                 PADDING, this.height - PADDING - 28, 0xFF8090A0);
+    }
+
+    private static String statusLabel(Status status) {
+        return switch (status) {
+            case PENDING -> "pending";
+            case OK -> "saved";
+            case REJECTED -> "rejected";
+        };
     }
 
     private static String serverFieldValue(String key) {
@@ -575,11 +667,33 @@ public final class ServerConfigScreen extends Screen {
             int rowW = this.width - PADDING * 2;
             int listW = Math.min(220, rowW * 4 / 10);
             int detailX = PADDING + listW + 12;
-            int dy = bodyTop + 22 * 4 + 8;
+            String name = presets.get(selectedPreset);
+            PresetListResponse.Entry meta = presetEntry(name);
+            int dy = bodyTop + 22 * 3 + 2;
+            if (meta != null) {
+                String owner = meta.global() ? "global" : meta.ownedByCurrentPlayer() ? "owned by you"
+                        : "owner " + shortOwner(meta.owner());
+                graphics.text(this.font, Component.literal("  " + owner), detailX, dy, 0xFFAAAAAA);
+                dy += 12;
+                graphics.text(this.font, Component.literal("  zones using it: " + meta.zoneUseCount()),
+                        detailX, dy, meta.zoneUseCount() > 0 ? 0xFFFFAA55 : 0xFFAAAAAA);
+                dy += 12;
+                String perms = "  edit=" + yesNo(meta.canEdit()) + " delete=" + yesNo(meta.canDelete());
+                graphics.text(this.font, Component.literal(perms), detailX, dy, 0xFF8090A0);
+                dy += 16;
+            }
             graphics.text(this.font,
                     Component.translatable("super_lead.preset.op_screen.cmd_hint"),
                     detailX, dy, 0xFF8090A0);
         }
+    }
+
+    private static String yesNo(boolean value) {
+        return value ? "yes" : "no";
+    }
+
+    private static String shortOwner(String owner) {
+        return owner == null || owner.length() <= 8 ? String.valueOf(owner) : owner.substring(0, 8);
     }
 
     private void renderZonesTab(GuiGraphicsExtractor graphics) {

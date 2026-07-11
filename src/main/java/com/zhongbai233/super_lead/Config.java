@@ -110,6 +110,8 @@ public final class Config {
     private static volatile int cachedMaxRopesPerBlockFace = 8;
     private static volatile boolean cachedAllowOpVisualPresets = true;
     private static volatile double cachedCutRefundRatio = 0.5D;
+    private static final int RUNTIME_SAVE_DELAY_TICKS = 60;
+    private static volatile int runtimeSaveDelayTicks = -1;
 
     private Config() {
     }
@@ -219,11 +221,35 @@ public final class Config {
 
     /**
      * Pull cached values from the underlying spec after a runtime mutation via
-     * {@link ModConfigSpec.ConfigValue#set}. The spec persists to disk on world
-     * unload.
+     * {@link ModConfigSpec.ConfigValue#set}.
      */
     public static void refreshAfterRuntimeSet() {
         refresh();
+        scheduleRuntimeSave();
+    }
+
+    public static void tickRuntimeSave() {
+        int ticks = runtimeSaveDelayTicks;
+        if (ticks < 0) {
+            return;
+        }
+        if (ticks > 0) {
+            runtimeSaveDelayTicks = ticks - 1;
+            return;
+        }
+        flushRuntimeSave();
+    }
+
+    public static void flushRuntimeSave() {
+        if (runtimeSaveDelayTicks < 0) {
+            return;
+        }
+        runtimeSaveDelayTicks = -1;
+        SPEC.save();
+    }
+
+    private static void scheduleRuntimeSave() {
+        runtimeSaveDelayTicks = RUNTIME_SAVE_DELAY_TICKS;
     }
 
     public static java.util.Map<String, String> snapshot() {
@@ -278,6 +304,7 @@ public final class Config {
             return false;
         }
         refresh();
+        scheduleRuntimeSave();
         return true;
     }
 

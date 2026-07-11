@@ -56,6 +56,30 @@ abstract class RopeSimulationVisualState extends RopeSimulationRenderCache {
         markBoundsDirty();
     }
 
+    /**
+     * Drops accumulated simulation-time debt before a sparse terrain-only LOD step.
+     * The following {@code step} therefore advances exactly one physics tick while
+     * still running normal terrain broad/narrow phase collision.
+     */
+    public void prepareSparseTerrainStep(long currentTick) {
+        lastTouchTick = currentTick;
+        lastSteppedTick = currentTick - 1L;
+    }
+
+    /** Forces the next full-detail step to re-evaluate terrain and settle state. */
+    public void wakeForRefinement() {
+        invalidatePhysicsHistoryForRefinement();
+    }
+
+    /**
+     * Restores the currently displayed static polyline into a newly-created
+     * full-detail simulation, preserving visual continuity while allowing terrain
+     * constraints to repair the shape.
+     */
+    public void restorePolylineForRefinement(float[] sourceX, float[] sourceY, float[] sourceZ, Vec3 a, Vec3 b) {
+        restoreShapeForRefinement(sourceX, sourceY, sourceZ, a, b);
+    }
+
     protected void setCatenary(Vec3 a, Vec3 b) {
         RopeSagModel.writeCatenary(a, b, tuning.slack(), tuning.gravity(), stableSeparation, x, y, z);
         for (int i = 0; i < nodes; i++) {

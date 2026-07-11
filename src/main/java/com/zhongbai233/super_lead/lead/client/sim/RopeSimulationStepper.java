@@ -14,6 +14,8 @@ import net.minecraft.world.phys.Vec3;
  * side effects outside this class; it should only mutate simulation state.
  */
 abstract class RopeSimulationStepper extends RopeSimulationContactConstraints {
+    private static final int MAX_CROWDED_SUBSTEPS = 2;
+    private static final int MAX_CROWDED_SOLVER_ITERATIONS = 12;
     protected RopeSimulationStepper(Vec3 a, Vec3 b, long seed, RopeTuning tuning) {
         super(a, b, seed, tuning);
     }
@@ -122,6 +124,13 @@ abstract class RopeSimulationStepper extends RopeSimulationContactConstraints {
         boolean terrainStateChanged = terrainNearby != terrainNearbyLast;
         terrainNearbyLast = terrainNearby;
         boolean blockChanged = terrainStateChanged || (terrainNearby && blockHashChangedNow);
+        boolean ropeStackContact = !neighbors.isEmpty();
+        if (ropeStackContact && delta > 1L) {
+            // Catch-up multiplies every rope-rope pair solve. In a dense stack it is
+            // safer to drop stale simulation time than to let one delayed frame create
+            // an even larger catch-up frame and enter a positive feedback loop.
+            delta = 1L;
+        }
         boolean neighborAwake = anyNeighborAwake(neighbors);
         // Entity overlap normally wakes the rope so bodies can visually push it. Fully
         // taut ropes have no useful travel budget, so ignore this cosmetic push path at
@@ -129,11 +138,15 @@ abstract class RopeSimulationStepper extends RopeSimulationContactConstraints {
         boolean entityPushActive = visualPushEnabled() && !entityContacts.isEmpty();
         boolean forceActive = !forceFields.isEmpty();
         boolean windActive = windActive(a, b, currentTick);
+        if (windActive) {
+            lastWindActiveTick = currentTick;
+        }
         boolean awake = endpointMoved || blockChanged || neighborAwake || entityPushActive || forceActive
                 || windActive
                 || !isSettled()
                 || hasExternalContact(currentTick);
-        if (endpointMoved || blockChanged || neighborAwake || entityPushActive || hasExternalContact(currentTick)
+        if (endpointMoved || blockChanged || (neighborAwake && ropeStackQuietTicks < settleThresholdTicks)
+            || entityPushActive || hasExternalContact(currentTick)
                 || forceActive || windActive) {
             settledTicks = 0;
         }
@@ -159,6 +172,9 @@ abstract class RopeSimulationStepper extends RopeSimulationContactConstraints {
         for (int t = 0; t < delta; t++) {
             applyExternalContactPush(currentTick);
             int substeps = chooseSubsteps(a, b);
+            if (ropeStackContact) {
+                substeps = Math.min(substeps, MAX_CROWDED_SUBSTEPS);
+            }
             double h = 1.0D / substeps;
             for (int sub = 0; sub < substeps; sub++) {
                 double frac = (sub + 1) / (double) substeps;
@@ -175,7 +191,7 @@ abstract class RopeSimulationStepper extends RopeSimulationContactConstraints {
             }
         }
 
-        updateSettleState();
+        updateSettleState(ropeStackContact);
         lastSteppedTick = currentTick;
         renderStable = false;
         markBoundsDirty();
@@ -199,11 +215,10 @@ abstract class RopeSimulationStepper extends RopeSimulationContactConstraints {
             List<RopeForceField> forceFields,
             List<RopeEntityContact> entityContacts) {
         if (terrainEnabled) {
-            // In parallel mode the main-thread prefetch covers the whole step's bbox;
-            // clearing
-            // through the (still warm) cache.
-            if (!precomputeReady)
-                blockCache.reset();
+            // hasTerrainNearby() resets the per-step cache before the outer solve.
+            // Keep it warm across all substeps and constraint iterations; misses still
+            // load newly reached BlockPos values, while repeated terrain queries avoid
+            // rebuilding the same VoxelShape AABBs.
             detectAnchorBlocks(level);
         } else {
             clearAnchorColumns();
@@ -263,9 +278,15 @@ abstract class RopeSimulationStepper extends RopeSimulationContactConstraints {
                 (int) Math.ceil(segments * (1.0D + tautWeight * 3.0D)));
         if (iterations < minPasses)
             iterations = minPasses;
+        if (!neighbors.isEmpty()) {
+            iterations = Math.min(iterations, MAX_CROWDED_SOLVER_ITERATIONS);
+        }
         boolean tensionContact = hasDominantTensionContactTarget();
+        boolean canEarlyExitDistanceSolve = !terrainEnabled && entityContacts.isEmpty()
+                && forceFields.isEmpty() && neighbors.isEmpty() && !hasExternalContact(tick);
+        double distanceConvergedError = Math.max(1.0e-5D, targetLen * 2.0e-3D);
         for (int it = 0; it < iterations; it++) {
-            solveDistanceConstraints(targetLen, alphaTilde, (it & 1) == 0);
+            double maxDistanceError = solveDistanceConstraints(targetLen, alphaTilde, (it & 1) == 0);
             // Entity pushes run before terrain so blocks always win:
             // when a player pushes a rope against a wall the rope slides into the
             // player's collision box instead of clipping into the block.
@@ -276,6 +297,9 @@ abstract class RopeSimulationStepper extends RopeSimulationContactConstraints {
             if (!neighbors.isEmpty())
                 solveRopeRopeConstraints(neighbors);
             pinEndpoints(a, b);
+            if (canEarlyExitDistanceSolve && it + 1 >= minPasses && maxDistanceError <= distanceConvergedError) {
+                break;
+            }
         }
 
         if (!terrainEnabled && entityContacts.isEmpty() && !hasExternalContact(tick)) {
@@ -348,6 +372,16 @@ abstract class RopeSimulationStepper extends RopeSimulationContactConstraints {
         return windAt(mx, mz, tick).envelope() > 0.025D;
     }
 
+    /**
+     * Cheap scheduler-side wake check for wind. Without this, settled ropes can be
+     * skipped before {@link #step} gets a chance to sample wind and clear their
+     * settled state, which makes only already-awake ropes visibly sway.
+     */
+    public boolean hasActiveWind(Vec3 a, Vec3 b, long tick) {
+        prepareWindCache(tick);
+        return windActive(a, b, tick);
+    }
+
     // ============================================================================================
     // Wind — cached per-tick cell-center sampling with bilinear interpolation
     // ============================================================================================
@@ -408,17 +442,19 @@ abstract class RopeSimulationStepper extends RopeSimulationContactConstraints {
     private WindSample windAt(double wx, double wz, long tick) {
         ensureWindShared();
 
-        int cx = (int) Math.floor(wx / WIND_CELL_SIZE);
-        int cz = (int) Math.floor(wz / WIND_CELL_SIZE);
-        double fx = wx / WIND_CELL_SIZE - cx;
-        double fz = wz / WIND_CELL_SIZE - cz;
+        double ccx = wx / WIND_CELL_SIZE - 0.5D;
+        double ccz = wz / WIND_CELL_SIZE - 0.5D;
+        int ix = (int) Math.floor(ccx);
+        int iz = (int) Math.floor(ccz);
+        double tx = ccx - ix;
+        double tz = ccz - iz;
 
-        WindSample s00 = windAtCellCenterCached(cx, cz, tick);
-        WindSample s10 = windAtCellCenterCached(cx + 1, cz, tick);
-        WindSample s01 = windAtCellCenterCached(cx, cz + 1, tick);
-        WindSample s11 = windAtCellCenterCached(cx + 1, cz + 1, tick);
+        WindSample s00 = windAtCellCenterCached(ix, iz, tick);
+        WindSample s10 = windAtCellCenterCached(ix + 1, iz, tick);
+        WindSample s01 = windAtCellCenterCached(ix, iz + 1, tick);
+        WindSample s11 = windAtCellCenterCached(ix + 1, iz + 1, tick);
 
-        return bilinearBlendWind(s00, s10, s01, s11, fx, fz);
+        return bilinearBlendWind(s00, s10, s01, s11, tx, tz);
     }
 
     /**
@@ -454,7 +490,7 @@ abstract class RopeSimulationStepper extends RopeSimulationContactConstraints {
      * strength are reconstructed from the blended force, producing smooth
      * transitions across cell boundaries.
      */
-    private static WindSample bilinearBlendWind(
+    private WindSample bilinearBlendWind(
             WindSample s00, WindSample s10, WindSample s01, WindSample s11,
             double tx, double tz) {
         double f00 = s00.envelope() * s00.strengthScale();
@@ -473,7 +509,7 @@ abstract class RopeSimulationStepper extends RopeSimulationContactConstraints {
                 lerp(s01.envelope(), s11.envelope(), tx), tz);
 
         if (blendedEnv <= 1.0e-5) {
-            return WindSample.NONE;
+            return new WindSample(0.0D, windSharedDirX, windSharedDirZ, 0.0D);
         }
 
         double forceMag = Math.sqrt(blendedFX * blendedFX + blendedFZ * blendedFZ);
@@ -576,10 +612,11 @@ abstract class RopeSimulationStepper extends RopeSimulationContactConstraints {
 
     private double linearTriangleEnvelope(double local, boolean rampingGust) {
         double triangle = local < 0.5D ? local * 2.0D : (1.0D - local) * 2.0D;
+        triangle = smooth01(triangle);
         if (!rampingGust) {
             return Math.max(0.0D, triangle);
         }
-        double ramp = 0.45D + 0.55D * local;
+        double ramp = 0.45D + 0.55D * smooth01(local);
         return Math.max(0.0D, triangle * ramp);
     }
 
@@ -597,15 +634,20 @@ abstract class RopeSimulationStepper extends RopeSimulationContactConstraints {
         double secondPeak = 0.82D + random01(windSeed, eventIndex, 0xD1B54A32D192ED03L) * 0.38D;
 
         if (local < firstPeakT) {
-            return lerp(0.0D, firstPeak, local / firstPeakT);
+            return lerp(0.0D, firstPeak, smooth01(local / firstPeakT));
         }
         if (local < dipT) {
-            return lerp(firstPeak, dip, (local - firstPeakT) / (dipT - firstPeakT));
+            return lerp(firstPeak, dip, smooth01((local - firstPeakT) / (dipT - firstPeakT)));
         }
         if (local < secondPeakT) {
-            return lerp(dip, secondPeak, (local - dipT) / (secondPeakT - dipT));
+            return lerp(dip, secondPeak, smooth01((local - dipT) / (secondPeakT - dipT)));
         }
-        return lerp(secondPeak, 0.0D, (local - secondPeakT) / (1.0D - secondPeakT));
+        return lerp(secondPeak, 0.0D, smooth01((local - secondPeakT) / (1.0D - secondPeakT)));
+    }
+
+    private static double smooth01(double value) {
+        double t = clamp(value, 0.0D, 1.0D);
+        return t * t * (3.0D - 2.0D * t);
     }
 
     private static double lerp(double a, double b, double t) {

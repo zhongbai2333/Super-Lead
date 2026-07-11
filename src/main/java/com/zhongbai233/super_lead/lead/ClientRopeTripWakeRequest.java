@@ -14,7 +14,7 @@ public record ClientRopeTripWakeRequest() implements CustomPacketPayload {
     public static final CustomPacketPayload.Type<ClientRopeTripWakeRequest> TYPE = new CustomPacketPayload.Type<>(
             Identifier.fromNamespaceAndPath(Super_lead.MODID, "client_rope_trip_wake_request"));
     public static final StreamCodec<RegistryFriendlyByteBuf, ClientRopeTripWakeRequest> STREAM_CODEC = CustomPacketPayload
-            .codec(ClientRopeTripWakeRequest::write, ClientRopeTripWakeRequest::read);
+            .codec((payload, buf) -> payload.write(buf), ClientRopeTripWakeRequest::read);
 
     @Override
     public Type<? extends CustomPacketPayload> type() {

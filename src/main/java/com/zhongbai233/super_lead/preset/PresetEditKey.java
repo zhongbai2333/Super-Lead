@@ -15,7 +15,7 @@ public record PresetEditKey(String presetName, String keyId, String value, boole
     public static final CustomPacketPayload.Type<PresetEditKey> TYPE = new CustomPacketPayload.Type<>(
             Identifier.fromNamespaceAndPath(Super_lead.MODID, "preset_edit_key"));
     public static final StreamCodec<RegistryFriendlyByteBuf, PresetEditKey> STREAM_CODEC = CustomPacketPayload
-            .codec(PresetEditKey::write, PresetEditKey::read);
+            .codec((payload, buf) -> payload.write(buf), PresetEditKey::read);
 
     @Override
     public Type<? extends CustomPacketPayload> type() {

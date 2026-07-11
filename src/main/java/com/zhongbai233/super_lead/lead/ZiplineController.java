@@ -127,9 +127,10 @@ public final class ZiplineController {
             return;
         }
 
+        Map<UUID, ServerPlayer> playersById = playersById(level);
         List<UUID> remove = new ArrayList<>();
         for (RiderState state : states.values()) {
-            ServerPlayer player = findPlayer(level, state.playerId);
+            ServerPlayer player = playersById.get(state.playerId);
             if (player == null || !tickOne(level, player, state)) {
                 remove.add(state.playerId);
             }
@@ -137,7 +138,7 @@ public final class ZiplineController {
 
         for (UUID id : remove) {
             RiderState removed = states.remove(id);
-            ServerPlayer player = findPlayer(level, id);
+            ServerPlayer player = playersById.get(id);
             if (removed != null && player != null) {
                 finish(player, removed, Vec3.ZERO);
             }
@@ -145,7 +146,7 @@ public final class ZiplineController {
         if (states.isEmpty()) {
             STATES.remove(key);
         }
-        broadcast(level, snapshot(level, states));
+        broadcast(level, snapshot(playersById, states));
     }
 
     public static void stopEverywhere(ServerPlayer player) {
@@ -449,13 +450,14 @@ public final class ZiplineController {
         return LeadAnchor.isKnotBlock(state) && !LeadAnchor.isIronBarsKnotBlock(state);
     }
 
-    private static List<SyncZiplines.Entry> snapshot(ServerLevel level, Map<UUID, RiderState> states) {
+    private static List<SyncZiplines.Entry> snapshot(Map<UUID, ServerPlayer> playersById,
+            Map<UUID, RiderState> states) {
         if (states == null || states.isEmpty()) {
             return List.of();
         }
         List<SyncZiplines.Entry> entries = new ArrayList<>(states.size());
         for (RiderState state : states.values()) {
-            ServerPlayer player = findPlayer(level, state.playerId);
+            ServerPlayer player = playersById.get(state.playerId);
             if (player != null) {
                 entries.add(new SyncZiplines.Entry(player.getId(), state.connectionId,
                         (float) clamp01(state.t)));
@@ -475,13 +477,12 @@ public final class ZiplineController {
         PacketDistributor.sendToPlayersInDimension(level, new SyncZiplines(entries));
     }
 
-    private static ServerPlayer findPlayer(ServerLevel level, UUID id) {
+    private static Map<UUID, ServerPlayer> playersById(ServerLevel level) {
+        Map<UUID, ServerPlayer> out = new HashMap<>(Math.max(4, level.players().size() * 2));
         for (ServerPlayer player : level.players()) {
-            if (player.getUUID().equals(id)) {
-                return player;
-            }
+            out.put(player.getUUID(), player);
         }
-        return null;
+        return out;
     }
 
     private static void finish(ServerPlayer player, RiderState state, Vec3 releaseVelocity) {

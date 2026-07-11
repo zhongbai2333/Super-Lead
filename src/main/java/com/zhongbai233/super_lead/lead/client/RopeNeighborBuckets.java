@@ -5,6 +5,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.IntConsumer;
+import java.util.function.IntPredicate;
 import net.minecraft.world.phys.AABB;
 
 /**
@@ -32,6 +33,19 @@ public final class RopeNeighborBuckets {
     }
 
     public void forEachCandidate(AABB bounds, IntConsumer consumer) {
+        forEachCandidateWhile(bounds, candidate -> {
+            consumer.accept(candidate);
+            return true;
+        });
+    }
+
+    /**
+     * Visits candidates until {@code visitor} returns {@code false}. The early-exit
+     * form is used by the physics storm guard so a pathological crowded bucket has
+     * a hard per-frame scan bound instead of merely ignoring work after still
+     * traversing the entire bucket.
+     */
+    public boolean forEachCandidateWhile(AABB bounds, IntPredicate visitor) {
         CellRange range = CellRange.of(bounds, gridSize);
         for (int cx = range.minX; cx <= range.maxX; cx++) {
             for (int cy = range.minY; cy <= range.maxY; cy++) {
@@ -39,12 +53,15 @@ public final class RopeNeighborBuckets {
                     List<Integer> candidates = buckets.get(cellKey(cx, cy, cz));
                     if (candidates != null) {
                         for (int candidate : candidates) {
-                            consumer.accept(candidate);
+                            if (!visitor.test(candidate)) {
+                                return false;
+                            }
                         }
                     }
                 }
             }
         }
+        return true;
     }
 
     private static long cellKey(int x, int y, int z) {

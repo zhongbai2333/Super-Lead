@@ -16,7 +16,7 @@ public record UpdateSignAttachmentAppearance(UUID connectionId, UUID attachmentI
     public static final CustomPacketPayload.Type<UpdateSignAttachmentAppearance> TYPE = new CustomPacketPayload.Type<>(
             Identifier.fromNamespaceAndPath(Super_lead.MODID, "update_sign_attachment_appearance"));
     public static final StreamCodec<RegistryFriendlyByteBuf, UpdateSignAttachmentAppearance> STREAM_CODEC = CustomPacketPayload
-            .codec(UpdateSignAttachmentAppearance::write, UpdateSignAttachmentAppearance::read);
+            .codec((payload, buf) -> payload.write(buf), UpdateSignAttachmentAppearance::read);
 
     public static UpdateSignAttachmentAppearance dye(UUID connectionId, UUID attachmentId,
             DyeColor color, boolean frontText) {

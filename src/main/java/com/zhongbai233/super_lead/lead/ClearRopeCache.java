@@ -15,7 +15,7 @@ public record ClearRopeCache() implements CustomPacketPayload {
     public static final CustomPacketPayload.Type<ClearRopeCache> TYPE = new CustomPacketPayload.Type<>(
             Identifier.fromNamespaceAndPath(Super_lead.MODID, "clear_rope_cache"));
     public static final StreamCodec<RegistryFriendlyByteBuf, ClearRopeCache> STREAM_CODEC = CustomPacketPayload
-            .codec(ClearRopeCache::write, ClearRopeCache::read);
+            .codec((payload, buffer) -> payload.write(buffer), ClearRopeCache::read);
 
     @Override
     public Type<? extends CustomPacketPayload> type() {

@@ -249,6 +249,12 @@ public final class SuperLeadEvents {
             return;
         }
 
+        if (SuperLeadItems.isAttachmentTuner(stack) && tryConfigureRopeAttachmentDisplay(event.getEntity(), event.getLevel())) {
+            event.setCanceled(true);
+            event.setCancellationResult(InteractionResult.SUCCESS);
+            return;
+        }
+
         if (ZiplineController.isChain(stack) && tryStartZiplineItem(event)) {
             event.setCanceled(true);
             event.setCancellationResult(InteractionResult.SUCCESS);
@@ -315,6 +321,9 @@ public final class SuperLeadEvents {
             return;
         }
         if (tryUsePresetBinder(event.getEntity(), event.getHand(), event.getLevel(), shift)) {
+            return;
+        }
+        if (SuperLeadItems.isAttachmentTuner(stack) && tryConfigureRopeAttachmentDisplay(event.getEntity(), event.getLevel())) {
             return;
         }
         if (tryOpenRopeAttachmentAeTerminal(event.getEntity(), event.getLevel(), stack)) {
@@ -385,6 +394,14 @@ public final class SuperLeadEvents {
             lastActionPacketTick = level.getGameTime();
         }
         return sent;
+    }
+
+    private static boolean tryConfigureRopeAttachmentDisplay(Player player, Level level) {
+        if (!level.isClientSide())
+            return false;
+        if (!SuperLeadNetwork.canModifyRopes(player))
+            return false;
+        return ClientInteractionBridge.trySendConfigureRopeAttachmentDisplay();
     }
 
     private static boolean tryUsePresetBinder(Player player, InteractionHand hand, Level level, boolean shift) {
@@ -642,6 +659,7 @@ public final class SuperLeadEvents {
     public static void onPlayerLoggedOut(PlayerEvent.PlayerLoggedOutEvent event) {
         if (event.getEntity() instanceof ServerPlayer player) {
             refundAndClearPendingLength(player);
+            SuperLeadPayloads.clearRateLimit(player);
             RopeTripController.stopEverywhere(player);
             ZiplineController.stopEverywhere(player);
         }

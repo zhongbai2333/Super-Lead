@@ -77,10 +77,24 @@ class SuperLeadSavedDataTest {
         assertEquals(LeadConnection.MAX_LENGTH_UNITS, connection.withLengthUnits(99).lengthUnits());
     }
 
+    @Test
+    void clientChunkMirrorKeepsOneConnectionForMultiChunkRope() {
+        NetworkKey key = new NetworkKey(null, true);
+        LeadClientConnectionCache.replaceAll(key, List.of());
+        LeadConnection connection = connection("00000000-0000-0000-0000-000000000005",
+                new BlockPos(0, 64, 0), new BlockPos(32, 64, 0), LeadKind.NORMAL);
+
+        LeadClientConnectionCache.replaceChunk(key, 0L, List.of(connection));
+        LeadClientConnectionCache.replaceChunk(key, 1L, List.of(connection));
+
+        assertEquals(1, LeadClientConnectionCache.connections(key).size());
+    }
+
     private static LeadConnection connection(String id, BlockPos from, BlockPos to, LeadKind kind) {
         return new LeadConnection(UUID.fromString(id), new LeadAnchor(from, Direction.UP),
                 new LeadAnchor(to, Direction.UP), kind, 0, 0, 0, LeadConnection.MIN_LENGTH_UNITS, List.of(),
                 LeadConnection.NO_PHYSICS_PRESET, LeadConnection.NO_PHYSICS_PRESET,
                 LeadConnection.NO_ADVENTURE_OWNER);
     }
+
 }

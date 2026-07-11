@@ -7,15 +7,18 @@ import com.zhongbai233.super_lead.tuning.ClientTuning;
 import java.util.List;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
+import net.minecraft.core.BlockPos;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.client.event.ClientPlayerNetworkEvent;
+import net.neoforged.neoforge.event.level.BlockEvent;
 import net.neoforged.neoforge.event.level.LevelEvent;
 
 @EventBusSubscriber(modid = Super_lead.MODID, value = Dist.CLIENT)
 public final class StaticRopeChunkLifecycle {
 
+    private static final double BLOCK_LIGHT_UPDATE_RADIUS = 15.0D;
     private static boolean tuningHooked = false;
 
     private StaticRopeChunkLifecycle() {
@@ -57,6 +60,29 @@ public final class StaticRopeChunkLifecycle {
     public static void onLevelUnload(LevelEvent.Unload event) {
         if (event.getLevel().isClientSide()) {
             StaticRopeChunkRegistry.get().clear();
+        }
+    }
+
+    @SubscribeEvent
+    public static void onBlockPlaced(BlockEvent.EntityPlaceEvent event) {
+        invalidateNearChangedBlock(event.getPos());
+    }
+
+    @SubscribeEvent
+    public static void onNeighborNotified(BlockEvent.NeighborNotifyEvent event) {
+        invalidateNearChangedBlock(event.getPos());
+    }
+
+    private static void invalidateNearChangedBlock(BlockPos pos) {
+        Minecraft mc = Minecraft.getInstance();
+        ClientLevel level = mc.level;
+        if (level != null) {
+            StaticRopeChunkRegistry registry = StaticRopeChunkRegistry.get();
+            // Nearby geometry may need to return to dynamic simulation, while light
+            // propagation can affect a static rope up to fifteen blocks away without
+            // invalidating its physical shape.
+            registry.invalidateNearBlock(level, pos);
+            registry.requestLightRebuildNear(level, List.of(pos), BLOCK_LIGHT_UPDATE_RADIUS);
         }
     }
 }

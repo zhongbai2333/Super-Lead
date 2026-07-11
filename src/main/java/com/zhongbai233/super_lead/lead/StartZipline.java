@@ -14,7 +14,7 @@ public record StartZipline(UUID connectionId, boolean useOffhand, Vec3 hitPoint,
     public static final CustomPacketPayload.Type<StartZipline> TYPE = new CustomPacketPayload.Type<>(
             Identifier.fromNamespaceAndPath(Super_lead.MODID, "start_zipline"));
     public static final StreamCodec<RegistryFriendlyByteBuf, StartZipline> STREAM_CODEC = CustomPacketPayload
-            .codec(StartZipline::write, StartZipline::read);
+            .codec((payload, buf) -> payload.write(buf), StartZipline::read);
 
     @Override
     public Type<? extends CustomPacketPayload> type() {

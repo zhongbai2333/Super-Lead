@@ -35,6 +35,8 @@ public final class SuperLeadItems {
     public static final DeferredItem<PresetBinderItem> PRESET_BINDER = ITEMS.registerItem(
             "preset_binder", PresetBinderItem::new,
             () -> new Item.Properties().stacksTo(1));
+    public static final DeferredItem<Item> ATTACHMENT_TUNER = ITEMS.registerSimpleItem("attachment_tuner",
+            () -> new Item.Properties().stacksTo(1));
 
     private SuperLeadItems() {
     }
@@ -50,6 +52,10 @@ public final class SuperLeadItems {
 
     public static boolean isPresetBinder(ItemStack stack) {
         return stack.is(PRESET_BINDER.asItem());
+    }
+
+    public static boolean isAttachmentTuner(ItemStack stack) {
+        return stack.is(ATTACHMENT_TUNER.asItem());
     }
 
     public static boolean isBoundPresetBinder(ItemStack stack) {
@@ -73,6 +79,8 @@ public final class SuperLeadItems {
             event.accept(new ItemStack(ADVANCED_CARGO_MANIFEST.asItem()),
                     CreativeModeTab.TabVisibility.PARENT_AND_SEARCH_TABS);
             event.accept(new ItemStack(PRESET_BINDER.asItem()), CreativeModeTab.TabVisibility.PARENT_AND_SEARCH_TABS);
+            event.accept(new ItemStack(ATTACHMENT_TUNER.asItem()),
+                    CreativeModeTab.TabVisibility.PARENT_AND_SEARCH_TABS);
         }
     }
 }

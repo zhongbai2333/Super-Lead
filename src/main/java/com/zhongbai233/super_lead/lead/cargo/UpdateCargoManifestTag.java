@@ -10,7 +10,7 @@ public record UpdateCargoManifestTag(int containerId, boolean add, String tag) i
     public static final Type<UpdateCargoManifestTag> TYPE = new Type<>(
             Identifier.fromNamespaceAndPath(Super_lead.MODID, "update_cargo_manifest_tag"));
     public static final StreamCodec<RegistryFriendlyByteBuf, UpdateCargoManifestTag> STREAM_CODEC = CustomPacketPayload
-            .codec(UpdateCargoManifestTag::write, UpdateCargoManifestTag::read);
+            .codec((payload, buf) -> payload.write(buf), UpdateCargoManifestTag::read);
 
     @Override
     public Type<? extends CustomPacketPayload> type() {

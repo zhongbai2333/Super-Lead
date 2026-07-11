@@ -6,6 +6,10 @@ import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.suggestion.SuggestionProvider;
 import com.zhongbai233.super_lead.Super_lead;
+import com.zhongbai233.super_lead.lead.SuperLeadItems;
+import com.zhongbai233.super_lead.lead.cargo.SuperLeadDataComponents;
+import com.zhongbai233.super_lead.permissions.SuperLeadPermissions;
+import com.zhongbai233.super_lead.preset.PresetBinderData;
 import com.zhongbai233.super_lead.preset.PresetEditKey;
 import com.zhongbai233.super_lead.preset.PresetServerManager;
 import com.zhongbai233.super_lead.preset.RopePreset;
@@ -20,10 +24,11 @@ import net.minecraft.ChatFormatting;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
 import net.minecraft.commands.SharedSuggestionProvider;
+import net.minecraft.commands.arguments.EntityArgument;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.MinecraftServer;
-import net.minecraft.server.permissions.Permission;
-import net.minecraft.server.permissions.PermissionLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.item.ItemStack;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.event.RegisterCommandsEvent;
@@ -33,21 +38,18 @@ public final class SuperLeadPresetCommands {
     private SuperLeadPresetCommands() {
     }
 
-    private static final Permission.HasCommandLevel OP = new Permission.HasCommandLevel(PermissionLevel.GAMEMASTERS);
-    private static final Permission.HasCommandLevel OP4 = new Permission.HasCommandLevel(PermissionLevel.OWNERS);
-
     @SubscribeEvent
     public static void onRegister(RegisterCommandsEvent event) {
         CommandDispatcher<CommandSourceStack> dispatcher = event.getDispatcher();
         LiteralArgumentBuilder<CommandSourceStack> root = Commands.literal("superlead")
-                .requires(src -> src.permissions().hasPermission(OP))
                 .then(Commands.literal("preset")
+                        .requires(SuperLeadPresetCommands::canUsePresetRoot)
                         .then(Commands.literal("list").executes(SuperLeadPresetCommands::list))
                         .then(Commands.literal("export")
-                                .requires(src -> src.permissions().hasPermission(OP4))
+                                .requires(SuperLeadPermissions::sourceCanAdmin)
                                 .executes(SuperLeadPresetCommands::exportAll))
                         .then(Commands.literal("import")
-                                .requires(src -> src.permissions().hasPermission(OP4))
+                                .requires(SuperLeadPermissions::sourceCanAdmin)
                                 .executes(SuperLeadPresetCommands::importAll))
                         .then(Commands.literal("show")
                                 .then(Commands.argument("name", StringArgumentType.word())
@@ -58,8 +60,14 @@ public final class SuperLeadPresetCommands {
                                         .then(Commands.literal("from-keys")
                                                 .then(Commands.argument("pairs", StringArgumentType.greedyString())
                                                         .executes(SuperLeadPresetCommands::saveFromKeys)))))
+                        .then(Commands.literal("give-binder")
+                                .requires(SuperLeadPermissions::sourceCanManage)
+                                .then(Commands.argument("name", StringArgumentType.word())
+                                        .suggests(SUGGEST_PRESET)
+                                        .executes(SuperLeadPresetCommands::giveBinder)
+                                        .then(Commands.argument("target", EntityArgument.player())
+                                                .executes(SuperLeadPresetCommands::giveBinderToTarget))))
                         .then(Commands.literal("delete")
-                                .requires(src -> src.permissions().hasPermission(OP4))
                                 .then(Commands.argument("name", StringArgumentType.word())
                                         .suggests(SUGGEST_PRESET)
                                         .executes(SuperLeadPresetCommands::delete)))
@@ -75,6 +83,14 @@ public final class SuperLeadPresetCommands {
         dispatcher.register(root);
     }
 
+    private static boolean canUsePresetRoot(CommandSourceStack source) {
+        // Managers can list/create global presets. Regular players may still need
+        // the root so owner-scoped show/edit/delete can report accurate per-preset
+        // permission failures instead of hiding the whole command tree.
+        return SuperLeadPermissions.sourceCanManage(source)
+                || source.getEntity() instanceof ServerPlayer;
+    }
+
     private static final SuggestionProvider<CommandSourceStack> SUGGEST_PRESET = (ctx, builder) -> {
         MinecraftServer server = ctx.getSource().getServer();
         return SharedSuggestionProvider.suggest(RopePresetLibrary.forServer(server).list(), builder);
@@ -83,6 +99,10 @@ public final class SuperLeadPresetCommands {
             .suggest(ClientTuning.allKeys().stream().map(k -> k.id), builder);
 
     private static int list(CommandContext<CommandSourceStack> ctx) {
+        if (!SuperLeadPermissions.sourceCanManage(ctx.getSource())) {
+            ctx.getSource().sendFailure(Component.literal("Missing Super Lead preset management permission."));
+            return 0;
+        }
         MinecraftServer server = ctx.getSource().getServer();
         List<String> names = RopePresetLibrary.forServer(server).list();
         if (names.isEmpty()) {
@@ -131,6 +151,10 @@ public final class SuperLeadPresetCommands {
 
     private static int show(CommandContext<CommandSourceStack> ctx) {
         String name = StringArgumentType.getString(ctx, "name");
+        if (!canViewPreset(ctx.getSource(), name)) {
+            ctx.getSource().sendFailure(Component.literal("Missing permission to view preset '" + name + "'."));
+            return 0;
+        }
         Optional<RopePreset> opt = RopePresetLibrary.forServer(ctx.getSource().getServer()).load(name);
         if (opt.isEmpty()) {
             ctx.getSource().sendFailure(Component.literal("No preset named '" + name + "'"));
@@ -150,6 +174,10 @@ public final class SuperLeadPresetCommands {
     }
 
     private static int saveFromKeys(CommandContext<CommandSourceStack> ctx) {
+        if (!SuperLeadPermissions.sourceCanManage(ctx.getSource())) {
+            ctx.getSource().sendFailure(Component.literal("Missing Super Lead preset management permission."));
+            return 0;
+        }
         String name = StringArgumentType.getString(ctx, "name");
         if (!RopePresetLibrary.isValidName(name)) {
             ctx.getSource().sendFailure(Component.literal("Invalid name (use [A-Za-z0-9_-], up to 32 chars)"));
@@ -186,20 +214,61 @@ public final class SuperLeadPresetCommands {
         return 1;
     }
 
-    private static int delete(CommandContext<CommandSourceStack> ctx) {
+    private static int giveBinder(CommandContext<CommandSourceStack> ctx)
+            throws com.mojang.brigadier.exceptions.CommandSyntaxException {
+        return giveBinder(ctx, ctx.getSource().getPlayerOrException());
+    }
+
+    private static int giveBinderToTarget(CommandContext<CommandSourceStack> ctx)
+            throws com.mojang.brigadier.exceptions.CommandSyntaxException {
+        return giveBinder(ctx, EntityArgument.getPlayer(ctx, "target"));
+    }
+
+    private static int giveBinder(CommandContext<CommandSourceStack> ctx, ServerPlayer target) {
         String name = StringArgumentType.getString(ctx, "name");
-        boolean ok = PresetServerManager.deletePreset(ctx.getSource().getServer(), name);
-        if (!ok) {
-            ctx.getSource().sendFailure(Component.literal("Could not delete preset '" + name + "'"));
+        Optional<RopePreset> preset = RopePresetLibrary.forServer(ctx.getSource().getServer()).load(name);
+        if (preset.isEmpty()) {
+            ctx.getSource().sendFailure(Component.literal("No preset named '" + name + "'."));
             return 0;
         }
-        ctx.getSource().sendSuccess(() -> Component.literal("Deleted preset '" + name + "'.")
+
+        ItemStack stack = new ItemStack(SuperLeadItems.PRESET_BINDER.asItem());
+        stack.set(SuperLeadDataComponents.PRESET_BINDER.get(),
+                new PresetBinderData(name, preset.get().owner()));
+        boolean inserted = target.getInventory().add(stack);
+        if (!inserted) {
+            target.drop(stack, false);
+        }
+
+        ctx.getSource().sendSuccess(() -> Component.literal("Gave preset binder for '" + name + "' to "
+                + target.getName().getString() + (inserted ? "." : " (inventory full, dropped at player)."))
+                .withStyle(ChatFormatting.GREEN), true);
+        return 1;
+    }
+
+    private static int delete(CommandContext<CommandSourceStack> ctx) {
+        String name = StringArgumentType.getString(ctx, "name");
+        PresetServerManager.PresetDeleteResult result = ctx.getSource().getEntity() instanceof ServerPlayer player
+            ? PresetServerManager.deletePresetDetailed(ctx.getSource().getServer(), player, name)
+            : SuperLeadPermissions.sourceCanAdmin(ctx.getSource())
+                ? PresetServerManager.deletePresetDetailed(ctx.getSource().getServer(), name)
+                : PresetServerManager.PresetDeleteResult.fail(
+                        PresetServerManager.DeleteFailure.NO_PERMISSION, "");
+        if (!result.deleted()) {
+            ctx.getSource().sendFailure(Component.literal(result.message(name)));
+            return 0;
+        }
+        ctx.getSource().sendSuccess(() -> Component.literal(result.message(name))
                 .withStyle(ChatFormatting.GREEN), true);
         return 1;
     }
 
     private static int editSet(CommandContext<CommandSourceStack> ctx) {
         String name = StringArgumentType.getString(ctx, "name");
+        if (!canEditPreset(ctx.getSource(), name)) {
+            ctx.getSource().sendFailure(Component.literal("Missing permission to edit preset '" + name + "'."));
+            return 0;
+        }
         String key = StringArgumentType.getString(ctx, "key");
         String value = StringArgumentType.getString(ctx, "value").trim();
         if (ClientTuning.byId(key) == null) {
@@ -219,6 +288,10 @@ public final class SuperLeadPresetCommands {
 
     private static int editReset(CommandContext<CommandSourceStack> ctx) {
         String name = StringArgumentType.getString(ctx, "name");
+        if (!canEditPreset(ctx.getSource(), name)) {
+            ctx.getSource().sendFailure(Component.literal("Missing permission to edit preset '" + name + "'."));
+            return 0;
+        }
         String key = StringArgumentType.getString(ctx, "key");
         boolean ok = PresetServerManager.editKey(ctx.getSource().getServer(),
                 new PresetEditKey(name, key, "", true));
@@ -229,5 +302,20 @@ public final class SuperLeadPresetCommands {
         ctx.getSource().sendSuccess(() -> Component.literal("Removed " + name + "." + key)
                 .withStyle(ChatFormatting.GREEN), true);
         return 1;
+    }
+
+    private static boolean canViewPreset(CommandSourceStack source, String name) {
+        if (SuperLeadPermissions.sourceCanManage(source)) {
+            return true;
+        }
+        return source.getEntity() instanceof ServerPlayer player
+                && PresetServerManager.canEditPreset(player, name);
+    }
+
+    private static boolean canEditPreset(CommandSourceStack source, String name) {
+        if (source.getEntity() instanceof ServerPlayer player) {
+            return PresetServerManager.canEditPreset(player, name);
+        }
+        return SuperLeadPermissions.sourceCanManage(source);
     }
 }

@@ -14,7 +14,7 @@ public record UseConnectionAction(UUID connectionId, int actionOrdinal, boolean 
     public static final CustomPacketPayload.Type<UseConnectionAction> TYPE = new CustomPacketPayload.Type<>(
             Identifier.fromNamespaceAndPath(Super_lead.MODID, "use_connection_action"));
     public static final StreamCodec<RegistryFriendlyByteBuf, UseConnectionAction> STREAM_CODEC = CustomPacketPayload
-            .codec(UseConnectionAction::write, UseConnectionAction::read);
+            .codec((payload, buf) -> payload.write(buf), UseConnectionAction::read);
 
     @Override
     public Type<? extends CustomPacketPayload> type() {

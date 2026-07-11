@@ -10,7 +10,7 @@ public record PresetPromptResponse(String presetName, boolean accepted) implemen
     public static final CustomPacketPayload.Type<PresetPromptResponse> TYPE = new CustomPacketPayload.Type<>(
             Identifier.fromNamespaceAndPath(Super_lead.MODID, "preset_prompt_response"));
     public static final StreamCodec<RegistryFriendlyByteBuf, PresetPromptResponse> STREAM_CODEC = CustomPacketPayload
-            .codec(PresetPromptResponse::write, PresetPromptResponse::read);
+            .codec((payload, buf) -> payload.write(buf), PresetPromptResponse::read);
 
     @Override
     public Type<? extends CustomPacketPayload> type() {

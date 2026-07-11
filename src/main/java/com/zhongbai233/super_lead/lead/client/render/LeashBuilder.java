@@ -165,6 +165,8 @@ public final class LeashBuilder {
     }
 
     private static final PoseStack BATCH_POSE = new PoseStack();
+    private static double[] batchTotalLengths = new double[0];
+    private static double[] batchVisualTotalLengths = new double[0];
     /**
      * Render-thread-only. When non-null, all subsequent vertex() calls are diverted
      * into this
@@ -203,31 +205,38 @@ public final class LeashBuilder {
         // Pre-prepare every sim's render snapshot OUTSIDE the lambda so prepareRender
         // side
         // effects (basis-vector scratch invalidation) happen once per rope per frame.
-        double[] totalLengths = new double[jobs.size()];
-        for (int i = 0; i < jobs.size(); i++) {
+        int count = jobs.size();
+        if (batchTotalLengths.length < count) {
+            batchTotalLengths = new double[count];
+            batchVisualTotalLengths = new double[count];
+        }
+        double[] totalLengths = batchTotalLengths;
+        double[] visualTotalLengths = batchVisualTotalLengths;
+        for (int i = 0; i < count; i++) {
             totalLengths[i] = Math.max(1.0e-6D, jobs.get(i).sim.prepareRender(partialTick));
+            visualTotalLengths[i] = Math.max(1.0e-6D, jobs.get(i).sim.visualRenderTotalLength());
         }
         collector.submitCustomGeometry(BATCH_POSE, RopeRenderTypes.dynamicRope(), (poseState, buffer) -> {
-            for (int i = 0; i < jobs.size(); i++) {
-                renderJob(buffer, poseState, cameraPos, jobs.get(i), totalLengths[i]);
+            for (int i = 0; i < count; i++) {
+                renderJob(buffer, poseState, cameraPos, jobs.get(i), totalLengths[i], visualTotalLengths[i]);
             }
         });
     }
 
     private static void renderJob(VertexConsumer buffer, PoseStack.Pose poseState, Vec3 cameraPos, RopeJob job,
-            double totalLength) {
+            double totalLength, double visualTotalLength) {
         RopeTuning previousTuning = activeColorTuning;
         RopeTuning tuning = job.sim.tuning();
         activeColorTuning = tuning;
         try {
-            renderJobWithPalette(buffer, poseState, cameraPos, job, totalLength, tuning);
+            renderJobWithPalette(buffer, poseState, cameraPos, job, totalLength, visualTotalLength, tuning);
         } finally {
             activeColorTuning = previousTuning;
         }
     }
 
     private static void renderJobWithPalette(VertexConsumer buffer, PoseStack.Pose poseState, Vec3 cameraPos,
-            RopeJob job, double totalLength, RopeTuning tuning) {
+            RopeJob job, double totalLength, double visualTotalLength, RopeTuning tuning) {
         RopeSimulation sim = job.sim;
         boolean glow = job.powered && (job.kind == LeadKind.REDSTONE || job.kind == LeadKind.ENERGY);
         int effectiveBlockA = glow ? 15 : job.blockA;
@@ -259,54 +268,39 @@ public final class LeashBuilder {
                 stride = maxStride;
         }
 
-        // Static bake fast-path: the opaque base rope (3D box OR flat ribbon)
-        // reuses
-        // baked world-space vertices until positions, light or material change. Ribbon
-        // bakes additionally key on a coarse camera bin since the ribbon's side vector
-        // depends on view direction; bin size of 4 blocks keeps re-bakes rare during
-        // normal walking while drift stays visually negligible.
+        // Static bake fast-path: 3D ropes reuse baked world-space vertices until
+        // positions, light or material change. Ribbon LOD is intentionally emitted
+        // directly: it is already cheap and depends on the current camera direction.
         boolean hasHighlight = job.highlightColor != NO_HIGHLIGHT;
         boolean skipBasePass = hasHighlight && job.chunkMeshActive;
-        boolean canBake = !skipBasePass;
+        boolean canBake = !skipBasePass && !ribbonLod;
         if (canBake) {
             int pulsesHash = pulsesHash(job.pulsePositions, job.extractEnd);
             int kindOrd = job.kind.ordinal()
                     | (stride << 8)
-                    | (ribbonLod ? (1 << 16) : 0);
+                    | 0;
             int colorHash = tuning.colorHashFor(job.kind);
-            int cameraBin = ribbonLod ? cameraBin(cameraPos) : 0;
-            double curHalfThickness = ribbonLod ? ribbonHalfWidth(tuning) : halfThickness(tuning);
+                int cameraBin = 0;
+                double curHalfThickness = halfThickness(tuning);
             if (sim.tryUseBake(nodeCount, ribbonLod,
                     effectiveBlockA, effectiveBlockB, job.skyA, job.skyB,
                     kindOrd, job.powered, job.tier, pulsesHash, colorHash, cameraBin,
                     curHalfThickness)) {
                 cacheHits++;
                 emitBaked(buffer, poseState, cameraPos, sim);
-                renderHighlightPass(buffer, poseState, cameraPos, job, sim, nodeCount, totalLength,
+                renderHighlightPass(buffer, poseState, cameraPos, job, sim, nodeCount, totalLength, visualTotalLength,
                         effectiveBlockA, effectiveBlockB, ribbonLod, cheapHighlight, stride);
                 return;
             }
             cacheMisses++;
-            int approxVerts = ribbonLod
-                    ? Math.max(64, (nodeCount - 1) * 4)
-                    : Math.max(64, (nodeCount - 1) * 16);
+            int approxVerts = Math.max(64, (nodeCount - 1) * 16);
             sim.beginBake(approxVerts);
             activeBakeSim = sim;
             try {
-                if (ribbonLod) {
-                    bakeCamOffsetX = cameraPos.x;
-                    bakeCamOffsetY = cameraPos.y;
-                    bakeCamOffsetZ = cameraPos.z;
-                    renderRibbon(null, null, cameraPos, sim, nodeCount, totalLength,
-                            effectiveBlockA, effectiveBlockB, job.skyA, job.skyB,
-                            NO_HIGHLIGHT, job.kind, job.powered, job.tier,
-                            job.pulsePositions, job.extractEnd);
-                } else {
-                    renderSquare(null, null, Vec3.ZERO, sim, nodeCount, totalLength,
-                            effectiveBlockA, effectiveBlockB, job.skyA, job.skyB,
-                            NO_HIGHLIGHT, job.kind, job.powered, job.tier,
-                            job.pulsePositions, job.extractEnd, stride);
-                }
+                renderSquare(null, null, Vec3.ZERO, sim, nodeCount, totalLength, visualTotalLength,
+                        effectiveBlockA, effectiveBlockB, job.skyA, job.skyB,
+                        NO_HIGHLIGHT, job.kind, job.powered, job.tier,
+                        job.pulsePositions, job.extractEnd, stride);
             } finally {
                 activeBakeSim = null;
                 bakeCamOffsetX = bakeCamOffsetY = bakeCamOffsetZ = 0.0D;
@@ -316,27 +310,33 @@ public final class LeashBuilder {
                     kindOrd, job.powered, job.tier, pulsesHash, colorHash, cameraBin,
                     curHalfThickness);
             emitBaked(buffer, poseState, cameraPos, sim);
-            renderHighlightPass(buffer, poseState, cameraPos, job, sim, nodeCount, totalLength,
+                renderHighlightPass(buffer, poseState, cameraPos, job, sim, nodeCount, totalLength, visualTotalLength,
                     effectiveBlockA, effectiveBlockB, ribbonLod, cheapHighlight, stride);
             return;
         }
 
-        renderHighlightPass(buffer, poseState, cameraPos, job, sim, nodeCount, totalLength,
+        if (!skipBasePass && ribbonLod) {
+                renderRibbon(buffer, poseState, cameraPos, sim, nodeCount, totalLength, visualTotalLength,
+                    effectiveBlockA, effectiveBlockB, job.skyA, job.skyB,
+                    NO_HIGHLIGHT, job.kind, job.powered, job.tier,
+                    job.pulsePositions, job.extractEnd);
+        }
+            renderHighlightPass(buffer, poseState, cameraPos, job, sim, nodeCount, totalLength, visualTotalLength,
                 effectiveBlockA, effectiveBlockB, ribbonLod, cheapHighlight, stride);
     }
 
     private static void renderHighlightPass(VertexConsumer buffer, PoseStack.Pose poseState, Vec3 cameraPos,
-            RopeJob job, RopeSimulation sim, int nodeCount, double totalLength,
+                RopeJob job, RopeSimulation sim, int nodeCount, double totalLength, double visualTotalLength,
             int effectiveBlockA, int effectiveBlockB, boolean ribbonLod, boolean cheapHighlight, int stride) {
         if (job.highlightColor == NO_HIGHLIGHT) {
             return;
         }
         if (ribbonLod || cheapHighlight) {
-            renderRibbon(buffer, poseState, cameraPos, sim, nodeCount, totalLength,
+            renderRibbon(buffer, poseState, cameraPos, sim, nodeCount, totalLength, visualTotalLength,
                     effectiveBlockA, effectiveBlockB, job.skyA, job.skyB,
                     job.highlightColor, job.kind, job.powered, job.tier, job.pulsePositions, job.extractEnd);
         } else {
-            renderSquare(buffer, poseState, cameraPos, sim, nodeCount, totalLength,
+            renderSquare(buffer, poseState, cameraPos, sim, nodeCount, totalLength, visualTotalLength,
                     effectiveBlockA, effectiveBlockB, job.skyA, job.skyB,
                     job.highlightColor, job.kind, job.powered, job.tier, job.pulsePositions, job.extractEnd,
                     stride);
@@ -365,6 +365,7 @@ public final class LeashBuilder {
             float[] smx = sim.bakedSegMidX();
             float[] smy = sim.bakedSegMidY();
             float[] smz = sim.bakedSegMidZ();
+            int[] sourceSegments = sim.bakedSegSourceSegment();
             float[] ssx = sim.bakedSegSideX();
             float[] ssy = sim.bakedSegSideY();
             float[] ssz = sim.bakedSegSideZ();
@@ -373,7 +374,8 @@ public final class LeashBuilder {
             float[] suz = sim.bakedSegUpZ();
             int emitted = 0;
             for (int s = 0; s < segCount; s++) {
-                if (!sim.isSegmentVisible(s)) {
+                int sourceSegment = sourceSegments != null && s < sourceSegments.length ? sourceSegments[s] : s;
+                if (!sim.isSegmentVisible(sourceSegment)) {
                     continue;
                 }
                 int base = s * 16;
@@ -469,6 +471,7 @@ public final class LeashBuilder {
             RopeSimulation sim,
             int nodeCount,
             double totalLength,
+            double visualTotalLength,
             int blockA,
             int blockB,
             int skyA,
@@ -492,7 +495,7 @@ public final class LeashBuilder {
         double[] upY = sim.frameUpY();
         double[] upZ = sim.frameUpZ();
         if (rebuild) {
-            buildNodeFrames(sim, nodeCount, totalLength, baseThickness,
+                buildNodeFrames(sim, nodeCount, visualTotalLength, baseThickness,
                     pulsePositions, extractEnd, sideX, sideY, sideZ, upX, upY, upZ);
         }
 
@@ -505,28 +508,27 @@ public final class LeashBuilder {
         // (e.g. highlight rendering), skip stripes the visibility pass already marked
         // hidden.
         boolean filterByMask = bakeSim == null && !sim.segVisAllVisible();
-        int stripeIdx = 0;
-        // Emit one stripe per node-step (not per stride-step) so the alternating
-        // dark/light
-        // color pattern is invariant under LOD: stride=2 produces two stripes per
-        // geometric
-        // segment, stride=4 produces four. Frames are linearly interpolated between i
-        // and j;
-        // we still save physics work by computing only stride-anchored frames upstream.
+        double stripeLength = visualStripeLength(activeColorTuning);
+        // Emit one visual stripe per original segment length, not per current physics
+        // node-step. Coarse dynamic LOD may double segmentLength, but the color/texture
+        // grid should keep the same density so LOD does not become visible.
         for (int i = 0; i < last; i += stride) {
             int j = Math.min(i + stride, last);
-            int sub = Math.max(1, j - i);
+            double spanStart = sim.visualRenderLength(i);
+            double spanEnd = sim.visualRenderLength(j);
+            int sub = visualStripeSpanCount(spanStart, spanEnd, stripeLength);
             for (int k = 0; k < sub; k++) {
-                int currentStripe = stripeIdx++;
-                if (filterByMask && !sim.isSegmentVisible(currentStripe)) {
+                int currentStripe = visualStripeIndex(spanStart, stripeLength) + k;
+                double a = visualStripeFraction(spanStart, spanEnd, stripeLength, currentStripe, true);
+                double b = visualStripeFraction(spanStart, spanEnd, stripeLength, currentStripe, false);
+                int sourceSegment = i + Math.min(j - i - 1, (int) Math.floor(a * (j - i)));
+                if (filterByMask && !sim.isSegmentVisible(sourceSegment)) {
                     continue;
                 }
-                double a = k / (double) sub;
-                double b = (k + 1) / (double) sub;
                 emitBoxStripSubSegment(buffer, pose, cameraPos, sim, last,
                         sideX, sideY, sideZ, upX, upY, upZ,
                         i, j, a, b, blockA, blockB, skyA, skyB,
-                        currentStripe, highlightColor, kind, powered, tier, bakeSim);
+                        currentStripe, sourceSegment, highlightColor, kind, powered, tier, bakeSim);
             }
         }
         // End cap faces at both rope endpoints.
@@ -576,7 +578,7 @@ public final class LeashBuilder {
             double[] upX, double[] upY, double[] upZ,
             int i, int j, double a, double b,
             int blockA, int blockB, int skyA, int skyB,
-            int stripe, int highlightColor, LeadKind kind, boolean powered, int tier,
+            int stripe, int sourceSegment, int highlightColor, LeadKind kind, boolean powered, int tier,
             RopeSimulation bakeSim) {
         double span = j - i;
         float t0 = (float) ((i + a * span) / (double) last);
@@ -606,6 +608,7 @@ public final class LeashBuilder {
 
         if (bakeSim != null) {
             bakeSim.appendBakedSegment(
+                    sourceSegment,
                     (sxw + exw) * 0.5D,
                     (syw + eyw) * 0.5D,
                     (szw + ezw) * 0.5D,
@@ -626,7 +629,7 @@ public final class LeashBuilder {
                 sSideX, sSideY, sSideZ, sUpX, sUpY, sUpZ,
                 eSideX, eSideY, eSideZ, eUpX, eUpY, eUpZ,
                 stripe, light0, light1, highlightColor, kind, powered, tier,
-                needsFullRenderSegment(sim, stripe));
+                needsFullRenderSegment(sim, sourceSegment));
     }
 
     private static void buildNodeFrames(
@@ -826,6 +829,7 @@ public final class LeashBuilder {
             RopeSimulation sim,
             int nodeCount,
             double totalLength,
+            double visualTotalLength,
             int blockA,
             int blockB,
             int skyA,
@@ -836,11 +840,16 @@ public final class LeashBuilder {
             int tier,
             float[] pulsePositions,
             int extractEnd) {
+        double stripeLength = visualStripeLength(activeColorTuning);
         for (int i = 0; i < nodeCount - 1; i++) {
             float t0 = i / (float) (nodeCount - 1);
             float t1 = (i + 1) / (float) (nodeCount - 1);
             int light0 = LightCoordsUtil.pack((int) lerp(t0, blockA, blockB), (int) lerp(t0, skyA, skyB));
             int light1 = LightCoordsUtil.pack((int) lerp(t1, blockA, blockB), (int) lerp(t1, skyA, skyB));
+            double spanStart = sim.visualRenderLength(i);
+            double spanEnd = sim.visualRenderLength(i + 1);
+            int stripeIdx = visualStripeIndex(spanStart, stripeLength);
+            int stripes = visualStripeSpanCount(spanStart, spanEnd, stripeLength);
             renderRibbonSegment(buffer, pose,
                     sim.renderX(i) - cameraPos.x,
                     sim.renderY(i) - cameraPos.y,
@@ -848,8 +857,9 @@ public final class LeashBuilder {
                     sim.renderX(i + 1) - cameraPos.x,
                     sim.renderY(i + 1) - cameraPos.y,
                     sim.renderZ(i + 1) - cameraPos.z,
-                    sim.renderLength(i), sim.renderLength(i + 1), totalLength,
-                    i, light0, light1, highlightColor, kind, powered, tier, pulsePositions, extractEnd);
+                    spanStart, spanEnd, visualTotalLength,
+                        stripeIdx, stripes, light0, light1, highlightColor, kind, powered, tier,
+                        pulsePositions, extractEnd);
         }
     }
 
@@ -870,6 +880,7 @@ public final class LeashBuilder {
             double lengthEnd,
             double totalLength,
             int stripe,
+            int stripes,
             int light0,
             int light1,
             int highlightColor,
@@ -920,12 +931,49 @@ public final class LeashBuilder {
         sideY *= scale;
         sideZ *= scale;
 
-        quad(buffer, pose,
-                sx + sideX, sy + sideY, sz + sideZ,
-                ex + sideX, ey + sideY, ez + sideZ,
-                ex - sideX, ey - sideY, ez - sideZ,
-                sx - sideX, sy - sideY, sz - sideZ,
-                stripe, light0, light1, 0, highlightColor, kind, powered, tier);
+        int sub = Math.max(1, stripes);
+        double stripeLength = visualStripeLength(activeColorTuning);
+        for (int k = 0; k < sub; k++) {
+            double a = visualStripeFraction(lengthStart, lengthEnd, stripeLength, stripe + k, true);
+            double b = visualStripeFraction(lengthStart, lengthEnd, stripeLength, stripe + k, false);
+            double ssx = sx + (ex - sx) * a;
+            double ssy = sy + (ey - sy) * a;
+            double ssz = sz + (ez - sz) * a;
+            double eex = sx + (ex - sx) * b;
+            double eey = sy + (ey - sy) * b;
+            double eez = sz + (ez - sz) * b;
+            quad(buffer, pose,
+                    ssx + sideX, ssy + sideY, ssz + sideZ,
+                    eex + sideX, eey + sideY, eez + sideZ,
+                    eex - sideX, eey - sideY, eez - sideZ,
+                    ssx - sideX, ssy - sideY, ssz - sideZ,
+                    stripe + k, light0, light1, 0, highlightColor, kind, powered, tier);
+        }
+    }
+
+    private static double visualStripeLength(RopeTuning tuning) {
+        RopeTuning effective = effectiveTuning(tuning);
+        return Math.max(0.05D, effective.visualSegmentLength());
+    }
+
+    private static int visualStripeIndex(double arcLength, double stripeLength) {
+        return (int) Math.floor(Math.max(0.0D, arcLength) / stripeLength + 1.0e-6D);
+    }
+
+    private static int visualStripeSpanCount(double spanStart, double spanEnd, double stripeLength) {
+        double start = Math.max(0.0D, Math.min(spanStart, spanEnd));
+        double end = Math.max(start, Math.max(spanStart, spanEnd));
+        int first = visualStripeIndex(start, stripeLength);
+        int last = visualStripeIndex(Math.max(start, end - 1.0e-6D), stripeLength);
+        return Math.max(1, last - first + 1);
+    }
+
+    private static double visualStripeFraction(double spanStart, double spanEnd, double stripeLength,
+            int stripe, boolean start) {
+        double spanLength = Math.max(1.0e-6D, spanEnd - spanStart);
+        double stripeBoundary = (stripe + (start ? 0 : 1)) * stripeLength;
+        double clamped = Math.max(spanStart, Math.min(spanEnd, stripeBoundary));
+        return (clamped - spanStart) / spanLength;
     }
 
     private static void renderBoxStrip(
@@ -966,7 +1014,7 @@ public final class LeashBuilder {
         double gx = ex - endSideX - endUpX, gy = ey - endSideY - endUpY, gz = ez - endSideZ - endUpZ;
         double hx = ex - endSideX + endUpX, hy = ey - endSideY + endUpY, hz = ez - endSideZ + endUpZ;
 
-        if (!forceAllFaces && activeBakeSim == null && highlightColor == NO_HIGHLIGHT) {
+        if (!forceAllFaces && activeBakeSim == null) {
             double mx = (sx + ex) * 0.5D;
             double my = (sy + ey) * 0.5D;
             double mz = (sz + ez) * 0.5D;
@@ -1003,20 +1051,6 @@ public final class LeashBuilder {
                 stripe, light0, light1, 2, highlightColor, kind, powered, tier);
         quad(buffer, pose, dx, dy, dz, hx, hy, hz, ex0, ey0, ez0, ax, ay, az,
                 stripe, light0, light1, 3, highlightColor, kind, powered, tier);
-    }
-
-    /**
-     * 4-block-cube quantization of camera position. Used as a ribbon-bake cache key
-     * so the
-     * cache survives small camera motion but invalidates when the player walks far
-     * enough
-     * for the camera-facing side vector to drift visibly.
-     */
-    private static int cameraBin(Vec3 cameraPos) {
-        int bx = (int) Math.floor(cameraPos.x * 0.25D);
-        int by = (int) Math.floor(cameraPos.y * 0.25D);
-        int bz = (int) Math.floor(cameraPos.z * 0.25D);
-        return (bx * 73856093) ^ (by * 19349663) ^ (bz * 83492791);
     }
 
     private static int pulsesHash(float[] pulsePositions, int extractEnd) {

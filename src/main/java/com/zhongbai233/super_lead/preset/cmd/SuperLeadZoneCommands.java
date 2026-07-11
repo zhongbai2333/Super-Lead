@@ -10,6 +10,7 @@ import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import com.mojang.brigadier.suggestion.SuggestionProvider;
 import com.zhongbai233.super_lead.Super_lead;
 import com.zhongbai233.super_lead.lead.ParrotRopePerchController;
+import com.zhongbai233.super_lead.permissions.SuperLeadPermissions;
 import com.zhongbai233.super_lead.preset.PhysicsZone;
 import com.zhongbai233.super_lead.preset.PhysicsZoneSavedData;
 import com.zhongbai233.super_lead.preset.PhysicsZoneSelectionManager;
@@ -24,8 +25,6 @@ import net.minecraft.commands.arguments.coordinates.BlockPosArgument;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
-import net.minecraft.server.permissions.Permission;
-import net.minecraft.server.permissions.PermissionLevel;
 import net.minecraft.world.phys.AABB;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
@@ -36,8 +35,6 @@ public final class SuperLeadZoneCommands {
     private SuperLeadZoneCommands() {
     }
 
-    private static final Permission.HasCommandLevel OP = new Permission.HasCommandLevel(PermissionLevel.GAMEMASTERS);
-
     private static final SuggestionProvider<CommandSourceStack> SUGGEST_PRESET = (ctx,
             builder) -> SharedSuggestionProvider.suggest(
                     RopePresetLibrary.forServer(ctx.getSource().getServer()).list(), builder);
@@ -45,16 +42,16 @@ public final class SuperLeadZoneCommands {
     private static final SuggestionProvider<CommandSourceStack> SUGGEST_ZONE = (ctx, builder) -> {
         ServerLevel level = ctx.getSource().getLevel();
         return SharedSuggestionProvider.suggest(
-                PhysicsZoneSavedData.get(level).zones().stream().map(PhysicsZone::name), builder);
+                PhysicsZoneSavedData.get(level).zones().stream().map(zone -> zone.name()), builder);
     };
 
     @SubscribeEvent
     public static void onRegister(RegisterCommandsEvent event) {
         CommandDispatcher<CommandSourceStack> dispatcher = event.getDispatcher();
-        LiteralArgumentBuilder<CommandSourceStack> root = Commands.literal("superlead")
-                .requires(src -> src.permissions().hasPermission(OP));
+        LiteralArgumentBuilder<CommandSourceStack> root = Commands.literal("superlead");
 
         LiteralArgumentBuilder<CommandSourceStack> zoneNode = Commands.literal("zone")
+                .requires(SuperLeadPermissions::sourceCanManageZones)
                 .then(Commands.literal("list").executes(SuperLeadZoneCommands::list))
                 .then(Commands.literal("select").executes(SuperLeadZoneCommands::select))
                 .then(Commands.literal("cancel").executes(SuperLeadZoneCommands::cancelSelect))
@@ -81,7 +78,9 @@ public final class SuperLeadZoneCommands {
                                 .executes(SuperLeadZoneCommands::clearAdventureRopes)));
 
         root.then(zoneNode);
-        root.then(Commands.literal("parrotperch").executes(SuperLeadZoneCommands::parrotPerch));
+        root.then(Commands.literal("parrotperch")
+                .requires(SuperLeadPermissions::sourceCanManageZones)
+                .executes(SuperLeadZoneCommands::parrotPerch));
         dispatcher.register(root);
     }
 
@@ -115,11 +114,7 @@ public final class SuperLeadZoneCommands {
         String preset = StringArgumentType.getString(ctx, "preset");
         BlockPos a = BlockPosArgument.getBlockPos(ctx, "from");
         BlockPos b = BlockPosArgument.getBlockPos(ctx, "to");
-        AABB area = new AABB(
-                Math.min(a.getX(), b.getX()), Math.min(a.getY(), b.getY()), Math.min(a.getZ(), b.getZ()),
-                Math.max(a.getX(), b.getX()) + 1.0,
-                Math.max(a.getY(), b.getY()) + 1.0,
-                Math.max(a.getZ(), b.getZ()) + 1.0);
+        AABB area = PhysicsZoneSelectionManager.areaFromCorners(a, b);
         ServerLevel level = ctx.getSource().getLevel();
         boolean ok = PresetServerManager.addZone(level, name, preset, area);
         if (!ok) {

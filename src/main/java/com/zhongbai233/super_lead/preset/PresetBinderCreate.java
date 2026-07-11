@@ -11,7 +11,7 @@ public record PresetBinderCreate(boolean useOffhand, String displayName) impleme
     public static final CustomPacketPayload.Type<PresetBinderCreate> TYPE = new CustomPacketPayload.Type<>(
             Identifier.fromNamespaceAndPath(Super_lead.MODID, "preset_binder_create"));
     public static final StreamCodec<RegistryFriendlyByteBuf, PresetBinderCreate> STREAM_CODEC = CustomPacketPayload
-            .codec(PresetBinderCreate::write, PresetBinderCreate::read);
+            .codec((payload, buf) -> payload.write(buf), PresetBinderCreate::read);
 
     @Override
     public Type<? extends CustomPacketPayload> type() {

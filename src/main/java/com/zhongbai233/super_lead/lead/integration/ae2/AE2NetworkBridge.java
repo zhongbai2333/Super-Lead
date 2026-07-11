@@ -97,7 +97,7 @@ public final class AE2NetworkBridge {
             return;
         }
         appeng.menu.locator.MenuLocators.register(RopeAeTerminalLocator.class,
-                RopeAeTerminalLocator::writeToPacket,
+            (locator, buffer) -> locator.writeToPacket(buffer),
                 RopeAeTerminalLocator::readFromPacket);
         menuLocatorsRegistered = true;
     }

@@ -77,14 +77,15 @@ public final class RopeDebugLabels {
         }
     }
 
-    public static void record(UUID id, Vec3 world, int nodes, int renderPressure,
+    public static void record(UUID id, Vec3 world, int nodes, int lodLevel, int renderPressure,
             double physicsMs, String physicsState, boolean chunkMesh, double distanceSqr) {
         if (!enabled || world == null || distanceSqr > MAX_LABEL_DISTANCE_SQR) {
             return;
         }
         String shortId = id == null ? "prev" : id.toString().substring(0, 4);
-        String label = String.format(Locale.ROOT, "%s L%d P%s N%d %s",
-                shortId, renderPressure, formatPhysics(physicsMs, physicsState), nodes, chunkMesh ? "mesh" : "dyn");
+        String label = String.format(Locale.ROOT, "%s LOD%d R%d P%s N%d %s",
+            shortId, lodLevel, renderPressure, formatPhysics(physicsMs, physicsState), nodes,
+            chunkMesh ? "mesh" : "dyn");
         synchronized (LOCK) {
             if (pending.size() < MAX_LABELS) {
                 pending.add(new Sample(world, label, chunkMesh, distanceSqr));

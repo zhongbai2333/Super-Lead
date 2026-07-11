@@ -1,5 +1,6 @@
 package com.zhongbai233.super_lead.lead.client.sim;
 
+import com.zhongbai233.super_lead.lead.physics.RopeSagModel;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 
@@ -20,7 +21,7 @@ abstract class RopeSimulationRenderCache extends RopeSimulationCore {
      */
     public double prepareRender(float partialTick) {
         if (renderCacheValid
-                && (isSettled() || Float.floatToIntBits(renderCachePartialTick) == Float.floatToIntBits(partialTick))) {
+                && (renderStable || Float.floatToIntBits(renderCachePartialTick) == Float.floatToIntBits(partialTick))) {
             return renderTotalLength;
         }
         if (useCollisionProxy) {
@@ -67,6 +68,28 @@ abstract class RopeSimulationRenderCache extends RopeSimulationCore {
 
     public double renderLength(int i) {
         return renderLengths[i];
+    }
+
+    /**
+     * Current render arc length remapped onto the rope's fixed target length.
+     *
+     * <p>
+     * Collision can bend the visible polyline and make its measured arc length a
+     * little longer than the solver's distance-constraint target. The checker/stripe
+     * pattern should represent material length, not the temporary bent path length;
+     * otherwise pushing the rope appears to create extra texture cells from one end.
+     */
+    public double visualRenderLength(int i) {
+        double currentTotal = Math.max(1.0e-6D, renderTotalLength);
+        return renderLengths[i] * visualRenderTotalLength() / currentTotal;
+    }
+
+    public double visualRenderTotalLength() {
+        double dx = renderX[nodes - 1] - renderX[0];
+        double dy = renderY[nodes - 1] - renderY[0];
+        double dz = renderZ[nodes - 1] - renderZ[0];
+        return RopeSagModel.physicsTargetLength(Math.sqrt(dx * dx + dy * dy + dz * dz), tuning.slack(),
+                tuning.gravity());
     }
 
     public AABB renderBounds(float partialTick) {
@@ -267,6 +290,7 @@ abstract class RopeSimulationRenderCache extends RopeSimulationCore {
             bakedSegUpX = new float[expectedSegs];
             bakedSegUpY = new float[expectedSegs];
             bakedSegUpZ = new float[expectedSegs];
+            bakedSegSourceSegment = new int[expectedSegs];
         }
         bakedCount = 0;
         bakedSegmentCount = 0;
@@ -274,7 +298,7 @@ abstract class RopeSimulationRenderCache extends RopeSimulationCore {
     }
 
     /** Append per-segment frame info before that segment's 16 verts are written. */
-    public void appendBakedSegment(double mx, double my, double mz,
+    public void appendBakedSegment(int sourceSegment, double mx, double my, double mz,
             double sx, double sy, double sz,
             double ux, double uy, double uz) {
         if (bakedSegmentCount >= bakedSegMidX.length) {
@@ -288,8 +312,10 @@ abstract class RopeSimulationRenderCache extends RopeSimulationCore {
             bakedSegUpX = java.util.Arrays.copyOf(bakedSegUpX, n);
             bakedSegUpY = java.util.Arrays.copyOf(bakedSegUpY, n);
             bakedSegUpZ = java.util.Arrays.copyOf(bakedSegUpZ, n);
+            bakedSegSourceSegment = java.util.Arrays.copyOf(bakedSegSourceSegment, n);
         }
         int i = bakedSegmentCount++;
+        bakedSegSourceSegment[i] = sourceSegment;
         bakedSegMidX[i] = (float) mx;
         bakedSegMidY[i] = (float) my;
         bakedSegMidZ[i] = (float) mz;
@@ -370,6 +396,10 @@ abstract class RopeSimulationRenderCache extends RopeSimulationCore {
 
     public float[] bakedSegMidX() {
         return bakedSegMidX;
+    }
+
+    public int[] bakedSegSourceSegment() {
+        return bakedSegSourceSegment;
     }
 
     public float[] bakedSegMidY() {

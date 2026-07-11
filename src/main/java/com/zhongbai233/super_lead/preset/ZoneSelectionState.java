@@ -12,7 +12,7 @@ public record ZoneSelectionState(boolean active, boolean hasFirst, BlockPos firs
     public static final CustomPacketPayload.Type<ZoneSelectionState> TYPE = new CustomPacketPayload.Type<>(
             Identifier.fromNamespaceAndPath(Super_lead.MODID, "zone_selection_state"));
     public static final StreamCodec<RegistryFriendlyByteBuf, ZoneSelectionState> STREAM_CODEC = CustomPacketPayload
-            .codec(ZoneSelectionState::write, ZoneSelectionState::read);
+            .codec((payload, buf) -> payload.write(buf), ZoneSelectionState::read);
 
     public ZoneSelectionState {
         if (!hasFirst)

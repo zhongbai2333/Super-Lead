@@ -49,11 +49,14 @@ public final class ParrotRopePerchController {
     private static final int APPROACH_NAVIGATION_GRACE_TICKS = 20;
     private static final int APPROACH_TIMEOUT_TICKS = 200;
     private static final int SCAN_APPROACHING_GRACE_TICKS = 120;
+    private static final int MIN_ROPES_SCANNED_PER_PASS = 16;
+    private static final int MAX_ROPES_SCANNED_PER_PASS = 64;
 
     private static final Map<ResourceKey<Level>, Map<UUID, PerchState>> PERCHES = new HashMap<>();
     private static final Map<ResourceKey<Level>, Map<UUID, Long>> COOLDOWNS = new HashMap<>();
     private static final Map<ResourceKey<Level>, Map<UUID, Long>> APPROACH_START_TICK = new HashMap<>();
     private static final Map<ResourceKey<Level>, Map<UUID, Long>> BOOSTED_ROPES = new HashMap<>();
+    private static final Map<ResourceKey<Level>, Integer> SCAN_CURSOR = new HashMap<>();
     private static final int BOOST_DURATION_TICKS = 600;
     private static final EntityTypeTest<Entity, Parrot> PARROTS = EntityTypeTest.forClass(Parrot.class);
 
@@ -197,7 +200,18 @@ public final class ParrotRopePerchController {
 
     private static void acquireNewPerches(ServerLevel level, List<LeadConnection> connections,
             Map<UUID, PerchState> states, Map<UUID, Long> cooldowns, long tick) {
-        for (LeadConnection connection : connections) {
+        int total = connections.size();
+        if (total == 0) {
+            SCAN_CURSOR.remove(level.dimension());
+            return;
+        }
+        int budget = scanBudget(total);
+        int start = Math.floorMod(SCAN_CURSOR.getOrDefault(level.dimension(), 0), total);
+        int scanned = 0;
+        for (int offset = 0; offset < total && scanned < budget; offset++) {
+            int index = (start + offset) % total;
+            LeadConnection connection = connections.get(index);
+            scanned++;
             if (!canPerchOn(level, connection)) {
                 continue;
             }
@@ -239,6 +253,14 @@ public final class ParrotRopePerchController {
                 }
             }
         }
+        SCAN_CURSOR.put(level.dimension(), (start + scanned) % total);
+    }
+
+    private static int scanBudget(int totalRopes) {
+        if (totalRopes <= MAX_ROPES_SCANNED_PER_PASS) {
+            return totalRopes;
+        }
+        return Mth.clamp(totalRopes / 4, MIN_ROPES_SCANNED_PER_PASS, MAX_ROPES_SCANNED_PER_PASS);
     }
 
     private static Candidate bestCandidate(ServerLevel level, Parrot parrot, LeadConnection connection,

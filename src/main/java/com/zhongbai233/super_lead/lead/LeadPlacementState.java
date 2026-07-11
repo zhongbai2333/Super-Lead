@@ -22,15 +22,15 @@ final class LeadPlacementState {
     }
 
     static Optional<LeadAnchor> pendingAnchor(Player player) {
-        return pendingLead(player).map(PendingLead::anchor);
+        return pendingLead(player).map(pending -> pending.anchor());
     }
 
     static Optional<LeadKind> pendingKind(Player player) {
-        return pendingLead(player).map(PendingLead::kind);
+        return pendingLead(player).map(pending -> pending.kind());
     }
 
     static Optional<Integer> pendingLengthUnits(Player player) {
-        return pendingLead(player).map(PendingLead::lengthUnits);
+        return pendingLead(player).map(pending -> pending.lengthUnits());
     }
 
     static void setPendingAnchor(Player player, LeadAnchor anchor, LeadKind kind) {

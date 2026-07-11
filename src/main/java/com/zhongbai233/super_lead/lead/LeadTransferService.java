@@ -249,6 +249,7 @@ final class LeadTransferService {
 
             int n = ropes.size();
             int start = PRESSURIZED_RR_CURSOR.getOrDefault(sourcePos, 0) % n;
+            TransferSearchContext search = new TransferSearchContext();
 
             for (int step = 0; step < n; step++) {
                 int idx = (start + step) % n;
@@ -261,23 +262,19 @@ final class LeadTransferService {
                 }
 
                 long batch = pressurizedBatch(rope);
-                List<PathStep> path = new ArrayList<>();
-                List<RrChoice> rrChoices = new ArrayList<>();
-                Set<UUID> visited = new HashSet<>();
-                visited.add(rope.id());
-                path.add(new PathStep(rope, rope.extractAnchor() == 2));
+                search.reset(rope, rope.extractAnchor() == 2);
 
                 if (walkAndTransferPressurized(level, sourceAnchor, batch, firstFar, ropesAt,
-                        PRESSURIZED_RR_CURSOR, chemicalHandlers, visited, path, rrChoices, 1)) {
+                        PRESSURIZED_RR_CURSOR, chemicalHandlers, search.visited, search.path, search.rrChoices, 1)) {
                     long now = level.getGameTime();
-                    for (int i = 0; i < path.size(); i++) {
-                        PathStep s = path.get(i);
+                    for (int i = 0; i < search.path.size(); i++) {
+                        PathStep s = search.path.get(i);
                         long startTick = now + (long) i * ITEM_PULSE_DURATION_TICKS;
                         SuperLeadPayloads.sendItemPulse(level,
                                 new ItemPulse(s.rope.id(), s.reverse, startTick, ITEM_PULSE_DURATION_TICKS));
                     }
                     PRESSURIZED_RR_CURSOR.put(sourcePos, (idx + 1) % n);
-                    for (RrChoice rc : rrChoices) {
+                    for (RrChoice rc : search.rrChoices) {
                         PRESSURIZED_RR_CURSOR.put(rc.knot, (rc.idx + 1) % rc.n);
                     }
                     break;
@@ -342,6 +339,7 @@ final class LeadTransferService {
 
             int n = ropes.size();
             int start = FLUID_RR_CURSOR.getOrDefault(sourcePos, 0) % n;
+            TransferSearchContext search = new TransferSearchContext();
 
             for (int step = 0; step < n; step++) {
                 int idx = (start + step) % n;
@@ -355,23 +353,19 @@ final class LeadTransferService {
 
                 long batch = Config.fluidBucketAmount() * (1L << Math.min(Config.fluidTierMax(), rope.tier()));
 
-                List<PathStep> path = new ArrayList<>();
-                List<RrChoice> rrChoices = new ArrayList<>();
-                Set<UUID> visited = new HashSet<>();
-                visited.add(rope.id());
-                path.add(new PathStep(rope, rope.extractAnchor() == 2));
+                search.reset(rope, rope.extractAnchor() == 2);
 
                 if (walkAndTransferMekFluid(level, sourceAnchor, batch, firstFar, ropesAt,
-                        FLUID_RR_CURSOR, fluidHandlers, visited, path, rrChoices, 1)) {
+                        FLUID_RR_CURSOR, fluidHandlers, search.visited, search.path, search.rrChoices, 1)) {
                     long now = level.getGameTime();
-                    for (int i = 0; i < path.size(); i++) {
-                        PathStep s = path.get(i);
+                    for (int i = 0; i < search.path.size(); i++) {
+                        PathStep s = search.path.get(i);
                         long startTick = now + (long) i * ITEM_PULSE_DURATION_TICKS;
                         SuperLeadPayloads.sendItemPulse(level,
                                 new ItemPulse(s.rope.id(), s.reverse, startTick, ITEM_PULSE_DURATION_TICKS));
                     }
                     FLUID_RR_CURSOR.put(sourcePos, (idx + 1) % n);
-                    for (RrChoice rc : rrChoices) {
+                    for (RrChoice rc : search.rrChoices) {
                         FLUID_RR_CURSOR.put(rc.knot, (rc.idx + 1) % rc.n);
                     }
                     break;
@@ -407,21 +401,18 @@ final class LeadTransferService {
 
         BlockPos knot = current.pos().immutable();
         List<LeadConnection> all = ropesAt.getOrDefault(knot, List.of());
-        List<LeadConnection> branches = new ArrayList<>();
-        for (LeadConnection b : all) {
-            if (!visited.contains(b.id())) {
-                branches.add(b);
-            }
-        }
-        if (branches.isEmpty()) {
+        int n = unvisitedBranchCount(all, visited);
+        if (n == 0) {
             return false;
         }
 
-        int n = branches.size();
         int rrStart = rrCursor.getOrDefault(knot, 0) % n;
         for (int step = 0; step < n; step++) {
             int idx = (rrStart + step) % n;
-            LeadConnection branch = branches.get(idx);
+            LeadConnection branch = unvisitedBranchAt(all, visited, idx);
+            if (branch == null) {
+                continue;
+            }
             boolean enteredFromSide = branch.from().pos().equals(knot);
             LeadAnchor far = enteredFromSide ? branch.to() : branch.from();
             boolean reverse = !enteredFromSide;
@@ -682,6 +673,7 @@ final class LeadTransferService {
 
             int n = ropes.size();
             int start = rrCursor.getOrDefault(sourcePos, 0) % n;
+            TransferSearchContext search = new TransferSearchContext();
 
             for (int step = 0; step < n; step++) {
                 int idx = (start + step) % n;
@@ -703,23 +695,19 @@ final class LeadTransferService {
 
                 int batch = Math.max(1, batchOf.applyAsInt(rope));
 
-                List<PathStep> path = new ArrayList<>();
-                List<RrChoice> rrChoices = new ArrayList<>();
-                Set<UUID> visited = new HashSet<>();
-                visited.add(rope.id());
-                path.add(new PathStep(rope, rope.extractAnchor() == 2));
+                search.reset(rope, rope.extractAnchor() == 2);
 
-                if (walkAndTransfer(level, cap, handlers, sourceHandler, batch, firstFar, ropesAt, rrCursor, visited,
-                        path, rrChoices, 1)) {
+                if (walkAndTransfer(level, cap, handlers, sourceHandler, batch, firstFar, ropesAt, rrCursor,
+                        search.visited, search.path, search.rrChoices, 1)) {
                     long now = level.getGameTime();
-                    for (int i = 0; i < path.size(); i++) {
-                        PathStep s = path.get(i);
+                    for (int i = 0; i < search.path.size(); i++) {
+                        PathStep s = search.path.get(i);
                         long startTick = now + (long) i * ITEM_PULSE_DURATION_TICKS;
                         SuperLeadPayloads.sendItemPulse(level,
                                 new ItemPulse(s.rope.id(), s.reverse, startTick, ITEM_PULSE_DURATION_TICKS));
                     }
                     rrCursor.put(sourcePos, (idx + 1) % n);
-                    for (RrChoice rc : rrChoices) {
+                    for (RrChoice rc : search.rrChoices) {
                         rrCursor.put(rc.knot, (rc.idx + 1) % rc.n);
                     }
                     break;
@@ -732,6 +720,20 @@ final class LeadTransferService {
     }
 
     private record RrChoice(BlockPos knot, int idx, int n) {
+    }
+
+    private static final class TransferSearchContext {
+        private final List<PathStep> path = new ArrayList<>();
+        private final List<RrChoice> rrChoices = new ArrayList<>();
+        private final Set<UUID> visited = new HashSet<>();
+
+        private void reset(LeadConnection root, boolean reverse) {
+            path.clear();
+            rrChoices.clear();
+            visited.clear();
+            visited.add(root.id());
+            path.add(new PathStep(root, reverse));
+        }
     }
 
     /**
@@ -776,21 +778,18 @@ final class LeadTransferService {
 
         BlockPos knot = current.pos().immutable();
         List<LeadConnection> all = ropesAt.getOrDefault(knot, List.of());
-        List<LeadConnection> branches = new ArrayList<>();
-        for (LeadConnection b : all) {
-            if (!visited.contains(b.id())) {
-                branches.add(b);
-            }
-        }
-        if (branches.isEmpty()) {
+        int n = unvisitedBranchCount(all, visited);
+        if (n == 0) {
             return false;
         }
 
-        int n = branches.size();
         int rrStart = rrCursor.getOrDefault(knot, 0) % n;
         for (int step = 0; step < n; step++) {
             int idx = (rrStart + step) % n;
-            LeadConnection branch = branches.get(idx);
+            LeadConnection branch = unvisitedBranchAt(all, visited, idx);
+            if (branch == null) {
+                continue;
+            }
             boolean enteredFromSide = branch.from().pos().equals(knot);
             LeadAnchor far = enteredFromSide ? branch.to() : branch.from();
             boolean reverse = !enteredFromSide;
@@ -833,21 +832,18 @@ final class LeadTransferService {
 
         BlockPos knot = current.pos().immutable();
         List<LeadConnection> all = ropesAt.getOrDefault(knot, List.of());
-        List<LeadConnection> branches = new ArrayList<>();
-        for (LeadConnection b : all) {
-            if (!visited.contains(b.id())) {
-                branches.add(b);
-            }
-        }
-        if (branches.isEmpty()) {
+        int n = unvisitedBranchCount(all, visited);
+        if (n == 0) {
             return false;
         }
 
-        int n = branches.size();
         int rrStart = rrCursor.getOrDefault(knot, 0) % n;
         for (int step = 0; step < n; step++) {
             int idx = (rrStart + step) % n;
-            LeadConnection branch = branches.get(idx);
+            LeadConnection branch = unvisitedBranchAt(all, visited, idx);
+            if (branch == null) {
+                continue;
+            }
             boolean enteredFromSide = branch.from().pos().equals(knot);
             LeadAnchor far = enteredFromSide ? branch.to() : branch.from();
             boolean reverse = !enteredFromSide;
@@ -866,6 +862,30 @@ final class LeadTransferService {
             visited.remove(branch.id());
         }
         return false;
+    }
+
+    private static int unvisitedBranchCount(List<LeadConnection> all, Set<UUID> visited) {
+        int count = 0;
+        for (LeadConnection connection : all) {
+            if (!visited.contains(connection.id())) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    private static LeadConnection unvisitedBranchAt(List<LeadConnection> all, Set<UUID> visited, int branchIndex) {
+        int current = 0;
+        for (LeadConnection connection : all) {
+            if (visited.contains(connection.id())) {
+                continue;
+            }
+            if (current == branchIndex) {
+                return connection;
+            }
+            current++;
+        }
+        return null;
     }
 
     private static <R extends Resource> ResourceHandler<R> handler(

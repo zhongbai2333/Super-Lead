@@ -3,7 +3,9 @@ package com.zhongbai233.super_lead.lead;
 import com.mojang.serialization.Codec;
 import com.mojang.serialization.codecs.RecordCodecBuilder;
 import com.zhongbai233.super_lead.Super_lead;
+import java.util.AbstractCollection;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.EnumMap;
 import java.util.HashMap;
@@ -14,6 +16,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.Iterator;
 import java.util.function.Predicate;
 import java.util.function.UnaryOperator;
 import net.minecraft.core.UUIDUtil;
@@ -35,13 +38,13 @@ import net.minecraft.world.level.saveddata.SavedDataType;
  */
 public final class SuperLeadSavedData extends SavedData {
     private static final Codec<RopeChunkBucket> BUCKET_CODEC = RecordCodecBuilder.create(instance -> instance.group(
-            Codec.LONG.fieldOf("chunk").forGetter(RopeChunkBucket::chunkKey),
-            LeadConnection.CODEC.listOf().optionalFieldOf("owned", List.of()).forGetter(RopeChunkBucket::owned),
-            UUIDUtil.CODEC.listOf().optionalFieldOf("refs", List.of()).forGetter(RopeChunkBucket::refs))
+            Codec.LONG.fieldOf("chunk").forGetter(bucket -> bucket.chunkKey()),
+            LeadConnection.CODEC.listOf().optionalFieldOf("owned", List.of()).forGetter(bucket -> bucket.owned()),
+            UUIDUtil.CODEC.listOf().optionalFieldOf("refs", List.of()).forGetter(bucket -> bucket.refs()))
             .apply(instance, SuperLeadSavedData::ropeChunkBucket));
 
     public static final Codec<SuperLeadSavedData> CODEC = RecordCodecBuilder.create(instance -> instance.group(
-            BUCKET_CODEC.listOf().optionalFieldOf("chunks", List.of()).forGetter(SuperLeadSavedData::bucketRecords))
+            BUCKET_CODEC.listOf().optionalFieldOf("chunks", List.of()).forGetter(data -> data.bucketRecords()))
             .apply(instance, SuperLeadSavedData::new));
 
     public static final SavedDataType<SuperLeadSavedData> TYPE = new SavedDataType<>(
@@ -124,6 +127,35 @@ public final class SuperLeadSavedData extends SavedData {
         return Collections.unmodifiableList(out);
     }
 
+    /**
+     * Package-private live view for server tick paths. Callers must only iterate it
+     * on the server thread and must not retain it across mutations/ticks.
+     */
+    Collection<LeadConnection> connectionsView() {
+        return new AbstractCollection<>() {
+            @Override
+            public Iterator<LeadConnection> iterator() {
+                Iterator<StoredRope> it = byId.values().iterator();
+                return new Iterator<>() {
+                    @Override
+                    public boolean hasNext() {
+                        return it.hasNext();
+                    }
+
+                    @Override
+                    public LeadConnection next() {
+                        return it.next().connection;
+                    }
+                };
+            }
+
+            @Override
+            public int size() {
+                return byId.size();
+            }
+        };
+    }
+
     public List<LeadConnection> connectionsOfKind(LeadKind kind) {
         LinkedHashMap<UUID, LeadConnection> indexed = byKind.get(kind);
         return indexed == null || indexed.isEmpty() ? List.of() : List.copyOf(indexed.values());
@@ -132,6 +164,17 @@ public final class SuperLeadSavedData extends SavedData {
     /**
      * Zero-copy internal view for performance-sensitive tick paths.
      * Callers must not retain the returned list beyond the current tick.
+     */
+    Collection<LeadConnection> connectionsOfKindView(LeadKind kind) {
+        LinkedHashMap<UUID, LeadConnection> indexed = byKind.get(kind);
+        if (indexed == null || indexed.isEmpty()) {
+            return List.of();
+        }
+        return Collections.unmodifiableCollection(indexed.values());
+    }
+
+    /**
+     * Snapshot list for algorithms that need stable indexing during a tick.
      */
     List<LeadConnection> connectionsOfKindFast(LeadKind kind) {
         LinkedHashMap<UUID, LeadConnection> indexed = byKind.get(kind);

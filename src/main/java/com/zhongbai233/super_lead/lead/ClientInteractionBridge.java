@@ -46,6 +46,10 @@ public final class ClientInteractionBridge {
         return invokeBoolean(CLIENT_EVENTS, "trySendToggleRopeAttachmentForm", new Class<?>[0]);
     }
 
+    public static boolean trySendConfigureRopeAttachmentDisplay() {
+        return invokeBoolean(CLIENT_EVENTS, "trySendConfigureRopeAttachmentDisplay", new Class<?>[0]);
+    }
+
     public static boolean trySendAddRopeAttachment(InteractionHand hand) {
         return invokeBoolean(CLIENT_EVENTS, "trySendAddRopeAttachment",
                 new Class<?>[] { InteractionHand.class }, hand);

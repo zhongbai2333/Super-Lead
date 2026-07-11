@@ -1,6 +1,7 @@
 package com.zhongbai233.super_lead.preset;
 
 import com.zhongbai233.super_lead.Config;
+import com.zhongbai233.super_lead.permissions.SuperLeadPermissions;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
@@ -9,15 +10,12 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraft.server.permissions.Permission;
-import net.minecraft.server.permissions.PermissionLevel;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.phys.AABB;
 import net.neoforged.neoforge.network.PacketDistributor;
 
 /** Server-side, per-player shears zone-selection session. */
 public final class PhysicsZoneSelectionManager {
-    private static final Permission.HasCommandLevel OP = new Permission.HasCommandLevel(PermissionLevel.GAMEMASTERS);
     private static final Map<UUID, Selection> SELECTIONS = new HashMap<>();
 
     private PhysicsZoneSelectionManager() {
@@ -120,7 +118,7 @@ public final class PhysicsZoneSelectionManager {
     }
 
     private static boolean canUse(ServerPlayer player) {
-        return Config.allowOpVisualPresets() && player.permissions().hasPermission(OP);
+        return Config.allowOpVisualPresets() && SuperLeadPermissions.canManageZones(player);
     }
 
     private record Selection(BlockPos first) {

@@ -15,7 +15,7 @@ public record ZoneSelectionClick(BlockPos pos) implements CustomPacketPayload {
     public static final CustomPacketPayload.Type<ZoneSelectionClick> TYPE = new CustomPacketPayload.Type<>(
             Identifier.fromNamespaceAndPath(Super_lead.MODID, "zone_selection_click"));
     public static final StreamCodec<RegistryFriendlyByteBuf, ZoneSelectionClick> STREAM_CODEC = CustomPacketPayload
-            .codec(ZoneSelectionClick::write, ZoneSelectionClick::read);
+            .codec((payload, buf) -> payload.write(buf), ZoneSelectionClick::read);
 
     @Override
     public Type<? extends CustomPacketPayload> type() {

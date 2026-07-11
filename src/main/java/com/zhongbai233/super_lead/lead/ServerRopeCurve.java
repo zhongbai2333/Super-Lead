@@ -30,7 +30,6 @@ final class ServerRopeCurve {
     private static final double MAX_INITIAL_SAG = 8.0D;
     private static final int TERRAIN_PASSES = 8;
     private static final int TERRAIN_DISTANCE_PASSES = 4;
-    private static final double SERVER_WIND_TIMESTEP = 0.045D;
     private static final int CACHE_MAX_ENTRIES = 512;
     private static final long STATIC_CACHE_MAX_AGE_TICKS = 100L;
     private static final Map<CacheKey, CacheEntry> CACHE = new HashMap<>();
@@ -48,11 +47,10 @@ final class ServerRopeCurve {
             return from(a, b, tuning, level, connection);
         }
         long now = level.getGameTime();
-        long windTick = hasTimeVaryingWind(tuning) ? now : -1L;
         CacheKey key = new CacheKey(level.dimension(), connection.id(), SuperLeadSavedData.get(level).generation(),
-                connection.physicsPreset(), tuning, vecKey(a), vecKey(b), terrainVersion, windTick);
+            connection.physicsPreset(), tuning, vecKey(a), vecKey(b), terrainVersion);
         CacheEntry cached = CACHE.get(key);
-        if (cached != null && (windTick >= 0L || now - cached.createdTick() <= STATIC_CACHE_MAX_AGE_TICKS)) {
+        if (cached != null && now - cached.createdTick() <= STATIC_CACHE_MAX_AGE_TICKS) {
             return cached.shape();
         }
         Shape shape = from(a, b, tuning, level, connection);
@@ -78,16 +76,6 @@ final class ServerRopeCurve {
 
     private static boolean shouldCache(ServerLevel level, LeadConnection connection, ServerPhysicsTuning tuning) {
         return level != null && connection != null && tuning != null;
-    }
-
-    private static boolean hasTimeVaryingWind(ServerPhysicsTuning tuning) {
-        return tuning.windEnabled()
-                && (Math.abs(tuning.windStrength()) > EPS
-                        || Math.abs(tuning.windStrengthJitter()) > EPS
-                        || Math.abs(tuning.windDirectionJitterDeg()) > EPS
-                        || Math.abs(tuning.windCellDirectionSpreadDeg()) > EPS
-                        || Math.abs(tuning.windSpeed()) > EPS
-                        || Math.abs(tuning.windVerticalLift()) > EPS);
     }
 
     private static VecKey vecKey(Vec3 vec) {
@@ -133,7 +121,6 @@ final class ServerRopeCurve {
         int relaxTicks = relaxTicks(segments, iterations);
         double damping = clamp(tuning.damping(), 0.0D, 0.999D);
         double alpha = Math.max(0.0D, tuning.compliance());
-        long gameTick = level == null ? 0L : level.getGameTime();
         for (int tick = 0; tick < relaxTicks; tick++) {
             Arrays.fill(lambda, 0.0D);
             for (int i = 1; i < nodes - 1; i++) {
@@ -143,7 +130,6 @@ final class ServerRopeCurve {
                 vx[i] *= damping;
                 vy[i] = vy[i] * damping + tuning.gravity() * GRAVITY_SCALE * gravityScale;
                 vz[i] *= damping;
-                applyWind(i, gameTick, SERVER_WIND_TIMESTEP, gravityScale, tuning, segments, x, z, vx, vy, vz);
                 x[i] += vx[i];
                 y[i] += vy[i];
                 z[i] += vz[i];
@@ -675,305 +661,17 @@ final class ServerRopeCurve {
     }
 
     private record CacheKey(ResourceKey<Level> dimension, UUID connectionId, long ropeGeneration,
-            String physicsPreset, ServerPhysicsTuning tuning, VecKey a, VecKey b, long terrainVersion,
-            long windTick) {
+            String physicsPreset, ServerPhysicsTuning tuning, VecKey a, VecKey b, long terrainVersion) {
     }
 
-        private record CacheEntry(Shape shape, long createdTick) {
-        }
+    private record CacheEntry(Shape shape, long createdTick) {
+    }
 
     private static double terrainRadius(ServerPhysicsTuning tuning) {
         if (tuning == null) {
             return 0.095D;
         }
         return Math.max(0.01D, Math.min(0.45D, tuning.terrainRadius() + tuning.collisionEps()));
-    }
-
-    private static void applyWind(int nodeIndex, long tick, double h, double gravityScale,
-            ServerPhysicsTuning tuning, int segments, double[] x, double[] z,
-            double[] vx, double[] vy, double[] vz) {
-        if (!windEnabled(tuning) || RopeSagModel.tautProjectionWeight(tuning.slack()) >= 0.98D) {
-            return;
-        }
-        WindSample wind = windAt(tuning, x[nodeIndex], z[nodeIndex], tick);
-        if (wind.envelope() <= 1.0e-5D) {
-            return;
-        }
-        double t = nodeIndex / (double) segments;
-        double nodeWeight = Math.sin(Math.PI * t);
-        if (nodeWeight <= 1.0e-5D) {
-            return;
-        }
-        double force = tuning.windStrength() * wind.strengthScale() * wind.envelope() * nodeWeight
-                * Math.max(0.0D, gravityScale);
-        vx[nodeIndex] += wind.dirX() * force * h;
-        vz[nodeIndex] += wind.dirZ() * force * h;
-        vy[nodeIndex] += force * tuning.windVerticalLift() * h;
-    }
-
-    private static final double WIND_CELL_SIZE = 24.0;
-    /** Distance from cell boundary beyond which no blending is needed. */
-    private static final double WIND_BLEND_MARGIN = 3.0;
-
-    private static boolean windEnabled(ServerPhysicsTuning tuning) {
-        return tuning != null
-                && tuning.windEnabled()
-                && tuning.windStrength() > 0.0D
-                && tuning.windWaveLength() > 1.0e-5D
-                && tuning.windSpeed() > 0.0D;
-    }
-
-    /**
-     * Sample wind at world position (wx, wz).
-     * <p>
-     * Nodes deep inside a cell (≥ {@link #WIND_BLEND_MARGIN} blocks from every
-     * boundary) take the fast path: one sample at the actual position with the
-     * cell's seed. Nodes near a boundary use bilinear interpolation across the
-     * 4 surrounding cell centers to eliminate hard discontinuities when a rope
-     * spans multiple wind cells.
-     */
-    private static WindSample windAt(ServerPhysicsTuning tuning, double wx, double wz, long tick) {
-        // Shared parameters — computed once regardless of path
-        double baseDirRad = Math.toRadians(tuning.windDirectionDeg());
-        double baseDirX = Math.cos(baseDirRad);
-        double baseDirZ = Math.sin(baseDirRad);
-        double speed = Math.max(1.0e-5D, tuning.windSpeed());
-        double baseCycleTicks = Math.max(8.0D, tuning.windWaveLength() / speed);
-
-        int cx = (int) Math.floor(wx / WIND_CELL_SIZE);
-        int cz = (int) Math.floor(wz / WIND_CELL_SIZE);
-        double fx = wx / WIND_CELL_SIZE - cx;
-        double fz = wz / WIND_CELL_SIZE - cz;
-        double distToEdgeX = Math.min(fx, 1.0 - fx) * WIND_CELL_SIZE;
-        double distToEdgeZ = Math.min(fz, 1.0 - fz) * WIND_CELL_SIZE;
-
-        // Fast path: deep inside a single cell — one sample at actual position
-        if (distToEdgeX >= WIND_BLEND_MARGIN && distToEdgeZ >= WIND_BLEND_MARGIN) {
-            return windAtPosition(tuning, cx, cz, wx, wz, tick,
-                    baseDirX, baseDirZ, speed, baseCycleTicks);
-        }
-
-        // Near boundary: bilinear blend of 4 cell-center samples
-        double ccx = wx / WIND_CELL_SIZE - 0.5;
-        double ccz = wz / WIND_CELL_SIZE - 0.5;
-        int ix = (int) Math.floor(ccx);
-        int iz = (int) Math.floor(ccz);
-        double tx = ccx - ix;
-        double tz = ccz - iz;
-
-        WindSample s00 = windAtCellCenter(tuning, ix, iz, tick,
-                baseDirX, baseDirZ, speed, baseCycleTicks);
-        WindSample s10 = windAtCellCenter(tuning, ix + 1, iz, tick,
-                baseDirX, baseDirZ, speed, baseCycleTicks);
-        WindSample s01 = windAtCellCenter(tuning, ix, iz + 1, tick,
-                baseDirX, baseDirZ, speed, baseCycleTicks);
-        WindSample s11 = windAtCellCenter(tuning, ix + 1, iz + 1, tick,
-                baseDirX, baseDirZ, speed, baseCycleTicks);
-
-        return bilinearBlendWind(s00, s10, s01, s11, tx, tz);
-    }
-
-    /**
-     * Fast-path wind sample: uses the cell's deterministic seed for random
-     * parameters and the <em>actual</em> world position for the traveling-wave
-     * spatial phase. Equivalent to the original single-cell behaviour.
-     */
-    private static WindSample windAtPosition(ServerPhysicsTuning tuning,
-            int cellX, int cellZ, double wx, double wz, long tick,
-            double baseDirX, double baseDirZ, double speed, double baseCycleTicks) {
-        long windSeed = windRegionSeedFromCell(tuning, cellX, cellZ);
-        double windClock = tick - (wx * baseDirX + wz * baseDirZ) / speed
-                + windSeedPhase(windSeed) * baseCycleTicks;
-        long eventIndex = (long) Math.floor(windClock / baseCycleTicks);
-        WindSample current = windEventAt(tuning, eventIndex, windClock, baseCycleTicks, windSeed);
-        if (current.envelope() > 0.0D) {
-            return current;
-        }
-        return windEventAt(tuning, eventIndex - 1L, windClock, baseCycleTicks, windSeed);
-    }
-
-    /**
-     * Compute wind at the center of cell ({@code cellX}, {@code cellZ}) using the
-     * cell's deterministic seed and cell-center position for the spatial phase.
-     * Shared wind-direction parameters are passed in to avoid recomputation.
-     */
-    private static WindSample windAtCellCenter(ServerPhysicsTuning tuning,
-            int cellX, int cellZ, long tick,
-            double baseDirX, double baseDirZ, double speed, double baseCycleTicks) {
-        long windSeed = windRegionSeedFromCell(tuning, cellX, cellZ);
-        double cx = (cellX + 0.5) * WIND_CELL_SIZE;
-        double cz = (cellZ + 0.5) * WIND_CELL_SIZE;
-        double windClock = tick - (cx * baseDirX + cz * baseDirZ) / speed
-                + windSeedPhase(windSeed) * baseCycleTicks;
-        long eventIndex = (long) Math.floor(windClock / baseCycleTicks);
-        WindSample current = windEventAt(tuning, eventIndex, windClock, baseCycleTicks, windSeed);
-        if (current.envelope() > 0.0D) {
-            return current;
-        }
-        return windEventAt(tuning, eventIndex - 1L, windClock, baseCycleTicks, windSeed);
-    }
-
-    /**
-     * Bilinearly interpolate wind samples from 4 cell centers. Force vectors
-     * (direction × envelope × strength) are interpolated, then direction and
-     * strength are reconstructed from the blended force, producing smooth
-     * transitions across cell boundaries.
-     */
-    private static WindSample bilinearBlendWind(
-            WindSample s00, WindSample s10, WindSample s01, WindSample s11,
-            double tx, double tz) {
-        double f00 = s00.envelope() * s00.strengthScale();
-        double f10 = s10.envelope() * s10.strengthScale();
-        double f01 = s01.envelope() * s01.strengthScale();
-        double f11 = s11.envelope() * s11.strengthScale();
-
-        double fx00 = s00.dirX() * f00, fz00 = s00.dirZ() * f00;
-        double fx10 = s10.dirX() * f10, fz10 = s10.dirZ() * f10;
-        double fx01 = s01.dirX() * f01, fz01 = s01.dirZ() * f01;
-        double fx11 = s11.dirX() * f11, fz11 = s11.dirZ() * f11;
-
-        double blendedFX = lerp(lerp(fx00, fx10, tx), lerp(fx01, fx11, tx), tz);
-        double blendedFZ = lerp(lerp(fz00, fz10, tx), lerp(fz01, fz11, tx), tz);
-        double blendedEnv = lerp(lerp(s00.envelope(), s10.envelope(), tx),
-                lerp(s01.envelope(), s11.envelope(), tx), tz);
-
-        if (blendedEnv <= 1.0e-5) {
-            return WindSample.NONE;
-        }
-
-        double forceMag = Math.sqrt(blendedFX * blendedFX + blendedFZ * blendedFZ);
-        double dirX, dirZ, strength;
-        if (forceMag > 1.0e-9) {
-            dirX = blendedFX / forceMag;
-            dirZ = blendedFZ / forceMag;
-            strength = forceMag / blendedEnv;
-        } else {
-            dirX = s00.dirX();
-            dirZ = s00.dirZ();
-            strength = 0.0;
-        }
-
-        return new WindSample(blendedEnv, dirX, dirZ, Math.max(0.22, strength));
-    }
-
-    private static WindSample windEventAt(ServerPhysicsTuning tuning, long eventIndex, double windClock,
-            double baseCycleTicks, long windSeed) {
-        double duty = Math.max(0.05D, Math.min(0.95D, tuning.windDuty()));
-        double pauseRoom = baseCycleTicks * (1.0D - duty);
-        double startOffset = randomSigned(windSeed, eventIndex, 0x632BE59BD9B4E019L)
-                * pauseRoom * Math.max(0.0D, Math.min(1.0D, tuning.windPauseJitter())) * 0.55D;
-        double eventStart = eventIndex * baseCycleTicks + startOffset;
-
-        double activeScale = jitterScale(windSeed, eventIndex, 0x41C64E6DL, tuning.windDurationJitter());
-        double activeTicks = Math.max(2.0D, baseCycleTicks * duty * activeScale);
-        double cyclePos = windClock - eventStart;
-        if (cyclePos < 0.0D || cyclePos >= activeTicks) {
-            return WindSample.NONE;
-        }
-
-        double local = cyclePos / activeTicks;
-        boolean rampingGust = random01(windSeed, eventIndex, 0xD1B54A32D192ED03L) < tuning.windRampBias();
-        boolean doubleSwell = random01(windSeed, eventIndex, 0xA24BAED4963EE407L) < 0.58D;
-        double envelope = doubleSwell
-                ? doubleSwellEnvelope(local, eventIndex, rampingGust, windSeed)
-                : linearTriangleEnvelope(local, rampingGust);
-        if (envelope <= 1.0e-5D) {
-            return WindSample.NONE;
-        }
-
-        double strengthJitter = Math.max(0.0D, Math.min(1.0D, tuning.windStrengthJitter()));
-        double strengthNoise = randomSigned(windSeed, eventIndex, 0x94D049BB133111EBL);
-        double strengthScale = 1.0D + strengthNoise * strengthJitter * (strengthNoise >= 0.0D ? 1.30D : 0.75D);
-        strengthScale = Math.max(0.22D, strengthScale);
-
-        double cellDirOffset = cellDirectionOffset(tuning, windSeed);
-        double directionOffset = cellDirOffset
-                + randomSigned(windSeed, eventIndex, 0xBF58476D1CE4E5B9L) * tuning.windDirectionJitterDeg();
-        double dirRad = Math.toRadians(tuning.windDirectionDeg() + directionOffset);
-        return new WindSample(envelope, Math.cos(dirRad), Math.sin(dirRad), strengthScale);
-    }
-
-    private static double windSeedPhase(long seed) {
-        long mixed = seed ^ (seed >>> 33) ^ 0x9E3779B97F4A7C15L;
-        mixed ^= (mixed << 13);
-        mixed ^= (mixed >>> 7);
-        mixed ^= (mixed << 17);
-        return (mixed & 0xFFFFL) / 65536.0D;
-    }
-
-    /**
-     * Persistent per-cell direction offset in degrees, derived from the cell seed.
-     */
-    private static double cellDirectionOffset(ServerPhysicsTuning tuning, long windSeed) {
-        double spread = Math.max(0.0D, tuning.windCellDirectionSpreadDeg());
-        if (spread <= 1.0e-5)
-            return 0.0D;
-        return randomSigned(windSeed, 0x4B6F2D1AL, 0xC3A8915EL) * spread;
-    }
-
-    private static long windRegionSeedFromCell(ServerPhysicsTuning tuning, int cellX, int cellZ) {
-        long mixed = 0x6A09E667F3BCC909L;
-        mixed ^= (long) cellX * 0xBF58476D1CE4E5B9L;
-        mixed ^= (long) cellZ * 0x94D049BB133111EBL;
-        mixed ^= ((long) Math.floor(tuning.windDirectionDeg() * 8.0D)) * 0x9E3779B97F4A7C15L;
-        return mixed;
-    }
-
-    private static double jitterScale(long seed, long eventIndex, long salt, double amount) {
-        double clamped = Math.max(0.0D, Math.min(1.0D, amount));
-        return Math.max(0.2D, 1.0D + randomSigned(seed, eventIndex, salt) * clamped);
-    }
-
-    private static double randomSigned(long seed, long index, long salt) {
-        return random01(seed, index, salt) * 2.0D - 1.0D;
-    }
-
-    private static double random01(long seed, long index, long salt) {
-        long mixed = seed ^ salt ^ (index * 0x9E3779B97F4A7C15L);
-        mixed ^= (mixed >>> 30);
-        mixed *= 0xBF58476D1CE4E5B9L;
-        mixed ^= (mixed >>> 27);
-        mixed *= 0x94D049BB133111EBL;
-        mixed ^= (mixed >>> 31);
-        return ((mixed >>> 11) & ((1L << 53) - 1)) * 0x1.0p-53D;
-    }
-
-    private static double linearTriangleEnvelope(double local, boolean rampingGust) {
-        double triangle = local < 0.5D ? local * 2.0D : (1.0D - local) * 2.0D;
-        if (!rampingGust) {
-            return Math.max(0.0D, triangle);
-        }
-        double ramp = 0.45D + 0.55D * local;
-        return Math.max(0.0D, triangle * ramp);
-    }
-
-    private static double doubleSwellEnvelope(double local, long eventIndex, boolean rampingGust, long windSeed) {
-        double firstPeakT = 0.24D + randomSigned(windSeed, eventIndex, 0xC6A4A7935BD1E995L) * 0.08D;
-        double dipT = 0.50D + randomSigned(windSeed, eventIndex, 0x165667B19E3779F9L) * 0.08D;
-        double secondPeakT = 0.73D + randomSigned(windSeed, eventIndex, 0x85EBCA77C2B2AE63L) * 0.08D;
-        firstPeakT = clamp(firstPeakT, 0.14D, 0.36D);
-        dipT = clamp(dipT, firstPeakT + 0.10D, 0.68D);
-        secondPeakT = clamp(secondPeakT, dipT + 0.08D, 0.90D);
-
-        double firstPeak = rampingGust ? 0.42D : 0.66D;
-        firstPeak += random01(windSeed, eventIndex, 0x27D4EB2F165667C5L) * 0.18D;
-        double dip = 0.18D + random01(windSeed, eventIndex, 0x9E3779B185EBCA87L) * 0.26D;
-        double secondPeak = 0.82D + random01(windSeed, eventIndex, 0xD1B54A32D192ED03L) * 0.38D;
-
-        if (local < firstPeakT) {
-            return lerp(0.0D, firstPeak, local / firstPeakT);
-        }
-        if (local < dipT) {
-            return lerp(firstPeak, dip, (local - firstPeakT) / (dipT - firstPeakT));
-        }
-        if (local < secondPeakT) {
-            return lerp(dip, secondPeak, (local - dipT) / (secondPeakT - dipT));
-        }
-        return lerp(secondPeak, 0.0D, (local - secondPeakT) / (1.0D - secondPeakT));
-    }
-
-    private static double lerp(double a, double b, double t) {
-        return a + (b - a) * clamp(t, 0.0D, 1.0D);
     }
 
     private static double targetLength(Vec3 a, Vec3 b, ServerPhysicsTuning tuning) {
@@ -1076,10 +774,6 @@ final class ServerRopeCurve {
             contact.distSqr = contact.dx * contact.dx + contact.dy * contact.dy + contact.dz * contact.dz;
             return contact;
         }
-    }
-
-    private record WindSample(double envelope, double dirX, double dirZ, double strengthScale) {
-        private static final WindSample NONE = new WindSample(0.0D, 0.0D, 0.0D, 0.0D);
     }
 
     record Shape(Vec3 a, Vec3 b, double[] x, double[] y, double[] z,

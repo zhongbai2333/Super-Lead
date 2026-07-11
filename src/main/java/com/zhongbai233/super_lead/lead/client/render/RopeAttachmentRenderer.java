@@ -5,16 +5,19 @@ import com.zhongbai233.super_lead.data.BlockProperty;
 import com.zhongbai233.super_lead.data.BlockPropertyRegistry;
 import com.zhongbai233.super_lead.lead.LeadConnection;
 import com.zhongbai233.super_lead.lead.RopeAttachment;
+import com.zhongbai233.super_lead.lead.client.chunk.RopeSectionLine;
 import com.zhongbai233.super_lead.lead.client.sim.RopeSimulation;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.TreeMap;
 import java.util.UUID;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.renderer.SubmitNodeCollector;
 import net.minecraft.client.renderer.item.ItemStackRenderState;
+import net.minecraft.core.SectionPos;
 import net.minecraft.core.BlockPos;
 import net.minecraft.util.LightCoordsUtil;
 import net.minecraft.world.entity.player.Player;
@@ -59,7 +62,8 @@ public final class RopeAttachmentRenderer {
     private RopeAttachmentRenderer() {
     }
 
-    public record BakedAttachment(UUID connectionId,
+        public record BakedAttachment(UUID connectionId,
+            UUID attachmentId,
             net.minecraft.world.item.ItemStack stack,
             boolean displayAsBlock,
             boolean redstonePowered,
@@ -67,10 +71,21 @@ public final class RopeAttachmentRenderer {
             double px, double py, double pz,
             double ax, double ay, double az,
             double bx, double by, double bz,
-            double lightX, double lightY, double lightZ) {
+            double lightX, double lightY, double lightZ,
+            int mountOverride,
+            int displayModeOverride,
+            int hangerOverride,
+            int piercedOverride,
+            double hangOffsetOverride,
+            double mountOffsetOverride,
+            double hangerLengthOverride,
+            double hangerSpacingOverride,
+            double scaleOverride,
+            Map<String, String> modelStateOverride) {
         public BakedAttachment {
             stack = stack.copyWithCount(1);
             frontSide = RopeAttachment.normalizeFrontSide(frontSide);
+            modelStateOverride = RopeAttachment.normalizeModelStateOverride(modelStateOverride);
         }
     }
 
@@ -109,14 +124,19 @@ public final class RopeAttachmentRenderer {
 
             renderOne(collector, cameraPos, level, mc, player, attachment.stack(),
                     attachment.displayAsBlock(), redstonePowered,
-                    attachment.frontSide(), px, py, pz, frame, lightPos, packedLight, 0, 1.0F);
+                    attachment.frontSide(), px, py, pz, frame, lightPos, packedLight, 0, 1.0F, true,
+                    attachment.id(), attachment.mountOverride(),
+                    attachment.displayModeOverride(), attachment.hangerOverride(), attachment.piercedOverride(),
+                    attachment.hangOffsetOverride(), attachment.mountOffsetOverride(), attachment.hangerLengthOverride(),
+                    attachment.hangerSpacingOverride(), attachment.scaleOverride(), attachment.modelStateOverride(), partialTick);
         }
     }
 
     public static void submitBakedAll(SubmitNodeCollector collector,
             Vec3 cameraPos,
             ClientLevel level,
-            List<BakedAttachment> attachments) {
+                List<BakedAttachment> attachments,
+                float partialTick) {
         if (attachments == null || attachments.isEmpty())
             return;
         Minecraft mc = Minecraft.getInstance();
@@ -129,7 +149,11 @@ public final class RopeAttachmentRenderer {
             renderOne(collector, cameraPos, level, mc, player, attachment.stack(),
                     attachment.displayAsBlock(), attachment.redstonePowered(),
                     attachment.frontSide(), attachment.px(), attachment.py(), attachment.pz(), frame, lightPos,
-                    packedLight, 0, 1.0F);
+                    packedLight, 0, 1.0F, AttachmentSwingClient.hasVisibleSwing(attachment.attachmentId()),
+                    attachment.attachmentId(), attachment.mountOverride(),
+                    attachment.displayModeOverride(), attachment.hangerOverride(), attachment.piercedOverride(),
+                    attachment.hangOffsetOverride(), attachment.mountOffsetOverride(), attachment.hangerLengthOverride(),
+                    attachment.hangerSpacingOverride(), attachment.scaleOverride(), attachment.modelStateOverride(), partialTick);
         }
     }
 
@@ -167,12 +191,91 @@ public final class RopeAttachmentRenderer {
             double py = ay + (by - ay) * frac;
             double pz = az + (bz - az) * frac;
             Vec3 light = attachmentBodyCenter(level, attachment.stack(), attachment.displayAsBlock(),
-                    attachment.frontSide(), px, py, pz, ax, ay, az, bx, by, bz);
-            out.add(new BakedAttachment(connection.id(), attachment.stack(), attachment.displayAsBlock(),
+                    attachment.frontSide(), px, py, pz, ax, ay, az, bx, by, bz,
+                    attachment.mountOverride(), attachment.displayModeOverride(), attachment.hangerOverride(),
+                    attachment.piercedOverride(), attachment.hangOffsetOverride(), attachment.mountOffsetOverride(),
+                    attachment.hangerLengthOverride(), attachment.hangerSpacingOverride(), attachment.scaleOverride(),
+                    attachment.modelStateOverride());
+                out.add(new BakedAttachment(connection.id(), attachment.id(), attachment.stack(), attachment.displayAsBlock(),
                     redstonePowered, attachment.frontSide(), px, py, pz, ax, ay, az, bx, by, bz,
-                    light.x, light.y, light.z));
+                    light.x, light.y, light.z, attachment.mountOverride(),
+                    attachment.displayModeOverride(), attachment.hangerOverride(), attachment.piercedOverride(),
+                    attachment.hangOffsetOverride(), attachment.mountOffsetOverride(), attachment.hangerLengthOverride(),
+                    attachment.hangerSpacingOverride(), attachment.scaleOverride(), attachment.modelStateOverride()));
         }
         return List.copyOf(out);
+    }
+
+    public static Map<Long, List<RopeSectionLine>> bakeStaticHangerLines(BlockGetter level, LeadConnection connection,
+            float[] x, float[] y, float[] z) {
+        if (connection.attachments().isEmpty() || x.length < 2 || x.length != y.length || x.length != z.length) {
+            return Map.of();
+        }
+        double[] lengths = new double[x.length];
+        double total = 0.0D;
+        for (int i = 1; i < x.length; i++) {
+            double dx = x[i] - x[i - 1];
+            double dy = y[i] - y[i - 1];
+            double dz = z[i] - z[i - 1];
+            total += Math.sqrt(dx * dx + dy * dy + dz * dz);
+            lengths[i] = total;
+        }
+        if (total <= 1.0e-6D) {
+            return Map.of();
+        }
+        Map<Long, List<RopeSectionLine>> out = new java.util.HashMap<>();
+        for (RopeAttachment attachment : connection.attachments()) {
+            double target = attachment.t() * total;
+            int seg = locateSegment(lengths, target);
+            double l0 = lengths[seg];
+            double l1 = lengths[seg + 1];
+            double span = l1 - l0;
+            double frac = span > 1.0e-6D ? (target - l0) / span : 0.0D;
+            double ax = x[seg], ay = y[seg], az = z[seg];
+            double bx = x[seg + 1], by = y[seg + 1], bz = z[seg + 1];
+            double px = ax + (bx - ax) * frac;
+            double py = ay + (by - ay) * frac;
+            double pz = az + (bz - az) * frac;
+            HangFrame frame = computeFrame(ax, ay, az, bx, by, bz);
+                BlockProperty property = displayPropertyFor(attachment);
+            AttachmentLayout layout = attachmentLayout(level, BlockPos.containing(px, py, pz), attachment.stack(),
+                    attachment.displayAsBlock(), attachment.frontSide(), property, RopeAttachment.OVERRIDE_DEFAULT,
+                    attachment.displayModeOverride(), attachment.scaleOverride());
+                double hangerLength = layout.hangerLength();
+                if (hangerOn(property, RopeAttachment.OVERRIDE_DEFAULT) && !layout.pierced()
+                    && hangerLength > 1.0e-6D) {
+                addStaticHangerLine(out, px - frame.rdx * layout.hangerHalfSpacing(),
+                        py - frame.rdy * layout.hangerHalfSpacing(), pz - frame.rdz * layout.hangerHalfSpacing(),
+                    frame, hangerLength);
+                addStaticHangerLine(out, px + frame.rdx * layout.hangerHalfSpacing(),
+                        py + frame.rdy * layout.hangerHalfSpacing(), pz + frame.rdz * layout.hangerHalfSpacing(),
+                    frame, hangerLength);
+            }
+        }
+        if (out.isEmpty()) {
+            return Map.of();
+        }
+        Map<Long, List<RopeSectionLine>> immutable = new java.util.HashMap<>(out.size());
+        for (Map.Entry<Long, List<RopeSectionLine>> entry : out.entrySet()) {
+            immutable.put(entry.getKey(), List.copyOf(entry.getValue()));
+        }
+        return Map.copyOf(immutable);
+    }
+
+    private static void addStaticHangerLine(Map<Long, List<RopeSectionLine>> out,
+            double ax, double ay, double az, HangFrame frame, double hangerLength) {
+        double bx = ax + frame.dropX * hangerLength;
+        double by = ay + frame.dropY * hangerLength;
+        double bz = az + frame.dropZ * hangerLength;
+        long section = SectionPos.asLong(
+                SectionPos.blockToSectionCoord((int) Math.floor((ax + bx) * 0.5D)),
+                SectionPos.blockToSectionCoord((int) Math.floor((ay + by) * 0.5D)),
+                SectionPos.blockToSectionCoord((int) Math.floor((az + bz) * 0.5D)));
+        int light = LightCoordsUtil.pack(0, 15);
+        out.computeIfAbsent(section, ignored -> new ArrayList<>(2)).add(new RopeSectionLine(
+                (float) ax, (float) ay, (float) az,
+                (float) bx, (float) by, (float) bz,
+                HANGER_COLOR, light));
     }
 
     /**
@@ -218,7 +321,10 @@ public final class RopeAttachmentRenderer {
         renderOne(collector, cameraPos, level, mc, mc.player, stack,
                 asBlock, false, frontSide,
                 px, py, pz, frame, lightPos, packedLight,
-                0, 1.02F);
+            0, 1.02F, true, null, RopeAttachment.OVERRIDE_DEFAULT,
+            RopeAttachment.DISPLAY_DEFAULT, RopeAttachment.OVERRIDE_DEFAULT, RopeAttachment.OVERRIDE_DEFAULT,
+            RopeAttachment.DOUBLE_DEFAULT, RopeAttachment.DOUBLE_DEFAULT, RopeAttachment.DOUBLE_DEFAULT,
+            RopeAttachment.DOUBLE_DEFAULT, RopeAttachment.DOUBLE_DEFAULT, Map.of(), partialTick);
     }
 
     private static int packedLight(ClientLevel level, BlockPos lightPos) {
@@ -241,10 +347,17 @@ public final class RopeAttachmentRenderer {
             int frontSide,
             double px, double py, double pz, HangFrame frame,
             BlockPos lightPos, int packedLight,
-            int tintColor, float scaleMul) {
-        BlockProperty attachmentProperty = propertyForStack(stack);
+            int tintColor, float scaleMul, boolean renderHangerStrings, UUID attachmentId,
+            int mountOverride, int displayModeOverride, int hangerOverride, int piercedOverride,
+            double hangOffsetOverride, double mountOffsetOverride, double hangerLengthOverride,
+            double hangerSpacingOverride, double scaleOverride, Map<String, String> modelStateOverride,
+            float partialTick) {
+        BlockProperty attachmentProperty = displayPropertyFor(stack, piercedOverride, mountOverride, hangerOverride,
+                hangOffsetOverride, mountOffsetOverride, hangerLengthOverride, hangerSpacingOverride,
+                modelStateOverride);
+        double visualScale = visualScale(scaleOverride);
         boolean asPanelItem = com.zhongbai233.super_lead.lead.RopeAttachmentItems.isPanelLikeItem(stack);
-        boolean asBlockItem = shouldRenderAsBlock(stack, displayAsBlock, attachmentProperty);
+        boolean asBlockItem = shouldRenderAsBlock(stack, displayAsBlock, attachmentProperty, displayModeOverride);
         // BlockEntity-rendered blocks (signs, shulker boxes, chests, banners, ...) only
         // have
         // a partial static model; submitMovingBlock would render an empty post for
@@ -255,16 +368,20 @@ public final class RopeAttachmentRenderer {
         boolean useMovingBlock = asBlockItem && !asPanelItem && !needsItemFallback(stack);
 
         AttachmentLayout layout = attachmentLayout(level, lightPos, stack, asBlockItem || asPanelItem, frontSide,
-                attachmentProperty);
+            attachmentProperty, RopeAttachment.OVERRIDE_DEFAULT, displayModeOverride, scaleOverride);
+        Quaternionf tilt = renderTilt(frame.tilt, attachmentId, partialTick);
 
         // Suspension strings
-        if (attachmentProperty.hangerOn() && !layout.pierced() && layout.hangerLength() > 1.0e-6D) {
+        Vector3f swungDrop = tilt.transform(new Vector3f(0.0F, -1.0F, 0.0F));
+        if (renderHangerStrings && hangerOn(attachmentProperty, hangerOverride) && !layout.pierced()
+            && layout.hangerLength() > 1.0e-6D) {
             double offX = frame.rdx * layout.hangerHalfSpacing();
             double offY = frame.rdy * layout.hangerHalfSpacing();
             double offZ = frame.rdz * layout.hangerHalfSpacing();
-            double dropX = frame.dropX * layout.hangerLength();
-            double dropY = frame.dropY * layout.hangerLength();
-            double dropZ = frame.dropZ * layout.hangerLength();
+            double hangerLength = layout.hangerLength();
+            double dropX = swungDrop.x * hangerLength;
+            double dropY = swungDrop.y * hangerLength;
+            double dropZ = swungDrop.z * hangerLength;
             double a1x = px - offX, a1y = py - offY, a1z = pz - offZ;
             double a2x = px + offX, a2y = py + offY, a2z = pz + offZ;
             submitTwoStrings(collector, cameraPos,
@@ -273,20 +390,23 @@ public final class RopeAttachmentRenderer {
                     packedLight);
         }
 
-        double cx = px + frame.dropX * layout.centerDropOffset();
-        double cy = py + frame.dropY * layout.centerDropOffset();
-        double cz = pz + frame.dropZ * layout.centerDropOffset();
+        double adjustedDrop = layout.centerDropOffset();
+        double cx = px + swungDrop.x * adjustedDrop;
+        double cy = py + swungDrop.y * adjustedDrop;
+        double cz = pz + swungDrop.z * adjustedDrop;
         float bodyScale = layout.bodyScale() * scaleMul;
 
         if (asBlockItem && isSignBlock(stack)
                 && submitSignBlockEntity(collector, cameraPos, level, mc, stack, frontSide,
-                        attachmentProperty, frame.tilt, cx, cy, cz, bodyScale, lightPos, packedLight)) {
+                attachmentProperty, tilt, cx, cy, cz, bodyScale, lightPos,
+                packedLight)) {
             return;
         }
 
         if (useMovingBlock
                 && submitBlockForm(collector, cameraPos, level, stack, redstonePowered,
-                        frontSide, attachmentProperty, frame.tilt, cx, cy, cz, bodyScale, lightPos)) {
+                frontSide, attachmentProperty, tilt, cx, cy, cz, bodyScale,
+                lightPos)) {
             return;
         }
 
@@ -300,10 +420,10 @@ public final class RopeAttachmentRenderer {
         mc.getItemModelResolver().updateForTopItem(renderState, stack, context, level, player, 0);
         if (renderState.isEmpty())
             return;
-        float scale = (asPanelItem ? layout.bodyScale() : ITEM_SCALE) * scaleMul;
+        float scale = (float) ((asPanelItem ? layout.bodyScale() : ITEM_SCALE * visualScale) * scaleMul);
         PoseStack pose = new PoseStack();
         pose.translate(cx - cameraPos.x, cy - cameraPos.y, cz - cameraPos.z);
-        pose.mulPose(frame.tilt);
+        pose.mulPose(tilt);
         pose.scale(scale, scale, scale);
         if (context == ItemDisplayContext.FIXED) {
             float yawDeg = itemModelYaw(frontSide);
@@ -313,6 +433,15 @@ public final class RopeAttachmentRenderer {
         }
         renderState.submit(pose, collector, packedLight,
                 net.minecraft.client.renderer.texture.OverlayTexture.NO_OVERLAY, tintColor);
+    }
+
+    private static Quaternionf renderTilt(Quaternionf baseTilt, UUID attachmentId, float partialTick) {
+        Quaternionf out = new Quaternionf(baseTilt);
+        Quaternionf swing = AttachmentSwingClient.swingRotation(attachmentId, partialTick);
+        if (swing != null) {
+            out.mul(swing);
+        }
+        return out;
     }
 
     /**
@@ -508,10 +637,58 @@ public final class RopeAttachmentRenderer {
         return BlockProperty.DEFAULTS;
     }
 
+    private static BlockProperty displayPropertyFor(RopeAttachment attachment) {
+        return displayPropertyFor(attachment.stack(), attachment.piercedOverride(), attachment.mountOverride(),
+                attachment.hangerOverride(), attachment.hangOffsetOverride(), attachment.mountOffsetOverride(),
+                attachment.hangerLengthOverride(), attachment.hangerSpacingOverride(), attachment.modelStateOverride());
+    }
+
+    private static BlockProperty displayPropertyFor(net.minecraft.world.item.ItemStack stack, int piercedOverride,
+            int mountOverride, int hangerOverride, double hangOffsetOverride, double mountOffsetOverride,
+            double hangerLengthOverride, double hangerSpacingOverride, Map<String, String> modelStateOverride) {
+        BlockProperty base = propertyForStack(stack);
+        Map<String, String> modelState = new TreeMap<>(base.modelState());
+        modelState.putAll(RopeAttachment.normalizeModelStateOverride(modelStateOverride));
+        return new BlockProperty(
+                overrideBoolean(piercedOverride, base.attachPierced()),
+                overrideBoolean(mountOverride, base.attachMountAbove()),
+                overrideDouble(hangOffsetOverride, base.attachHangOffset()),
+                overrideDouble(mountOffsetOverride, base.attachMountOffset()),
+                overrideDouble(hangerLengthOverride, base.attachHangerLength()),
+                overrideDouble(hangerSpacingOverride, base.attachHangerSpacing()),
+                overrideBoolean(hangerOverride, base.attachHangerEnabled()),
+                base.signalBridgeEnabled(),
+                base.attachModelMode(),
+                modelState.isEmpty() ? null : modelState);
+    }
+
+    private static Boolean overrideBoolean(int override, Boolean fallback) {
+        return switch (RopeAttachment.normalizeBooleanOverride(override)) {
+            case RopeAttachment.OVERRIDE_TRUE -> Boolean.TRUE;
+            case RopeAttachment.OVERRIDE_FALSE -> Boolean.FALSE;
+            default -> fallback;
+        };
+    }
+
+    private static Double overrideDouble(double override, Double fallback) {
+        return RopeAttachment.hasDoubleOverride(override) ? Double.valueOf(override) : fallback;
+    }
+
+    private static double visualScale(double scaleOverride) {
+        return RopeAttachment.hasDoubleOverride(scaleOverride) ? RopeAttachment.normalizeOptionalScale(scaleOverride) : 1.0D;
+    }
+
     private static boolean shouldRenderAsBlock(net.minecraft.world.item.ItemStack stack, boolean displayAsBlock,
-            BlockProperty property) {
+            BlockProperty property, int displayModeOverride) {
         if (!(stack.getItem() instanceof BlockItem)) {
             return false;
+        }
+        displayModeOverride = RopeAttachment.normalizeDisplayModeOverride(displayModeOverride);
+        if (displayModeOverride == RopeAttachment.DISPLAY_ITEM) {
+            return false;
+        }
+        if (displayModeOverride == RopeAttachment.DISPLAY_BLOCK) {
+            return true;
         }
         String mode = property.modelMode();
         if (BlockProperty.MODEL_MODE_ITEM.equals(mode)) {
@@ -521,6 +698,22 @@ public final class RopeAttachmentRenderer {
             return true;
         }
         return displayAsBlock;
+    }
+
+    private static boolean mountAbove(BlockProperty property, int mountOverride) {
+        return switch (RopeAttachment.normalizeBooleanOverride(mountOverride)) {
+            case RopeAttachment.OVERRIDE_TRUE -> true;
+            case RopeAttachment.OVERRIDE_FALSE -> false;
+            default -> property.mountAbove();
+        };
+    }
+
+    private static boolean hangerOn(BlockProperty property, int hangerOverride) {
+        return switch (RopeAttachment.normalizeBooleanOverride(hangerOverride)) {
+            case RopeAttachment.OVERRIDE_TRUE -> true;
+            case RopeAttachment.OVERRIDE_FALSE -> false;
+            default -> property.hangerOn();
+        };
     }
 
     private static BlockState signRenderBlockState(BlockItem blockItem, int frontSide, BlockProperty property) {
@@ -672,45 +865,98 @@ public final class RopeAttachmentRenderer {
             double bx, double by, double bz) {
         HangFrame frame = computeFrame(ax, ay, az, bx, by, bz);
         AttachmentLayout layout = attachmentLayout(level, BlockPos.containing(px, py, pz), stack, displayAsBlock,
-                frontSide, propertyForStack(stack));
+            frontSide, propertyForStack(stack), RopeAttachment.OVERRIDE_DEFAULT, RopeAttachment.DISPLAY_DEFAULT,
+            RopeAttachment.DOUBLE_DEFAULT);
+        double adjustedDrop = layout.centerDropOffset();
         return new Vec3(
-                px + frame.dropX * layout.centerDropOffset(),
-                py + frame.dropY * layout.centerDropOffset(),
-                pz + frame.dropZ * layout.centerDropOffset());
+                px + frame.dropX * adjustedDrop,
+                py + frame.dropY * adjustedDrop,
+                pz + frame.dropZ * adjustedDrop);
+    }
+
+    public static Vec3 attachmentBodyCenter(BlockGetter level,
+            net.minecraft.world.item.ItemStack stack,
+            boolean displayAsBlock,
+            int frontSide,
+            double px, double py, double pz,
+            double ax, double ay, double az,
+            double bx, double by, double bz,
+            int mountOverride,
+            int displayModeOverride,
+            int hangerOverride) {
+        return attachmentBodyCenter(level, stack, displayAsBlock, frontSide, px, py, pz, ax, ay, az, bx, by, bz,
+            mountOverride, displayModeOverride, hangerOverride, RopeAttachment.OVERRIDE_DEFAULT,
+                RopeAttachment.DOUBLE_DEFAULT, RopeAttachment.DOUBLE_DEFAULT, RopeAttachment.DOUBLE_DEFAULT,
+                RopeAttachment.DOUBLE_DEFAULT, RopeAttachment.DOUBLE_DEFAULT, Map.of());
+    }
+
+    public static Vec3 attachmentBodyCenter(BlockGetter level,
+            net.minecraft.world.item.ItemStack stack,
+            boolean displayAsBlock,
+            int frontSide,
+            double px, double py, double pz,
+            double ax, double ay, double az,
+            double bx, double by, double bz,
+            int mountOverride,
+            int displayModeOverride,
+            int hangerOverride,
+            int piercedOverride,
+            double hangOffsetOverride,
+            double mountOffsetOverride,
+            double hangerLengthOverride,
+            double hangerSpacingOverride,
+            double scaleOverride,
+            Map<String, String> modelStateOverride) {
+        HangFrame frame = computeFrame(ax, ay, az, bx, by, bz);
+        BlockProperty property = displayPropertyFor(stack, piercedOverride, mountOverride, hangerOverride,
+                hangOffsetOverride, mountOffsetOverride, hangerLengthOverride, hangerSpacingOverride,
+                modelStateOverride);
+        AttachmentLayout layout = attachmentLayout(level, BlockPos.containing(px, py, pz), stack, displayAsBlock,
+                frontSide, property, RopeAttachment.OVERRIDE_DEFAULT, displayModeOverride, scaleOverride);
+        double adjustedDrop = layout.centerDropOffset();
+        return new Vec3(
+            px + frame.dropX * adjustedDrop,
+            py + frame.dropY * adjustedDrop,
+            pz + frame.dropZ * adjustedDrop);
     }
 
     private static AttachmentLayout attachmentLayout(BlockGetter level, BlockPos pos,
             net.minecraft.world.item.ItemStack stack, boolean displayAsBlock, int frontSide,
-            BlockProperty bp) {
+            BlockProperty bp, int mountOverride, int displayModeOverride, double scaleOverride) {
         boolean asPanelItem = com.zhongbai233.super_lead.lead.RopeAttachmentItems.isPanelLikeItem(stack);
-        boolean asBlockItem = displayAsBlock
-                && com.zhongbai233.super_lead.lead.RopeAttachmentItems.isBlockItem(stack);
-        asBlockItem = asPanelItem || shouldRenderAsBlock(stack, displayAsBlock, bp);
-        float bodyScale = isSignBlock(stack) ? SIGN_RENDER_SCALE
-                : asPanelItem ? PANEL_RENDER_SCALE : BLOCK_RENDER_SCALE;
+        boolean asBlockItem = asPanelItem || shouldRenderAsBlock(stack, displayAsBlock, bp, displayModeOverride);
+        float bodyScale = (float) ((isSignBlock(stack) ? SIGN_RENDER_SCALE
+            : asPanelItem ? PANEL_RENDER_SCALE : BLOCK_RENDER_SCALE) * visualScale(scaleOverride));
+        boolean mountAbove = mountAbove(bp, mountOverride);
 
         // Pierced decision: explicit JSON value > shape-based heuristic
+        ShapeProfile shape = null;
         boolean pierced;
         if (bp.attachPierced() != null) {
             pierced = bp.attachPierced();
         } else {
-            pierced = asBlockItem && shouldPierce(shapeProfile(level, pos, stack, frontSide, bp));
+            shape = asBlockItem ? shapeProfile(level, pos, stack, frontSide, bp) : null;
+            pierced = shape != null && shouldPierce(shape);
         }
 
         if (pierced) {
-            ShapeProfile shape = shapeProfile(level, pos, stack, frontSide, bp);
+            if (shape == null) {
+                shape = shapeProfile(level, pos, stack, frontSide, bp);
+            }
             double bottomY = shape.valid() ? shape.minY() : 0.0D;
             return AttachmentLayout.pierced(bodyScale * (bottomY - 0.5D) - PIERCED_LIFT_OFFSET, bodyScale);
         }
 
         if (!asBlockItem) {
-            double offset = bp.mountAbove() ? -bp.mountOffset() : bp.hangOffset();
+            double offset = mountAbove ? -bp.mountOffset() : bp.hangOffset();
             return AttachmentLayout.hanging(offset, bp.hangerLen(), bp.hangerSpc(), BLOCK_RENDER_SCALE);
         }
 
-        ShapeProfile shape = shapeProfile(level, pos, stack, frontSide, bp);
+        if (shape == null) {
+            shape = shapeProfile(level, pos, stack, frontSide, bp);
+        }
 
-        if (bp.mountAbove()) {
+        if (mountAbove) {
             return AttachmentLayout.hanging(-bp.mountOffset(), 0.0D, 0.0D, bodyScale);
         }
 

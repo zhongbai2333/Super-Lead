@@ -12,7 +12,7 @@ public record SetCargoManifestGhostSlot(int containerId, int slotId, ItemStack s
     public static final Type<SetCargoManifestGhostSlot> TYPE = new Type<>(
             Identifier.fromNamespaceAndPath(Super_lead.MODID, "set_cargo_manifest_ghost_slot"));
     public static final StreamCodec<RegistryFriendlyByteBuf, SetCargoManifestGhostSlot> STREAM_CODEC = CustomPacketPayload
-            .codec(SetCargoManifestGhostSlot::write, SetCargoManifestGhostSlot::read);
+            .codec((payload, buf) -> payload.write(buf), SetCargoManifestGhostSlot::read);
 
     @Override
     public Type<? extends CustomPacketPayload> type() {

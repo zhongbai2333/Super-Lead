@@ -11,6 +11,7 @@ build
 bin
 *.class
 .eclipse
+.settings/
 .vscode
 
 # IntelliJ
@@ -31,3 +32,5 @@ src/generated/resources/
 
 # Local Maven publishing output
 repo/
+
+logs/
