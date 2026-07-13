@@ -50,6 +50,7 @@ abstract class RopeSimulationRenderCache extends RopeSimulationCore {
         // Render positions just changed; basis-vector scratch and occlusion cache are
         // stale.
         frameScratchValid = false;
+        curveMidScratchValid = false;
         visOcclusionFrame = Long.MIN_VALUE;
         return renderTotalLength;
     }
@@ -169,6 +170,33 @@ abstract class RopeSimulationRenderCache extends RopeSimulationCore {
         frameScratchPulsesHash = pulsesHash;
         frameScratchValid = true;
         return true;
+    }
+
+    public boolean acquireCurveMidScratch() {
+        int segments = Math.max(0, nodes - 1);
+        if (curveMidX == null || curveMidX.length < segments) {
+            curveMidX = new double[segments];
+            curveMidY = new double[segments];
+            curveMidZ = new double[segments];
+            curveMidScratchValid = false;
+        }
+        if (curveMidScratchValid) {
+            return false;
+        }
+        curveMidScratchValid = true;
+        return true;
+    }
+
+    public double[] curveMidX() {
+        return curveMidX;
+    }
+
+    public double[] curveMidY() {
+        return curveMidY;
+    }
+
+    public double[] curveMidZ() {
+        return curveMidZ;
     }
 
     // Render-side occlusion cache accessors
@@ -291,6 +319,7 @@ abstract class RopeSimulationRenderCache extends RopeSimulationCore {
             bakedSegUpY = new float[expectedSegs];
             bakedSegUpZ = new float[expectedSegs];
             bakedSegSourceSegment = new int[expectedSegs];
+            bakedSegFullFaces = new boolean[expectedSegs];
         }
         bakedCount = 0;
         bakedSegmentCount = 0;
@@ -298,7 +327,7 @@ abstract class RopeSimulationRenderCache extends RopeSimulationCore {
     }
 
     /** Append per-segment frame info before that segment's 16 verts are written. */
-    public void appendBakedSegment(int sourceSegment, double mx, double my, double mz,
+    public void appendBakedSegment(int sourceSegment, boolean fullFaces, double mx, double my, double mz,
             double sx, double sy, double sz,
             double ux, double uy, double uz) {
         if (bakedSegmentCount >= bakedSegMidX.length) {
@@ -313,9 +342,11 @@ abstract class RopeSimulationRenderCache extends RopeSimulationCore {
             bakedSegUpY = java.util.Arrays.copyOf(bakedSegUpY, n);
             bakedSegUpZ = java.util.Arrays.copyOf(bakedSegUpZ, n);
             bakedSegSourceSegment = java.util.Arrays.copyOf(bakedSegSourceSegment, n);
+            bakedSegFullFaces = java.util.Arrays.copyOf(bakedSegFullFaces, n);
         }
         int i = bakedSegmentCount++;
         bakedSegSourceSegment[i] = sourceSegment;
+        bakedSegFullFaces[i] = fullFaces;
         bakedSegMidX[i] = (float) mx;
         bakedSegMidY[i] = (float) my;
         bakedSegMidZ[i] = (float) mz;
@@ -400,6 +431,10 @@ abstract class RopeSimulationRenderCache extends RopeSimulationCore {
 
     public int[] bakedSegSourceSegment() {
         return bakedSegSourceSegment;
+    }
+
+    public boolean[] bakedSegFullFaces() {
+        return bakedSegFullFaces;
     }
 
     public float[] bakedSegMidY() {

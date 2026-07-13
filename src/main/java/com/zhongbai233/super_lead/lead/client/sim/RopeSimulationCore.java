@@ -121,6 +121,10 @@ abstract class RopeSimulationCore {
     protected boolean frameScratchValid;
     protected double frameScratchThickness;
     protected int frameScratchPulsesHash;
+    // One bounded-Hermite midpoint per physical segment. This depends only on the
+    // prepared render positions, so color, thickness and pulse changes can reuse it.
+    protected double[] curveMidX, curveMidY, curveMidZ;
+    protected boolean curveMidScratchValid;
     // Render-side occlusion cache. Refreshed every N frames depending on distance;
     // skipped
     // entirely on cache hit, sparing the level.clip raycasts in RopeVisibility.
@@ -163,6 +167,7 @@ abstract class RopeSimulationCore {
     protected float[] bakedSegSideX, bakedSegSideY, bakedSegSideZ;
     protected float[] bakedSegUpX, bakedSegUpY, bakedSegUpZ;
     protected int[] bakedSegSourceSegment;
+    protected boolean[] bakedSegFullFaces;
     protected int bakedSegmentCount;
     // Cache key fields. Equality across all of these = bake is reusable.
     protected int bakedNodeCount;
@@ -1167,6 +1172,7 @@ abstract class RopeSimulationCore {
         collisionProxyValid = false;
         renderCacheValid = false;
         frameScratchValid = false;
+        curveMidScratchValid = false;
         visOcclusionFrame = Long.MIN_VALUE;
         segVisAllVisible = true;
         segVisBitCount = 0;

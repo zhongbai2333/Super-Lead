@@ -356,6 +356,7 @@ public final class LeashBuilder {
             float[] smy = sim.bakedSegMidY();
             float[] smz = sim.bakedSegMidZ();
             int[] sourceSegments = sim.bakedSegSourceSegment();
+            boolean[] fullFaces = sim.bakedSegFullFaces();
             float[] ssx = sim.bakedSegSideX();
             float[] ssy = sim.bakedSegSideY();
             float[] ssz = sim.bakedSegSideZ();
@@ -369,7 +370,7 @@ public final class LeashBuilder {
                     continue;
                 }
                 int base = s * 16;
-                if (needsFullRenderSegment(sim, sourceSegment)) {
+                if (fullFaces == null || s >= fullFaces.length || fullFaces[s]) {
                     emitBakedFace(buffer, base, bx, by, bz, bc, bl, camX, camY, camZ);
                     emitBakedFace(buffer, base + 4, bx, by, bz, bc, bl, camX, camY, camZ);
                     emitBakedFace(buffer, base + 8, bx, by, bz, bc, bl, camX, camY, camZ);
@@ -502,6 +503,13 @@ public final class LeashBuilder {
                 buildNodeFrames(sim, nodeCount, visualTotalLength, baseThickness,
                     pulsePositions, extractEnd, sideX, sideY, sideZ, upX, upY, upZ);
         }
+        boolean rebuildCurveMidpoints = sim.acquireCurveMidScratch();
+        double[] curveMidX = sim.curveMidX();
+        double[] curveMidY = sim.curveMidY();
+        double[] curveMidZ = sim.curveMidZ();
+        if (rebuildCurveMidpoints) {
+            buildCurveMidpoints(sim, nodeCount, curveMidX, curveMidY, curveMidZ);
+        }
 
         int last = nodeCount - 1;
         RopeSimulation bakeSim = activeBakeSim;
@@ -531,17 +539,17 @@ public final class LeashBuilder {
                 }
                 if (a < 0.5D && b > 0.5D) {
                     emitBoxStripSubSegment(buffer, pose, cameraPos, sim, last,
-                        sideX, sideY, sideZ, upX, upY, upZ,
+                        sideX, sideY, sideZ, upX, upY, upZ, curveMidX, curveMidY, curveMidZ,
                         i, j, a, 0.5D, blockA, blockB, skyA, skyB,
                         currentStripe, sourceSegment, highlightColor, kind, powered, tier, bakeSim);
                     emitBoxStripSubSegment(buffer, pose, cameraPos, sim, last,
-                        sideX, sideY, sideZ, upX, upY, upZ,
+                        sideX, sideY, sideZ, upX, upY, upZ, curveMidX, curveMidY, curveMidZ,
                         i, j, 0.5D, b, blockA, blockB, skyA, skyB,
                         currentStripe, sourceSegment, highlightColor, kind, powered, tier, bakeSim);
                     continue;
                 }
                 emitBoxStripSubSegment(buffer, pose, cameraPos, sim, last,
-                        sideX, sideY, sideZ, upX, upY, upZ,
+                    sideX, sideY, sideZ, upX, upY, upZ, curveMidX, curveMidY, curveMidZ,
                         i, j, a, b, blockA, blockB, skyA, skyB,
                         currentStripe, sourceSegment, highlightColor, kind, powered, tier, bakeSim);
             }
@@ -591,6 +599,7 @@ public final class LeashBuilder {
             int last,
             double[] sideX, double[] sideY, double[] sideZ,
             double[] upX, double[] upY, double[] upZ,
+            double[] curveMidX, double[] curveMidY, double[] curveMidZ,
             int i, int j, double a, double b,
             int blockA, int blockB, int skyA, int skyB,
             int stripe, int sourceSegment, int highlightColor, LeadKind kind, boolean powered, int tier,
@@ -601,11 +610,11 @@ public final class LeashBuilder {
         int light0 = LightCoordsUtil.pack((int) lerp(t0, blockA, blockB), (int) lerp(t0, skyA, skyB));
         int light1 = LightCoordsUtil.pack((int) lerp(t1, blockA, blockB), (int) lerp(t1, skyA, skyB));
 
-        sampleSquareCurvePoint(sim, i, a, SQUARE_CURVE_POINT);
+        sampleSquareCurvePoint(sim, i, a, curveMidX, curveMidY, curveMidZ, SQUARE_CURVE_POINT);
         double sxw = SQUARE_CURVE_POINT[0];
         double syw = SQUARE_CURVE_POINT[1];
         double szw = SQUARE_CURVE_POINT[2];
-        sampleSquareCurvePoint(sim, i, b, SQUARE_CURVE_POINT);
+        sampleSquareCurvePoint(sim, i, b, curveMidX, curveMidY, curveMidZ, SQUARE_CURVE_POINT);
         double exw = SQUARE_CURVE_POINT[0];
         double eyw = SQUARE_CURVE_POINT[1];
         double ezw = SQUARE_CURVE_POINT[2];
@@ -623,9 +632,11 @@ public final class LeashBuilder {
         double eUpY = upY[i] + (upY[j] - upY[i]) * b;
         double eUpZ = upZ[i] + (upZ[j] - upZ[i]) * b;
 
+        boolean fullFaces = needsFullRenderSegment(sim, sourceSegment);
         if (bakeSim != null) {
             bakeSim.appendBakedSegment(
                     sourceSegment,
+                fullFaces,
                     (sxw + exw) * 0.5D,
                     (syw + eyw) * 0.5D,
                     (szw + ezw) * 0.5D,
@@ -646,7 +657,7 @@ public final class LeashBuilder {
                 sSideX, sSideY, sSideZ, sUpX, sUpY, sUpZ,
                 eSideX, eSideY, eSideZ, eUpX, eUpY, eUpZ,
                 stripe, light0, light1, highlightColor, kind, powered, tier,
-                needsFullRenderSegment(sim, sourceSegment));
+                fullFaces);
     }
 
     private static void buildNodeFrames(
@@ -933,7 +944,40 @@ public final class LeashBuilder {
                 0.5D, BoundedHermiteCurve.DEFAULT_MAX_DEVIATION, out);
     }
 
+    private static void buildCurveMidpoints(
+            RopeSimulation sim, int nodeCount,
+            double[] midX, double[] midY, double[] midZ) {
+        for (int segment = 0; segment < nodeCount - 1; segment++) {
+            sampleRibbonCurveMidpoint(sim, nodeCount, segment, RIBBON_CURVE_POINT);
+            midX[segment] = RIBBON_CURVE_POINT[0];
+            midY[segment] = RIBBON_CURVE_POINT[1];
+            midZ[segment] = RIBBON_CURVE_POINT[2];
+        }
+    }
+
     static void sampleSquareCurvePoint(RopeSimulation sim, int segment, double fraction, double[] out) {
+        if (out == null || out.length < 3) {
+            throw new IllegalArgumentException("curve output length must be >= 3");
+        }
+        int start = Math.max(0, Math.min(segment, sim.nodeCount() - 2));
+        double t = Math.max(0.0D, Math.min(1.0D, fraction));
+        if (t <= 0.0D || t >= 1.0D) {
+            int node = t <= 0.0D ? start : start + 1;
+            out[0] = sim.renderX(node);
+            out[1] = sim.renderY(node);
+            out[2] = sim.renderZ(node);
+            return;
+        }
+        sampleRibbonCurveMidpoint(sim, sim.nodeCount(), start, RIBBON_CURVE_POINT);
+        sampleSquareCurvePoint(
+                sim, start, t,
+                RIBBON_CURVE_POINT[0], RIBBON_CURVE_POINT[1], RIBBON_CURVE_POINT[2],
+                out);
+    }
+
+    static void sampleSquareCurvePoint(
+            RopeSimulation sim, int segment, double fraction,
+            double[] midX, double[] midY, double[] midZ, double[] out) {
         if (out == null || out.length < 3) {
             throw new IllegalArgumentException("curve output length must be >= 3");
         }
@@ -947,7 +991,25 @@ public final class LeashBuilder {
             out[2] = sim.renderZ(node);
             return;
         }
-        sampleRibbonCurveMidpoint(sim, nodeCount, start, RIBBON_CURVE_POINT);
+        double midpointX = midX[start];
+        double midpointY = midY[start];
+        double midpointZ = midZ[start];
+        sampleSquareCurvePoint(sim, start, t, midpointX, midpointY, midpointZ, out);
+    }
+
+    private static void sampleSquareCurvePoint(
+            RopeSimulation sim, int start, double t,
+            double midpointX, double midpointY, double midpointZ, double[] out) {
+        if (out == null || out.length < 3) {
+            throw new IllegalArgumentException("curve output length must be >= 3");
+        }
+        if (t <= 0.0D || t >= 1.0D) {
+            int node = t <= 0.0D ? start : start + 1;
+            out[0] = sim.renderX(node);
+            out[1] = sim.renderY(node);
+            out[2] = sim.renderZ(node);
+            return;
+        }
         double local;
         int endpoint;
         if (t <= 0.5D) {
@@ -958,13 +1020,13 @@ public final class LeashBuilder {
             endpoint = start + 1;
         }
         if (t <= 0.5D) {
-            out[0] = sim.renderX(endpoint) + (RIBBON_CURVE_POINT[0] - sim.renderX(endpoint)) * local;
-            out[1] = sim.renderY(endpoint) + (RIBBON_CURVE_POINT[1] - sim.renderY(endpoint)) * local;
-            out[2] = sim.renderZ(endpoint) + (RIBBON_CURVE_POINT[2] - sim.renderZ(endpoint)) * local;
+            out[0] = sim.renderX(endpoint) + (midpointX - sim.renderX(endpoint)) * local;
+            out[1] = sim.renderY(endpoint) + (midpointY - sim.renderY(endpoint)) * local;
+            out[2] = sim.renderZ(endpoint) + (midpointZ - sim.renderZ(endpoint)) * local;
         } else {
-            out[0] = RIBBON_CURVE_POINT[0] + (sim.renderX(endpoint) - RIBBON_CURVE_POINT[0]) * local;
-            out[1] = RIBBON_CURVE_POINT[1] + (sim.renderY(endpoint) - RIBBON_CURVE_POINT[1]) * local;
-            out[2] = RIBBON_CURVE_POINT[2] + (sim.renderZ(endpoint) - RIBBON_CURVE_POINT[2]) * local;
+            out[0] = midpointX + (sim.renderX(endpoint) - midpointX) * local;
+            out[1] = midpointY + (sim.renderY(endpoint) - midpointY) * local;
+            out[2] = midpointZ + (sim.renderZ(endpoint) - midpointZ) * local;
         }
     }
 

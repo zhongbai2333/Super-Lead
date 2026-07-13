@@ -22,6 +22,28 @@ class LeashBuilderTest {
     }
 
     @Test
+    void bakedFullFaceFlagsRemainAlignedAfterMetadataGrowth() {
+        RopeSimulation sim = new RopeSimulation(
+                new Vec3(0.0D, 3.0D, 0.0D),
+                new Vec3(5.0D, 1.0D, 2.0D),
+                19L,
+                RopeTuning.localDefaults());
+        sim.beginBake(64);
+        for (int i = 0; i < 12; i++) {
+            sim.appendBakedSegment(i, (i & 1) == 0,
+                    i, 0.0D, 0.0D,
+                    1.0D, 0.0D, 0.0D,
+                    0.0D, 1.0D, 0.0D);
+        }
+
+        assertEquals(12, sim.bakedSegmentCount());
+        for (int i = 0; i < 12; i++) {
+            assertEquals((i & 1) == 0, sim.bakedSegFullFaces()[i]);
+            assertEquals(i, sim.bakedSegSourceSegment()[i]);
+        }
+    }
+
+    @Test
     void squareMidpointMatchesStaticHermiteSampling() {
         RopeSimulation sim = new RopeSimulation(
                 new Vec3(0.0D, 4.0D, 0.0D),
@@ -70,5 +92,38 @@ class LeashBuilderTest {
         assertEquals(sim.renderX(segment + 1), point[0], EPS);
         assertEquals(sim.renderY(segment + 1), point[1], EPS);
         assertEquals(sim.renderZ(segment + 1), point[2], EPS);
+    }
+
+    @Test
+    void cachedCurveMidpointsMatchDirectSamplingAcrossSegments() {
+        RopeSimulation sim = new RopeSimulation(
+                new Vec3(0.0D, 4.0D, 0.0D),
+                new Vec3(8.0D, 2.0D, 3.0D),
+                81L,
+                RopeTuning.localDefaults());
+        sim.prepareRender(0.65F);
+        sim.acquireCurveMidScratch();
+        double[] midX = sim.curveMidX();
+        double[] midY = sim.curveMidY();
+        double[] midZ = sim.curveMidZ();
+        double[] midpoint = new double[3];
+        double[] direct = new double[3];
+        double[] cached = new double[3];
+        double[] fractions = { 0.0D, 0.2D, 0.5D, 0.8D, 1.0D };
+
+        for (int segment = 0; segment < sim.nodeCount() - 1; segment++) {
+            LeashBuilder.sampleSquareCurvePoint(sim, segment, 0.5D, midpoint);
+            midX[segment] = midpoint[0];
+            midY[segment] = midpoint[1];
+            midZ[segment] = midpoint[2];
+            for (double fraction : fractions) {
+                LeashBuilder.sampleSquareCurvePoint(sim, segment, fraction, direct);
+                LeashBuilder.sampleSquareCurvePoint(
+                        sim, segment, fraction, midX, midY, midZ, cached);
+                assertEquals(direct[0], cached[0], EPS);
+                assertEquals(direct[1], cached[1], EPS);
+                assertEquals(direct[2], cached[2], EPS);
+            }
+        }
     }
 }
