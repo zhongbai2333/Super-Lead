@@ -151,6 +151,22 @@ public final class ServerConfigScreen extends Screen {
                     0, 30, "30"),
             new FieldDef("energy.base_transfer_per_tick", "super_lead.server_config.field.energy.base_transfer",
                     FieldKind.INT, 1, 16384, "256"),
+            new FieldDef("energy.max_request_per_call", "super_lead.server_config.field.energy.max_request_per_call",
+                    FieldKind.INT, 1, Integer.MAX_VALUE, "65536"),
+            new FieldDef("energy.max_attempts_per_component_tick",
+                    "super_lead.server_config.field.energy.max_attempts_per_component_tick",
+                    FieldKind.INT, 1, 4096, "32"),
+            new FieldDef("energy.max_handler_calls_per_level_tick",
+                    "super_lead.server_config.field.energy.max_handler_calls_per_level_tick",
+                    FieldKind.INT, 16, 65536, "2048"),
+            new FieldDef("energy.tick_budget_micros", "super_lead.server_config.field.energy.tick_budget_micros",
+                    FieldKind.INT, 100, 50000, "2000"),
+            new FieldDef("energy.slow_call_threshold_micros",
+                    "super_lead.server_config.field.energy.slow_call_threshold_micros",
+                    FieldKind.INT, 50, 50000, "500"),
+            new FieldDef("energy.breaker_cooldown_ticks",
+                    "super_lead.server_config.field.energy.breaker_cooldown_ticks",
+                    FieldKind.INT, 20, 72000, "200"),
             new FieldDef("network.max_leash_distance", "super_lead.server_config.field.network.max_leash_distance",
                     FieldKind.DOUBLE, 4.0, 32.0, "12.0"),
             new FieldDef("network.item_tier_max", "super_lead.server_config.field.network.item_tier_max", FieldKind.INT,
@@ -638,6 +654,15 @@ public final class ServerConfigScreen extends Screen {
         return switch (key) {
             case "energy.tier_max_level" -> Integer.toString(Config.energyTierMaxLevel());
             case "energy.base_transfer_per_tick" -> Integer.toString(Config.energyBaseTransfer());
+            case "energy.max_request_per_call" -> Integer.toString(Config.energyMaxRequestPerCall());
+            case "energy.max_attempts_per_component_tick" ->
+                Integer.toString(Config.energyMaxAttemptsPerComponentTick());
+            case "energy.max_handler_calls_per_level_tick" ->
+                Integer.toString(Config.energyMaxHandlerCallsPerLevelTick());
+            case "energy.tick_budget_micros" -> Integer.toString(Config.energyTickBudgetMicros());
+            case "energy.slow_call_threshold_micros" ->
+                Integer.toString(Config.energySlowCallThresholdMicros());
+            case "energy.breaker_cooldown_ticks" -> Integer.toString(Config.energyBreakerCooldownTicks());
             case "network.max_leash_distance" -> Double.toString(Config.maxLeashDistance());
             case "network.item_tier_max" -> Integer.toString(Config.itemTierMax());
             case "network.fluid_tier_max" -> Integer.toString(Config.fluidTierMax());

@@ -215,8 +215,17 @@ public class CargoManifestMenu extends AbstractContainerMenu {
         int target = firstEmptyFilterSlot();
         if (target >= 0) {
             setGhostSlot(target, stack);
-            return stack.copyWithCount(1);
+            return completedGhostQuickMove();
         }
+        return ItemStack.EMPTY;
+    }
+
+    /**
+     * A ghost-slot quick move copies a sample without consuming the source stack.
+     * Returning a non-empty stack here makes vanilla repeat QUICK_MOVE while the
+     * unchanged source still contains items, filling every empty filter slot.
+     */
+    static ItemStack completedGhostQuickMove() {
         return ItemStack.EMPTY;
     }
 

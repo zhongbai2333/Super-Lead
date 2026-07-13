@@ -15,6 +15,7 @@ final class LeadRuntimeCacheEvents {
     public static void onLevelUnload(LevelEvent.Unload event) {
         if (event.getLevel() instanceof ServerLevel level) {
             LeadTransferService.discardLevelState(level);
+            LeadSignalService.clearEnergySafetyState(level);
             RopeContactTracker.clear(level);
             RopeTripController.clear(level);
         }

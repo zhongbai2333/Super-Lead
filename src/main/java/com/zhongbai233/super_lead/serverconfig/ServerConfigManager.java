@@ -20,6 +20,12 @@ public final class ServerConfigManager {
     private static final Set<String> DANGEROUS_KEYS = Set.of(
             "energy.tier_max_level",
             "energy.base_transfer_per_tick",
+            "energy.max_request_per_call",
+            "energy.max_attempts_per_component_tick",
+            "energy.max_handler_calls_per_level_tick",
+            "energy.tick_budget_micros",
+            "energy.slow_call_threshold_micros",
+            "energy.breaker_cooldown_ticks",
             "network.max_leash_distance",
             "network.item_tier_max",
             "network.fluid_tier_max",

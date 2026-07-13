@@ -24,6 +24,12 @@ public final class Config {
     public static final ModConfigSpec SPEC;
     public static final ModConfigSpec.IntValue ENERGY_TIER_MAX_LEVEL;
     public static final ModConfigSpec.IntValue ENERGY_BASE_TRANSFER;
+    public static final ModConfigSpec.IntValue ENERGY_MAX_REQUEST_PER_CALL;
+    public static final ModConfigSpec.IntValue ENERGY_MAX_ATTEMPTS_PER_COMPONENT_TICK;
+    public static final ModConfigSpec.IntValue ENERGY_MAX_HANDLER_CALLS_PER_LEVEL_TICK;
+    public static final ModConfigSpec.IntValue ENERGY_TICK_BUDGET_MICROS;
+    public static final ModConfigSpec.IntValue ENERGY_SLOW_CALL_THRESHOLD_MICROS;
+    public static final ModConfigSpec.IntValue ENERGY_BREAKER_COOLDOWN_TICKS;
 
     public static final ModConfigSpec.DoubleValue NETWORK_MAX_LEASH_DISTANCE;
     public static final ModConfigSpec.IntValue NETWORK_ITEM_TIER_MAX;
@@ -49,6 +55,26 @@ public final class Config {
         ENERGY_BASE_TRANSFER = builder
                 .comment("Base FE/tick transferred per energy lead at tier 0.")
                 .defineInRange("base_transfer_per_tick", 256, 1, Integer.MAX_VALUE);
+        ENERGY_MAX_REQUEST_PER_CALL = builder
+            .comment("Maximum FE passed to one third-party energy handler call.",
+                "This is a compatibility guard, not a per-network throughput cap.")
+            .defineInRange("max_request_per_call", 65536, 1, Integer.MAX_VALUE);
+        ENERGY_MAX_ATTEMPTS_PER_COMPONENT_TICK = builder
+            .comment("Maximum source-target transfer attempts for one connected energy network per tick.")
+            .defineInRange("max_attempts_per_component_tick", 32, 1, 4096);
+        ENERGY_MAX_HANDLER_CALLS_PER_LEVEL_TICK = builder
+            .comment("Maximum third-party energy capability/handler calls per dimension per tick.")
+            .defineInRange("max_handler_calls_per_level_tick", 2048, 16, 65536);
+        ENERGY_TICK_BUDGET_MICROS = builder
+            .comment("Soft wall-clock budget for Super Lead energy work per dimension tick, in microseconds.",
+                "A handler already in progress cannot be interrupted; the budget prevents starting more calls.")
+            .defineInRange("tick_budget_micros", 2000, 100, 50000);
+        ENERGY_SLOW_CALL_THRESHOLD_MICROS = builder
+            .comment("A returned energy handler call slower than this opens its endpoint circuit breaker.")
+            .defineInRange("slow_call_threshold_micros", 500, 50, 50000);
+        ENERGY_BREAKER_COOLDOWN_TICKS = builder
+            .comment("Ticks to skip an energy endpoint after an exception, invalid response, or slow call.")
+            .defineInRange("breaker_cooldown_ticks", 200, 20, 72000);
         builder.pop();
 
         builder.push("network");
@@ -98,6 +124,12 @@ public final class Config {
 
     private static volatile int cachedTierMax = 30;
     private static volatile int cachedBaseTransfer = 256;
+    private static volatile int cachedEnergyMaxRequestPerCall = 65536;
+    private static volatile int cachedEnergyMaxAttemptsPerComponentTick = 32;
+    private static volatile int cachedEnergyMaxHandlerCallsPerLevelTick = 2048;
+    private static volatile int cachedEnergyTickBudgetMicros = 2000;
+    private static volatile int cachedEnergySlowCallThresholdMicros = 500;
+    private static volatile int cachedEnergyBreakerCooldownTicks = 200;
     private static volatile double cachedMaxLeashDistance = 12.0D;
     private static volatile int cachedItemTierMax = 6;
     private static volatile int cachedFluidTierMax = 4;
@@ -122,6 +154,30 @@ public final class Config {
 
     public static int energyBaseTransfer() {
         return cachedBaseTransfer;
+    }
+
+    public static int energyMaxRequestPerCall() {
+        return cachedEnergyMaxRequestPerCall;
+    }
+
+    public static int energyMaxAttemptsPerComponentTick() {
+        return cachedEnergyMaxAttemptsPerComponentTick;
+    }
+
+    public static int energyMaxHandlerCallsPerLevelTick() {
+        return cachedEnergyMaxHandlerCallsPerLevelTick;
+    }
+
+    public static int energyTickBudgetMicros() {
+        return cachedEnergyTickBudgetMicros;
+    }
+
+    public static int energySlowCallThresholdMicros() {
+        return cachedEnergySlowCallThresholdMicros;
+    }
+
+    public static int energyBreakerCooldownTicks() {
+        return cachedEnergyBreakerCooldownTicks;
     }
 
     public static double maxLeashDistance() {
@@ -205,6 +261,12 @@ public final class Config {
     private static void refresh() {
         cachedTierMax = ENERGY_TIER_MAX_LEVEL.getAsInt();
         cachedBaseTransfer = ENERGY_BASE_TRANSFER.getAsInt();
+        cachedEnergyMaxRequestPerCall = ENERGY_MAX_REQUEST_PER_CALL.getAsInt();
+        cachedEnergyMaxAttemptsPerComponentTick = ENERGY_MAX_ATTEMPTS_PER_COMPONENT_TICK.getAsInt();
+        cachedEnergyMaxHandlerCallsPerLevelTick = ENERGY_MAX_HANDLER_CALLS_PER_LEVEL_TICK.getAsInt();
+        cachedEnergyTickBudgetMicros = ENERGY_TICK_BUDGET_MICROS.getAsInt();
+        cachedEnergySlowCallThresholdMicros = ENERGY_SLOW_CALL_THRESHOLD_MICROS.getAsInt();
+        cachedEnergyBreakerCooldownTicks = ENERGY_BREAKER_COOLDOWN_TICKS.getAsInt();
         cachedMaxLeashDistance = NETWORK_MAX_LEASH_DISTANCE.get();
         cachedItemTierMax = NETWORK_ITEM_TIER_MAX.getAsInt();
         cachedFluidTierMax = NETWORK_FLUID_TIER_MAX.getAsInt();
@@ -256,6 +318,15 @@ public final class Config {
         java.util.LinkedHashMap<String, String> m = new java.util.LinkedHashMap<>();
         m.put("energy.tier_max_level", Integer.toString(ENERGY_TIER_MAX_LEVEL.getAsInt()));
         m.put("energy.base_transfer_per_tick", Integer.toString(ENERGY_BASE_TRANSFER.getAsInt()));
+        m.put("energy.max_request_per_call", Integer.toString(ENERGY_MAX_REQUEST_PER_CALL.getAsInt()));
+        m.put("energy.max_attempts_per_component_tick",
+            Integer.toString(ENERGY_MAX_ATTEMPTS_PER_COMPONENT_TICK.getAsInt()));
+        m.put("energy.max_handler_calls_per_level_tick",
+            Integer.toString(ENERGY_MAX_HANDLER_CALLS_PER_LEVEL_TICK.getAsInt()));
+        m.put("energy.tick_budget_micros", Integer.toString(ENERGY_TICK_BUDGET_MICROS.getAsInt()));
+        m.put("energy.slow_call_threshold_micros",
+            Integer.toString(ENERGY_SLOW_CALL_THRESHOLD_MICROS.getAsInt()));
+        m.put("energy.breaker_cooldown_ticks", Integer.toString(ENERGY_BREAKER_COOLDOWN_TICKS.getAsInt()));
         m.put("network.max_leash_distance", Double.toString(NETWORK_MAX_LEASH_DISTANCE.get()));
         m.put("network.item_tier_max", Integer.toString(NETWORK_ITEM_TIER_MAX.getAsInt()));
         m.put("network.fluid_tier_max", Integer.toString(NETWORK_FLUID_TIER_MAX.getAsInt()));
@@ -277,6 +348,18 @@ public final class Config {
                 case "energy.tier_max_level" -> ENERGY_TIER_MAX_LEVEL.set(parseIntClamped(value, 0, 30));
                 case "energy.base_transfer_per_tick" ->
                     ENERGY_BASE_TRANSFER.set(parseIntClamped(value, 1, Integer.MAX_VALUE));
+                case "energy.max_request_per_call" ->
+                    ENERGY_MAX_REQUEST_PER_CALL.set(parseIntClamped(value, 1, Integer.MAX_VALUE));
+                case "energy.max_attempts_per_component_tick" ->
+                    ENERGY_MAX_ATTEMPTS_PER_COMPONENT_TICK.set(parseIntClamped(value, 1, 4096));
+                case "energy.max_handler_calls_per_level_tick" ->
+                    ENERGY_MAX_HANDLER_CALLS_PER_LEVEL_TICK.set(parseIntClamped(value, 16, 65536));
+                case "energy.tick_budget_micros" ->
+                    ENERGY_TICK_BUDGET_MICROS.set(parseIntClamped(value, 100, 50000));
+                case "energy.slow_call_threshold_micros" ->
+                    ENERGY_SLOW_CALL_THRESHOLD_MICROS.set(parseIntClamped(value, 50, 50000));
+                case "energy.breaker_cooldown_ticks" ->
+                    ENERGY_BREAKER_COOLDOWN_TICKS.set(parseIntClamped(value, 20, 72000));
                 case "network.max_leash_distance" ->
                     NETWORK_MAX_LEASH_DISTANCE.set(parseDoubleClamped(value, 4.0D, 32.0D));
                 case "network.item_tier_max" -> NETWORK_ITEM_TIER_MAX.set(parseIntClamped(value, 1, 12));

@@ -45,6 +45,24 @@ public final class SuperLeadServerCommands {
                 new Entry("energy.tier_max_level", Config.ENERGY_TIER_MAX_LEVEL, "[0..30]", "30"));
         m.put("energy.base_transfer_per_tick",
                 new Entry("energy.base_transfer_per_tick", Config.ENERGY_BASE_TRANSFER, "[1..2147483647]", "256"));
+        m.put("energy.max_request_per_call",
+            new Entry("energy.max_request_per_call", Config.ENERGY_MAX_REQUEST_PER_CALL,
+                "[1..2147483647]", "65536"));
+        m.put("energy.max_attempts_per_component_tick",
+            new Entry("energy.max_attempts_per_component_tick", Config.ENERGY_MAX_ATTEMPTS_PER_COMPONENT_TICK,
+                "[1..4096]", "32"));
+        m.put("energy.max_handler_calls_per_level_tick",
+            new Entry("energy.max_handler_calls_per_level_tick", Config.ENERGY_MAX_HANDLER_CALLS_PER_LEVEL_TICK,
+                "[16..65536]", "2048"));
+        m.put("energy.tick_budget_micros",
+            new Entry("energy.tick_budget_micros", Config.ENERGY_TICK_BUDGET_MICROS,
+                "[100..50000]", "2000"));
+        m.put("energy.slow_call_threshold_micros",
+            new Entry("energy.slow_call_threshold_micros", Config.ENERGY_SLOW_CALL_THRESHOLD_MICROS,
+                "[50..50000]", "500"));
+        m.put("energy.breaker_cooldown_ticks",
+            new Entry("energy.breaker_cooldown_ticks", Config.ENERGY_BREAKER_COOLDOWN_TICKS,
+                "[20..72000]", "200"));
         m.put("network.max_leash_distance",
                 new Entry("network.max_leash_distance", Config.NETWORK_MAX_LEASH_DISTANCE, "[4.0..32.0]", "12.0"));
         m.put("network.item_tier_max",

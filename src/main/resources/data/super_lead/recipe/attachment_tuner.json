@@ -1,0 +1,12 @@
+{
+  "type": "minecraft:crafting_shapeless",
+  "category": "equipment",
+  "ingredients": [
+    "minecraft:iron_ingot",
+    "minecraft:redstone",
+    "minecraft:string"
+  ],
+  "result": {
+    "id": "super_lead:attachment_tuner"
+  }
+}
