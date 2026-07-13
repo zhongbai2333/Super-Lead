@@ -6,6 +6,7 @@ import com.zhongbai233.super_lead.preset.client.PhysicsZonesClient;
 import com.zhongbai233.super_lead.tuning.ClientTuning;
 import com.zhongbai233.super_lead.tuning.TuningKey;
 import java.util.HashMap;
+import java.util.IdentityHashMap;
 import java.util.Map;
 import net.minecraft.world.phys.Vec3;
 
@@ -87,16 +88,31 @@ public record RopeTuning(
         double windRampBias,
         double windVerticalLift) {
     private static final HashMap<PresetCacheKey, RopeTuning> PRESET_CACHE = new HashMap<>();
+    // Client-main-thread cache. Physics workers only consume already-resolved tunings.
+        private static final IdentityHashMap<RopeTuning, HashMap<TopologyCacheKey, RopeTuning>> TOPOLOGY_CACHE =
+            new IdentityHashMap<>();
     private static RopeTuning localDefaultsCache;
     private static long localDefaultsRenderEpoch = Long.MIN_VALUE;
     private static long localDefaultsPhysicsEpoch = Long.MIN_VALUE;
 
     public RopeTuning withTopology(double segmentLength, int segmentMax) {
-        return new RopeTuning(
+        int effectiveSegmentMax = Math.max(minSegments, segmentMax);
+        if (Double.doubleToLongBits(this.segmentLength) == Double.doubleToLongBits(segmentLength)
+            && this.segmentMax == effectiveSegmentMax) {
+            return this;
+        }
+        TopologyCacheKey key = new TopologyCacheKey(segmentLength, effectiveSegmentMax);
+        HashMap<TopologyCacheKey, RopeTuning> variants = TOPOLOGY_CACHE.computeIfAbsent(
+            this, ignored -> new HashMap<>());
+        RopeTuning cached = variants.get(key);
+        if (cached != null) {
+            return cached;
+        }
+        RopeTuning resolved = new RopeTuning(
                 slack,
                 segmentLength,
                 visualSegmentLength,
-                Math.max(minSegments, segmentMax),
+            effectiveSegmentMax,
                 gravity,
                 damping,
                 iterAir,
@@ -162,6 +178,13 @@ public record RopeTuning(
                 windPauseJitter,
                 windRampBias,
                 windVerticalLift);
+        if (TOPOLOGY_CACHE.size() > 128) {
+            TOPOLOGY_CACHE.clear();
+            variants = new HashMap<>();
+            TOPOLOGY_CACHE.put(this, variants);
+        }
+        variants.put(key, resolved);
+        return resolved;
     }
 
     public static RopeTuning forMidpoint(Vec3 a, Vec3 b) {
@@ -213,6 +236,7 @@ public record RopeTuning(
 
     public static void clearCache() {
         PRESET_CACHE.clear();
+        TOPOLOGY_CACHE.clear();
         localDefaultsCache = null;
         localDefaultsRenderEpoch = Long.MIN_VALUE;
         localDefaultsPhysicsEpoch = Long.MIN_VALUE;
@@ -346,5 +370,8 @@ public record RopeTuning(
     }
 
     private record PresetCacheKey(String preset, long presetEpoch, long renderEpoch, long physicsEpoch) {
+    }
+
+    private record TopologyCacheKey(double segmentLength, int segmentMax) {
     }
 }

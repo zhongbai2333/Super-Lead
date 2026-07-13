@@ -31,12 +31,13 @@ public final class PhysicsZonesClient {
         EPOCH++;
     }
 
-    public static void apply(SyncDimensionPresets payload) {
+    public static boolean apply(SyncDimensionPresets payload) {
         Map<String, Map<String, String>> next = payload.presets();
         if (next.equals(PRESETS))
-            return;
+            return false;
         PRESETS = next;
         EPOCH++;
+        return true;
     }
 
     public static List<SyncPhysicsZones.Entry> zones() {

@@ -41,17 +41,22 @@ public final class RopeSectionMeshDriver {
         BlockPos origin = event.getSectionOrigin();
         StaticRopeChunkRegistry registry = StaticRopeChunkRegistry.get();
         long key = SectionPos.asLong(origin);
-        List<RopeSectionSnapshot> snaps = registry.snapshotsFor(key);
+        StaticRopeChunkRegistry.SectionBuild build = registry.captureSectionBuild(key);
+        List<RopeSectionSnapshot> snaps = build.snapshots();
         if (snaps.isEmpty()) {
             long directKey = SectionPos.asLong(origin.getX(), origin.getY(), origin.getZ());
-            List<RopeSectionSnapshot> directSnaps = registry.snapshotsFor(directKey);
+            StaticRopeChunkRegistry.SectionBuild directBuild = registry.captureSectionBuild(directKey);
+            List<RopeSectionSnapshot> directSnaps = directBuild.snapshots();
             if (!directSnaps.isEmpty()) {
                 key = directKey;
+                build = directBuild;
                 snaps = directSnaps;
             }
         }
-        if (snaps.isEmpty())
+        if (snaps.isEmpty()) {
+            registry.markSectionBuildObserved(key, build.generation(), currentTick());
             return;
+        }
         debugHits++;
         TextureAtlasSprite sprite = neutralSprite();
         if (sprite == null)
@@ -70,7 +75,7 @@ public final class RopeSectionMeshDriver {
                 emit(vc, s, ox, oy, oz, u, v);
             }
         });
-        StaticRopeChunkRegistry.get().markSectionMeshAccepted(key);
+        registry.markSectionBuildObserved(key, build.generation(), currentTick());
     }
 
     public static long debugCallbacks() {
@@ -79,6 +84,13 @@ public final class RopeSectionMeshDriver {
 
     public static long debugHits() {
         return debugHits;
+    }
+
+    private static long currentTick() {
+        Minecraft minecraft = Minecraft.getInstance();
+        return minecraft == null || minecraft.level == null
+                ? Long.MIN_VALUE
+                : minecraft.level.getGameTime();
     }
 
     private static TextureAtlasSprite neutralSprite() {
@@ -93,15 +105,19 @@ public final class RopeSectionMeshDriver {
         }
     }
 
-    private static void emit(VertexConsumer vc, RopeSectionSnapshot s,
-            float ox, float oy, float oz, float u, float v) {
+        private static void emit(VertexConsumer vc, RopeSectionSnapshot s,
+            double ox, double oy, double oz, float u, float v) {
         int last = s.nodeCount - 1;
         int start = Math.max(0, Math.min(s.segmentStart, last));
         int end = Math.max(start, Math.min(s.segmentEndExclusive, last));
         for (int i = start; i < end; i++) {
             int j = i + 1;
-            float sxA = s.x[i] - ox, syA = s.y[i] - oy, szA = s.z[i] - oz;
-            float sxB = s.x[j] - ox, syB = s.y[j] - oy, szB = s.z[j] - oz;
+            float sxA = localCoordinate(s.x[i], ox);
+            float syA = localCoordinate(s.y[i], oy);
+            float szA = localCoordinate(s.z[i], oz);
+            float sxB = localCoordinate(s.x[j], ox);
+            float syB = localCoordinate(s.y[j], oy);
+            float szB = localCoordinate(s.z[j], oz);
             float scaleA = nodeScale(s, i);
             float scaleB = nodeScale(s, j);
             float sideAx = s.sx[i] * scaleA, sideAy = s.sy[i] * scaleA, sideAz = s.sz[i] * scaleA;
@@ -156,10 +172,14 @@ public final class RopeSectionMeshDriver {
 
         for (RopeSectionLine line : s.attachmentLines) {
             emitLineQuads(vc,
-                    line.ax() - ox, line.ay() - oy, line.az() - oz,
-                    line.bx() - ox, line.by() - oy, line.bz() - oz,
+                    localCoordinate(line.ax(), ox), localCoordinate(line.ay(), oy), localCoordinate(line.az(), oz),
+                    localCoordinate(line.bx(), ox), localCoordinate(line.by(), oy), localCoordinate(line.bz(), oz),
                     line.color(), line.light(), u, v);
         }
+    }
+
+    static float localCoordinate(double worldCoordinate, double sectionOrigin) {
+        return (float) (worldCoordinate - sectionOrigin);
     }
 
     private static float nodeScale(RopeSectionSnapshot s, int idx) {
@@ -169,10 +189,10 @@ public final class RopeSectionMeshDriver {
     }
 
     private static void emitEndCap(VertexConsumer vc, RopeSectionSnapshot s, int idx,
-            float ox, float oy, float oz, float u, float v, float scale, boolean flipWinding) {
-        float px = s.x[idx] - ox;
-        float py = s.y[idx] - oy;
-        float pz = s.z[idx] - oz;
+            double ox, double oy, double oz, float u, float v, float scale, boolean flipWinding) {
+        float px = localCoordinate(s.x[idx], ox);
+        float py = localCoordinate(s.y[idx], oy);
+        float pz = localCoordinate(s.z[idx], oz);
         float ssx = s.sx[idx] * scale;
         float ssy = s.sy[idx] * scale;
         float ssz = s.sz[idx] * scale;
@@ -212,9 +232,9 @@ public final class RopeSectionMeshDriver {
         if (other < 0 || other >= s.nodeCount) {
             return new Normal(0.0F, 1.0F, 0.0F);
         }
-        float nx = s.x[idx] - s.x[other];
-        float ny = s.y[idx] - s.y[other];
-        float nz = s.z[idx] - s.z[other];
+        float nx = (float) (s.x[idx] - s.x[other]);
+        float ny = (float) (s.y[idx] - s.y[other]);
+        float nz = (float) (s.z[idx] - s.z[other]);
         return normal(nx, ny, nz, 0.0F, 1.0F, 0.0F);
     }
 

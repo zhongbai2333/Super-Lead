@@ -71,12 +71,22 @@ abstract class RopeSimulationVisualState extends RopeSimulationRenderCache {
         invalidatePhysicsHistoryForRefinement();
     }
 
+    /** Forces the next step to rebuild every conclusion derived from terrain. */
+    public void wakeForTerrainChange() {
+        invalidatePhysicsHistoryForRefinement();
+    }
+
+    /** Wakes a settled simulation after tuning, contact, or another external change. */
+    public void wakeForExternalChange() {
+        invalidatePhysicsHistoryForRefinement();
+    }
+
     /**
      * Restores the currently displayed static polyline into a newly-created
      * full-detail simulation, preserving visual continuity while allowing terrain
      * constraints to repair the shape.
      */
-    public void restorePolylineForRefinement(float[] sourceX, float[] sourceY, float[] sourceZ, Vec3 a, Vec3 b) {
+    public void restorePolylineForRefinement(double[] sourceX, double[] sourceY, double[] sourceZ, Vec3 a, Vec3 b) {
         restoreShapeForRefinement(sourceX, sourceY, sourceZ, a, b);
     }
 

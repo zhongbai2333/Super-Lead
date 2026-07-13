@@ -6,10 +6,36 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.util.Map;
 import net.minecraft.world.phys.AABB;
 import org.junit.jupiter.api.Test;
 
 class StaticRopeChunkRegistryTest {
+    @Test
+    void dynamicRenderingOverlapsFirstTwoAcceptedMeshTicks() {
+    assertTrue(StaticRopeChunkRegistry.handoffNeedsDynamicOverlap(
+        true, Long.MIN_VALUE, 100L, 100L));
+    assertTrue(StaticRopeChunkRegistry.handoffNeedsDynamicOverlap(
+        true, Long.MIN_VALUE, 100L, 101L));
+    assertFalse(StaticRopeChunkRegistry.handoffNeedsDynamicOverlap(
+        true, Long.MIN_VALUE, 100L, 102L));
+    }
+
+    @Test
+    void unacceptedClaimUsesBoundedDynamicLinger() {
+    assertTrue(StaticRopeChunkRegistry.handoffNeedsDynamicOverlap(
+        false, 100L, Long.MIN_VALUE, 102L));
+    assertFalse(StaticRopeChunkRegistry.handoffNeedsDynamicOverlap(
+        false, 100L, Long.MIN_VALUE, 103L));
+    }
+
+    @Test
+    void recentWindKeepsRopeDynamicAcrossShortGustGaps() {
+        assertTrue(StaticRopeChunkRegistry.isWindCoolingDown(100L, 140L));
+        assertFalse(StaticRopeChunkRegistry.isWindCoolingDown(100L, 141L));
+        assertFalse(StaticRopeChunkRegistry.isWindCoolingDown(Long.MIN_VALUE, 140L));
+        assertFalse(StaticRopeChunkRegistry.isWindCoolingDown(150L, 140L));
+    }
 
     @Test
     void repeatedFramesDoNotCountTheSamePhysicsSample() {
@@ -76,5 +102,19 @@ class StaticRopeChunkRegistryTest {
 
         assertFalse(StaticRopeChunkRegistry.segmentBoundsIntersect(
                 0.0D, 8.0D, 0.0D, 10.0D, 8.0D, 0.0D, lightBounds));
+    }
+
+    @Test
+    void retirementWaitsForEverySectionGeneration() {
+        Map<Long, Long> targets = Map.of(11L, 3L, 12L, 7L);
+
+        assertFalse(StaticRopeChunkRegistry.generationsReached(targets, Map.of(11L, 3L, 12L, 6L)));
+        assertTrue(StaticRopeChunkRegistry.generationsReached(targets, Map.of(11L, 3L, 12L, 7L)));
+    }
+
+    @Test
+    void staleSectionBuildCannotCompleteRetirement() {
+        assertFalse(StaticRopeChunkRegistry.generationsReached(Map.of(11L, 4L), Map.of(11L, 3L)));
+        assertTrue(StaticRopeChunkRegistry.generationsReached(Map.of(11L, 4L), Map.of(11L, 5L)));
     }
 }

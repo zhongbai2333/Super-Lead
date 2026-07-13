@@ -51,6 +51,7 @@ import net.minecraft.client.renderer.culling.Frustum;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.entity.MoverType;
 import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.level.Level;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.level.LightLayer;
@@ -117,6 +118,7 @@ public final class SuperLeadClientEvents {
     private static final Set<UUID> FRAME_ACTIVE = new HashSet<>();
     private static final Map<UUID, Double> FRAME_LOD_DISTANCE = new HashMap<>();
     private static final List<RenderEntry> FRAME_SIM_ENTRIES = new ArrayList<>();
+    private static final List<RenderEntry> FRAME_STATIC_COLLISION_ENTRIES = new ArrayList<>();
     private static final List<RenderEntry> FRAME_RENDER_ENTRIES = new ArrayList<>();
     private static final Set<UUID> FRAME_STATIC_SIM_IDS = new HashSet<>();
     private static final Set<UUID> FRAME_PARROT_WEIGHTED_ROPES = new HashSet<>();
@@ -144,6 +146,68 @@ public final class SuperLeadClientEvents {
 
     static RopeSimulation simulation(UUID id) {
         return SIMS.get(id);
+    }
+
+    /** Wakes static-mesh simulations whose nearby client terrain changed. */
+    public static void wakeForTerrainChange(Iterable<UUID> connectionIds) {
+        if (connectionIds == null)
+            return;
+        for (UUID id : connectionIds) {
+            if (id == null)
+                continue;
+            cancelAsyncPhysics(id);
+            RopeSimulation sim = SIMS.get(id);
+            if (sim != null) {
+                sim.wakeForTerrainChange();
+            }
+            LAST_DYNAMIC_STEP_TICK.remove(id);
+        }
+    }
+
+    public static Map<UUID, RopeTuning> captureTunings(List<LeadConnection> connections) {
+        Map<UUID, RopeTuning> out = new HashMap<>();
+        if (connections != null) {
+            for (LeadConnection connection : connections) {
+                out.put(connection.id(), RopeTuning.forConnection(connection));
+            }
+        }
+        return out;
+    }
+
+    public static void disturbChangedTunings(
+            Level level, List<LeadConnection> connections, Map<UUID, RopeTuning> previousTunings) {
+        if (level == null || connections == null || previousTunings == null)
+            return;
+        Set<UUID> changed = new HashSet<>();
+        for (LeadConnection connection : connections) {
+            RopeTuning previous = previousTunings.get(connection.id());
+            RopeTuning current = RopeTuning.forConnection(connection);
+            if (previous != null && !previous.equals(current)) {
+                changed.add(connection.id());
+            }
+        }
+        disturbConnections(level, changed, level.getGameTime() + 8L);
+    }
+
+    public static void disturbConnections(Level level, Iterable<UUID> connectionIds, long untilTick) {
+        if (level == null || connectionIds == null)
+            return;
+        Set<UUID> ids = new HashSet<>();
+        for (UUID id : connectionIds) {
+            if (id != null)
+                ids.add(id);
+        }
+        if (ids.isEmpty())
+            return;
+        StaticRopeChunkRegistry.get().holdDynamic(level, ids, untilTick);
+        for (UUID id : ids) {
+            cancelAsyncPhysics(id);
+            RopeSimulation sim = SIMS.get(id);
+            if (sim != null) {
+                sim.wakeForExternalChange();
+            }
+            LAST_DYNAMIC_STEP_TICK.remove(id);
+        }
     }
 
     public static LeadConnection hoveredConnection() {
@@ -272,6 +336,7 @@ public final class SuperLeadClientEvents {
         Set<UUID> active = FRAME_ACTIVE;
         Map<UUID, Double> lodDistanceByConnection = FRAME_LOD_DISTANCE;
         List<RenderEntry> simEntries = FRAME_SIM_ENTRIES;
+        List<RenderEntry> staticCollisionEntries = FRAME_STATIC_COLLISION_ENTRIES;
         List<RenderEntry> renderEntries = FRAME_RENDER_ENTRIES;
         Set<UUID> staticSimIds = FRAME_STATIC_SIM_IDS;
         Set<UUID> parrotWeightedRopes = FRAME_PARROT_WEIGHTED_ROPES;
@@ -280,6 +345,7 @@ public final class SuperLeadClientEvents {
         active.clear();
         lodDistanceByConnection.clear();
         simEntries.clear();
+        staticCollisionEntries.clear();
         renderEntries.clear();
         staticSimIds.clear();
         parrotWeightedRopes.clear();
@@ -294,7 +360,7 @@ public final class SuperLeadClientEvents {
         for (LeadConnection connection : connections) {
             addConnectionEntry(level, minecraft, staticRopes, endpointsByConnection, active,
                     lodDistanceByConnection, simEntries, staticSimIds, renderEntries,
-                    connection, cameraPos, frustum, partialTick, tick);
+                    staticCollisionEntries, connection, cameraPos, frustum, partialTick, tick);
         }
         // Second pass: drive each sim with its neighbours so rope-rope constraints
         // participate
@@ -303,7 +369,8 @@ public final class SuperLeadClientEvents {
         // but still receive sparse terrain-only maintenance before static handoff.
         if (tick != lastRepelTick) {
             lastRepelTick = tick;
-            stepFrameSimulations(level, minecraft.player, simEntries, parrotWeightedRopes, active,
+                    stepFrameSimulations(level, minecraft.player, simEntries, staticCollisionEntries,
+                        parrotWeightedRopes, active,
                     physicsNanosByConnection, physicsStateByConnection, tick);
         }
         // Update sim IDs that tickMaintain may use as a geometry source. Static-mesh
@@ -407,6 +474,7 @@ public final class SuperLeadClientEvents {
         FRAME_ACTIVE.clear();
         FRAME_LOD_DISTANCE.clear();
         FRAME_SIM_ENTRIES.clear();
+        FRAME_STATIC_COLLISION_ENTRIES.clear();
         FRAME_RENDER_ENTRIES.clear();
         FRAME_STATIC_SIM_IDS.clear();
         FRAME_PARROT_WEIGHTED_ROPES.clear();
@@ -426,13 +494,18 @@ public final class SuperLeadClientEvents {
     }
 
     private static void stepFrameSimulations(ClientLevel level, Player player,
-            List<RenderEntry> simEntries, Set<UUID> parrotWeightedRopes, Set<UUID> active,
+            List<RenderEntry> simEntries, List<RenderEntry> staticCollisionEntries,
+            Set<UUID> parrotWeightedRopes, Set<UUID> active,
             Map<UUID, Long> physicsNanosByConnection,
             Map<UUID, String> physicsStateByConnection, long tick) {
-        NeighborMapResult neighborResult = buildNeighborMap(simEntries);
+        NeighborMapResult neighborResult = buildNeighborMap(simEntries, staticCollisionEntries, tick);
         RopeDebugStats.neighborCandidates = neighborResult.candidates();
         RopeDebugStats.neighborNarrowPhase = neighborResult.narrowPhase();
         RopeDebugStats.neighborBuildTruncated = neighborResult.truncated();
+
+        if (!neighborResult.staticContacts().isEmpty()) {
+            disturbConnections(level, neighborResult.staticContacts(), tick + 8L);
+        }
 
         PhysicsBudget physicsBudget = new PhysicsBudget(
                 ClientTuning.DYNAMIC_PHYSICS_BUDGET.get(), MAX_MAIN_THREAD_PHYSICS_NANOS);
@@ -445,7 +518,7 @@ public final class SuperLeadClientEvents {
     private static void addConnectionEntry(ClientLevel level, Minecraft minecraft,
             StaticRopeChunkRegistry staticRopes, Map<UUID, LeadEndpointLayout.Endpoints> endpointsByConnection, Set<UUID> active,
             Map<UUID, Double> lodDistanceByConnection, List<RenderEntry> simEntries, Set<UUID> staticSimIds,
-            List<RenderEntry> renderEntries,
+            List<RenderEntry> renderEntries, List<RenderEntry> staticCollisionEntries,
             LeadConnection connection, Vec3 cameraPos, Frustum frustum, float partialTick, long tick) {
         LeadEndpointLayout.Endpoints endpoints = endpointsByConnection.get(connection.id());
         if (endpoints == null) {
@@ -491,7 +564,7 @@ public final class SuperLeadClientEvents {
         if (startRefinement) {
             if (lookup.rebuilt() && refinementSnapshot != null) {
                 lookup.sim().restorePolylineForRefinement(
-                        refinementSnapshot.x, refinementSnapshot.y, refinementSnapshot.z, a, b);
+                    refinementSnapshot.sourceX, refinementSnapshot.sourceY, refinementSnapshot.sourceZ, a, b);
             } else {
                 lookup.sim().wakeForRefinement();
             }
@@ -505,6 +578,9 @@ public final class SuperLeadClientEvents {
             simEntries.add(entry);
         } else {
             staticSimIds.add(connection.id());
+            if (participatesInPhysics(entry)) {
+                staticCollisionEntries.add(entry);
+            }
         }
         if (lookup.rebuilt()) {
             lookup.sim().beginSegmentVisibility(0);
@@ -544,10 +620,11 @@ public final class SuperLeadClientEvents {
         RopeTuning tuning = dynamicTopologyTuning(RopeTuning.forConnection(connection), lodDistSqr);
         RopeSimulation sim = SIMS.get(connection.id());
         boolean rebuilt = false;
+        boolean tuningChanged = sim != null && tuningRequiresRebuild(sim.tuning(), tuning);
         boolean topologyProfileChanged = sim != null && !sim.matchesTopologyProfile(tuning);
         boolean topologyMismatch = sim != null
                 && (topologyProfileChanged || !sim.matchesLength(a, b, tuning));
-        if (sim == null || topologyMismatch) {
+        if (sim == null || topologyMismatch || tuningChanged) {
             RopeSimulation previous = sim;
             if (previous != null) {
                 cancelAsyncPhysics(connection.id());
@@ -564,6 +641,10 @@ public final class SuperLeadClientEvents {
         sim.setUseCollisionProxy(connectionUsesCollisionProxy(connection));
         sim.setWindPhysicsEnabled(windPhysicsEnabledFor(tuning, lodDistSqr));
         return new SimLookup(sim, rebuilt);
+    }
+
+    static boolean tuningRequiresRebuild(RopeTuning current, RopeTuning next) {
+        return current != next && (current == null || next == null || !current.equals(next));
     }
 
     private static RopeTuning dynamicTopologyTuning(RopeTuning tuning, double lodDistSqr) {
@@ -2034,21 +2115,28 @@ public final class SuperLeadClientEvents {
         return endpointBounds.minmax(sim.currentBounds());
     }
 
-    private static NeighborMapResult buildNeighborMap(List<RenderEntry> entries) {
+    private static NeighborMapResult buildNeighborMap(
+            List<RenderEntry> dynamicEntries, List<RenderEntry> staticEntries, long tick) {
+        List<RenderEntry> entries = new ArrayList<>(dynamicEntries.size() + staticEntries.size());
+        entries.addAll(dynamicEntries);
+        entries.addAll(staticEntries);
         RopeNeighborBuckets buckets = buildNeighborBuckets(entries);
         Map<RopeSimulation, List<RopeSimulation>> out = new HashMap<>();
+        Set<UUID> staticContacts = new HashSet<>();
         NeighborBuildBudget budget = new NeighborBuildBudget(
                 MAX_NEIGHBOR_CANDIDATES_PER_FRAME, MAX_NEIGHBOR_NARROW_PHASE_PER_FRAME);
-        for (int i = 0; i < entries.size(); i++) {
+        for (int i = 0; i < dynamicEntries.size(); i++) {
             if (budget.exhausted())
                 break;
             RenderEntry entry = entries.get(i);
             if (!participatesInPhysics(entry))
                 continue;
-            collectNeighborPairs(entries, buckets, i, entry, out, budget);
+                collectNeighborPairs(entries, dynamicEntries.size(), buckets, i, entry, out, staticContacts, budget,
+                    tick);
         }
         return new NeighborMapResult(
             out.isEmpty() ? Map.of() : out,
+            staticContacts.isEmpty() ? Set.of() : Set.copyOf(staticContacts),
             budget.exhausted(), budget.candidates(), budget.narrowPhase());
     }
 
@@ -2093,23 +2181,28 @@ public final class SuperLeadClientEvents {
     }
 
     private static void collectNeighborPairs(
-            List<RenderEntry> entries, RopeNeighborBuckets buckets, int index, RenderEntry entry,
-            Map<RopeSimulation, List<RopeSimulation>> neighborsBySim, NeighborBuildBudget budget) {
+            List<RenderEntry> entries, int dynamicCount, RopeNeighborBuckets buckets, int index, RenderEntry entry,
+            Map<RopeSimulation, List<RopeSimulation>> neighborsBySim, Set<UUID> staticContacts,
+            NeighborBuildBudget budget, long tick) {
         AABB query = entry.physicsBounds().inflate(NEIGHBOR_BOUNDS_MARGIN);
         HashSet<Integer> seen = new HashSet<>();
         buckets.forEachCandidateWhile(query, candidate -> collectNeighborPairCandidate(
-                entries, index, entry, query, seen, neighborsBySim, budget, candidate));
+            entries, dynamicCount, index, entry, query, seen, neighborsBySim, staticContacts, budget, candidate,
+            tick));
     }
 
     private static boolean collectNeighborPairCandidate(
             List<RenderEntry> entries,
+            int dynamicCount,
             int index,
             RenderEntry entry,
             AABB query,
             HashSet<Integer> seen,
             Map<RopeSimulation, List<RopeSimulation>> neighborsBySim,
+            Set<UUID> staticContacts,
             NeighborBuildBudget budget,
-            int candidate) {
+            int candidate,
+            long tick) {
         if (candidate <= index || !seen.add(candidate))
             return !budget.exhausted();
         if (!budget.tryCandidate())
@@ -2119,29 +2212,63 @@ public final class SuperLeadClientEvents {
             return true;
         }
         List<RopeSimulation> ownNeighbors = neighborsBySim.computeIfAbsent(entry.sim(), ignored -> new ArrayList<>());
-        List<RopeSimulation> otherNeighbors = neighborsBySim.computeIfAbsent(other.sim(), ignored -> new ArrayList<>());
+        boolean otherIsStatic = candidate >= dynamicCount;
+        List<RopeSimulation> otherNeighbors = otherIsStatic
+            ? null
+            : neighborsBySim.computeIfAbsent(other.sim(), ignored -> new ArrayList<>());
         if (ownNeighbors.size() >= MAX_NEIGHBORS_PER_ROPE
-                || otherNeighbors.size() >= MAX_NEIGHBORS_PER_ROPE) {
+            || (otherNeighbors != null && otherNeighbors.size() >= MAX_NEIGHBORS_PER_ROPE)) {
             return true;
         }
         if (!budget.tryNarrowPhase())
             return false;
         if (entry.sim().mightContact(other.sim(), NEIGHBOR_CONTACT_DISTANCE)) {
             ownNeighbors.add(other.sim());
-            otherNeighbors.add(entry.sim());
+            recordReverseNeighborOrStaticWake(
+                    otherIsStatic, shouldWakeStaticFromContact(entry.sim(), tick),
+                    other.connection().id(), staticContacts, otherNeighbors, entry.sim());
         } else {
             if (ownNeighbors.isEmpty()) {
                 neighborsBySim.remove(entry.sim());
             }
-            if (otherNeighbors.isEmpty()) {
+            if (otherNeighbors != null && otherNeighbors.isEmpty()) {
                 neighborsBySim.remove(other.sim());
             }
         }
         return true;
     }
 
-        private record NeighborMapResult(
+    static void recordReverseNeighborOrStaticWake(
+            boolean otherIsStatic,
+            boolean wakeStatic,
+            UUID staticConnectionId,
+            Set<UUID> staticContacts,
+            List<RopeSimulation> otherNeighbors,
+            RopeSimulation dynamicSim) {
+        if (otherIsStatic) {
+            if (wakeStatic) {
+                staticContacts.add(staticConnectionId);
+            }
+            return;
+        }
+        if (otherNeighbors == null) {
+            throw new IllegalArgumentException("dynamic neighbor list must not be null");
+        }
+        otherNeighbors.add(dynamicSim);
+    }
+
+    static boolean shouldWakeStaticFromContact(RopeSimulation dynamicSim, long tick) {
+        if (dynamicSim == null)
+            return false;
+        if (dynamicSim.maxNodeMotionSqr() >= 4.0e-5D || dynamicSim.hasExternalContact(tick))
+            return true;
+        long lastWind = dynamicSim.lastWindActiveTick();
+        return lastWind != Long.MIN_VALUE && tick - lastWind <= 1L;
+    }
+
+    private record NeighborMapResult(
             Map<RopeSimulation, List<RopeSimulation>> neighbors,
+            Set<UUID> staticContacts,
             boolean truncated,
             int candidates,
             int narrowPhase) {

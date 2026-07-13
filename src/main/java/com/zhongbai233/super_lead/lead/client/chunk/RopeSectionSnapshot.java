@@ -6,9 +6,14 @@ import java.util.UUID;
 public final class RopeSectionSnapshot {
     public final UUID connectionId;
     public final int nodeCount;
-    public final float[] x;
-    public final float[] y;
-    public final float[] z;
+        /** World-space positions stay double until the chunk origin is subtracted. */
+        public final double[] x;
+        public final double[] y;
+        public final double[] z;
+    /** Unsmooth source polyline used only when rebuilding a finer physics topology. */
+    public final double[] sourceX;
+    public final double[] sourceY;
+    public final double[] sourceZ;
     public final float[] sx;
     public final float[] sy;
     public final float[] sz;
@@ -24,17 +29,17 @@ public final class RopeSectionSnapshot {
     public final int segmentEndExclusive;
 
     public RopeSectionSnapshot(UUID connectionId,
-            float[] x, float[] y, float[] z,
+            double[] x, double[] y, double[] z,
             float[] sx, float[] sy, float[] sz,
             float[] ux, float[] uy, float[] uz,
             int[] nodeLight,
             int[] segmentColorARGB) {
         this(connectionId, x, y, z, sx, sy, sz, ux, uy, uz,
-                nodeLight, segmentColorARGB, null, 0, List.of(), 0, Math.max(0, x.length - 1));
+            nodeLight, segmentColorARGB, null, 0, List.of(), 0, Math.max(0, x.length - 1), x, y, z);
     }
 
     public RopeSectionSnapshot(UUID connectionId,
-            float[] x, float[] y, float[] z,
+            double[] x, double[] y, double[] z,
             float[] sx, float[] sy, float[] sz,
             float[] ux, float[] uy, float[] uz,
             int[] nodeLight,
@@ -42,11 +47,11 @@ public final class RopeSectionSnapshot {
             int segmentStart,
             int segmentEndExclusive) {
         this(connectionId, x, y, z, sx, sy, sz, ux, uy, uz,
-                nodeLight, segmentColorARGB, null, 0, List.of(), segmentStart, segmentEndExclusive);
+            nodeLight, segmentColorARGB, null, 0, List.of(), segmentStart, segmentEndExclusive, x, y, z);
     }
 
     public RopeSectionSnapshot(UUID connectionId,
-            float[] x, float[] y, float[] z,
+            double[] x, double[] y, double[] z,
             float[] sx, float[] sy, float[] sz,
             float[] ux, float[] uy, float[] uz,
             int[] nodeLight,
@@ -56,11 +61,30 @@ public final class RopeSectionSnapshot {
             List<RopeSectionLine> attachmentLines,
             int segmentStart,
             int segmentEndExclusive) {
+            this(connectionId, x, y, z, sx, sy, sz, ux, uy, uz, nodeLight, segmentColorARGB,
+                nodeThicknessScale, extractEnd, attachmentLines, segmentStart, segmentEndExclusive, x, y, z);
+            }
+
+            public RopeSectionSnapshot(UUID connectionId,
+                double[] x, double[] y, double[] z,
+                float[] sx, float[] sy, float[] sz,
+                float[] ux, float[] uy, float[] uz,
+                int[] nodeLight,
+                int[] segmentColorARGB,
+                float[] nodeThicknessScale,
+                int extractEnd,
+                List<RopeSectionLine> attachmentLines,
+                int segmentStart,
+                int segmentEndExclusive,
+                double[] sourceX, double[] sourceY, double[] sourceZ) {
         this.connectionId = connectionId;
         this.nodeCount = x.length;
         this.x = x;
         this.y = y;
         this.z = z;
+        this.sourceX = sourceX;
+        this.sourceY = sourceY;
+        this.sourceZ = sourceZ;
         this.sx = sx;
         this.sy = sy;
         this.sz = sz;

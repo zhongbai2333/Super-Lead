@@ -83,4 +83,32 @@ class RopeSimulationTopologyTest {
         assertFalse(fine.terrainNearbyLast);
         assertFalse(fine.isSettled());
     }
+
+    @Test
+    void terrainChangeWakeInvalidatesSettledCollisionHistoryImmediately() {
+        RopeSimulation sim = new RopeSimulation(A, B, 4L, RopeTuning.localDefaults());
+        int middle = sim.nodeCount() / 2;
+        sim.settledTicks = sim.settleThresholdTicks;
+        sim.quietTicks = 99;
+        sim.ropeStackQuietTicks = 99;
+        sim.blockHashInit = true;
+        sim.lastBlockHashCheckTick = 100L;
+        sim.terrainNearbyLast = true;
+        sim.supportNode[middle] = true;
+        sim.contactNode[middle] = true;
+        sim.vx[middle] = 1.0D;
+
+        sim.wakeForTerrainChange();
+
+        assertEquals(0, sim.settledTicks);
+        assertEquals(0, sim.quietTicks);
+        assertEquals(0, sim.ropeStackQuietTicks);
+        assertFalse(sim.blockHashInit);
+        assertEquals(Long.MIN_VALUE, sim.lastBlockHashCheckTick);
+        assertFalse(sim.terrainNearbyLast);
+        assertFalse(sim.supportNode[middle]);
+        assertFalse(sim.contactNode[middle]);
+        assertEquals(0.0D, sim.vx[middle], 1.0e-9D);
+        assertFalse(sim.isSettled());
+    }
 }

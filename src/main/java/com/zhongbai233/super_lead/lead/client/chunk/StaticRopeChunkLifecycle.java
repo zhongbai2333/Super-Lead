@@ -3,6 +3,7 @@ package com.zhongbai233.super_lead.lead.client.chunk;
 import com.zhongbai233.super_lead.Super_lead;
 import com.zhongbai233.super_lead.lead.LeadConnection;
 import com.zhongbai233.super_lead.lead.SuperLeadNetwork;
+import com.zhongbai233.super_lead.lead.client.SuperLeadClientEvents;
 import com.zhongbai233.super_lead.tuning.ClientTuning;
 import java.util.List;
 import net.minecraft.client.Minecraft;
@@ -41,7 +42,10 @@ public final class StaticRopeChunkLifecycle {
                     return;
                 }
                 List<LeadConnection> conns = SuperLeadNetwork.connections(level);
-                StaticRopeChunkRegistry.get().invalidateAll(level, conns);
+                SuperLeadClientEvents.disturbConnections(
+                        level,
+                    conns.stream().map(connection -> connection.id()).toList(),
+                        level.getGameTime() + 8L);
             }
         });
     }
@@ -77,12 +81,21 @@ public final class StaticRopeChunkLifecycle {
         Minecraft mc = Minecraft.getInstance();
         ClientLevel level = mc.level;
         if (level != null) {
-            StaticRopeChunkRegistry registry = StaticRopeChunkRegistry.get();
-            // Nearby geometry may need to return to dynamic simulation, while light
-            // propagation can affect a static rope up to fifteen blocks away without
-            // invalidating its physical shape.
-            registry.invalidateNearBlock(level, pos);
-            registry.requestLightRebuildNear(level, List.of(pos), BLOCK_LIGHT_UPDATE_RADIUS);
+            onClientBlockChanged(level, pos);
         }
+    }
+
+    /** Called after a block state has actually changed in the client world. */
+    public static void onClientBlockChanged(ClientLevel level, BlockPos pos) {
+        if (level == null || pos == null)
+            return;
+        StaticRopeChunkRegistry registry = StaticRopeChunkRegistry.get();
+        // Nearby geometry must return to dynamic simulation. Explicitly wake the
+        // matching sims as well: the mesh hold is shorter than the settled block-hash
+        // polling interval, so relying on polling could re-bake the stale shape.
+        var affected = registry.invalidateNearBlock(level, pos);
+        SuperLeadClientEvents.wakeForTerrainChange(affected);
+        // Light propagation has a wider influence than physical collision changes.
+        registry.requestLightRebuildNear(level, List.of(pos), BLOCK_LIGHT_UPDATE_RADIUS);
     }
 }

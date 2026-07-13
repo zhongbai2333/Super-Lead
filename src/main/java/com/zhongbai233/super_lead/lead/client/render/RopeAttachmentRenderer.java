@@ -157,8 +157,8 @@ public final class RopeAttachmentRenderer {
         }
     }
 
-    public static List<BakedAttachment> bakeStatic(BlockGetter level, LeadConnection connection, float[] x, float[] y,
-            float[] z) {
+        public static List<BakedAttachment> bakeStatic(BlockGetter level, LeadConnection connection, double[] x, double[] y,
+            double[] z) {
         if (connection.attachments().isEmpty() || x.length < 2 || x.length != y.length || x.length != z.length) {
             return List.of();
         }
@@ -207,7 +207,7 @@ public final class RopeAttachmentRenderer {
     }
 
     public static Map<Long, List<RopeSectionLine>> bakeStaticHangerLines(BlockGetter level, LeadConnection connection,
-            float[] x, float[] y, float[] z) {
+            double[] x, double[] y, double[] z) {
         if (connection.attachments().isEmpty() || x.length < 2 || x.length != y.length || x.length != z.length) {
             return Map.of();
         }
@@ -273,8 +273,8 @@ public final class RopeAttachmentRenderer {
                 SectionPos.blockToSectionCoord((int) Math.floor((az + bz) * 0.5D)));
         int light = LightCoordsUtil.pack(0, 15);
         out.computeIfAbsent(section, ignored -> new ArrayList<>(2)).add(new RopeSectionLine(
-                (float) ax, (float) ay, (float) az,
-                (float) bx, (float) by, (float) bz,
+            ax, ay, az,
+            bx, by, bz,
                 HANGER_COLOR, light));
     }
 

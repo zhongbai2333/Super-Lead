@@ -77,16 +77,28 @@ public final class SuperLeadClientPayloads {
 
     private static void handleSyncRopeChunk(SyncRopeChunk payload, IPayloadContext context) {
         var level = context.player().level();
+        var previous = SuperLeadNetwork.connections(level);
         SuperLeadNetwork.replaceChunkConnections(level, payload.chunk(), payload.connections());
+        var current = SuperLeadNetwork.connections(level);
         StaticRopeChunkRegistry.get()
-                .onConnectionsReplaced(level, SuperLeadNetwork.connections(level));
+                .onConnectionsReplaced(level, current);
+        if (!previous.equals(current)) {
+            SuperLeadClientEvents.disturbConnections(
+                    level, current.stream().map(connection -> connection.id()).toList(), level.getGameTime() + 8L);
+        }
     }
 
     private static void handleUnloadRopeChunk(UnloadRopeChunk payload, IPayloadContext context) {
         var level = context.player().level();
+        var previous = SuperLeadNetwork.connections(level);
         SuperLeadNetwork.unloadChunkConnections(level, payload.chunk());
+        var current = SuperLeadNetwork.connections(level);
         StaticRopeChunkRegistry.get()
-                .onConnectionsReplaced(level, SuperLeadNetwork.connections(level));
+                .onConnectionsReplaced(level, current);
+        if (!previous.equals(current)) {
+            SuperLeadClientEvents.disturbConnections(
+                    level, current.stream().map(connection -> connection.id()).toList(), level.getGameTime() + 8L);
+        }
     }
 
     private static void handleClearRopeCache(ClearRopeCache payload, IPayloadContext context) {
@@ -111,12 +123,11 @@ public final class SuperLeadClientPayloads {
         var level = minecraft.level;
         if (level == null)
             return;
-        var staticRopes = StaticRopeChunkRegistry.get();
-                java.util.HashSet<java.util.UUID> affected = new java.util.HashSet<>();
+        java.util.HashSet<java.util.UUID> affected = new java.util.HashSet<>();
         for (RopeContactPulse.Entry entry : payload.contacts()) {
-                        affected.add(entry.ropeId());
+            affected.add(entry.ropeId());
         }
-                staticRopes.invalidateConnections(level, affected);
+        SuperLeadClientEvents.disturbConnections(level, affected, level.getGameTime() + 8L);
     }
 
     private static void handleSyncRopeTripState(SyncRopeTripState payload, IPayloadContext context) {
@@ -144,10 +155,12 @@ public final class SuperLeadClientPayloads {
     }
 
     private static void handleSyncDimensionPresets(SyncDimensionPresets payload, IPayloadContext context) {
-        PhysicsZonesClient.apply(payload);
         var level = context.player().level();
-        StaticRopeChunkRegistry.get()
-                .invalidateAll(level, SuperLeadNetwork.connections(level));
+                var connections = SuperLeadNetwork.connections(level);
+                var previousTunings = SuperLeadClientEvents.captureTunings(connections);
+                if (PhysicsZonesClient.apply(payload)) {
+                        SuperLeadClientEvents.disturbChangedTunings(level, connections, previousTunings);
+                }
     }
 
     private static void handleSyncPhysicsZones(SyncPhysicsZones payload, IPayloadContext context) {

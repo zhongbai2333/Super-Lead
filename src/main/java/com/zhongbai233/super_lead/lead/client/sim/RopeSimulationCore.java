@@ -433,6 +433,8 @@ abstract class RopeSimulationCore {
 
     public boolean setTuning(RopeTuning tuning) {
         RopeTuning next = tuning != null ? tuning : RopeTuning.localDefaults();
+        if (this.tuning == next)
+            return false;
         if (Objects.equals(this.tuning, next))
             return false;
         this.tuning = next;
@@ -703,6 +705,28 @@ abstract class RopeSimulationCore {
         contactDx = contactDy = contactDz = 0.0D;
         contactRefreshTick = UNINIT;
         useCollisionProxy = other.useCollisionProxy;
+        invalidatePhysicsHistoryForRefinement();
+    }
+
+    public void restoreShapeForRefinement(double[] sourceX, double[] sourceY, double[] sourceZ, Vec3 a, Vec3 b) {
+        if (sourceX == null || sourceY == null || sourceZ == null
+                || sourceX.length < 2 || sourceY.length != sourceX.length || sourceZ.length != sourceX.length) {
+            invalidatePhysicsHistoryForRefinement();
+            return;
+        }
+        double[] lengths = cumulativeLengths(sourceX, sourceY, sourceZ, sourceX.length);
+        double total = lengths[lengths.length - 1];
+        for (int i = 0; i < nodes; i++) {
+            double t = i / (double) (nodes - 1);
+            samplePolyline(sourceX, sourceY, sourceZ, lengths, total, t, x, y, z, i);
+            xPrev[i] = xLastTick[i] = x[i];
+            yPrev[i] = yLastTick[i] = y[i];
+            zPrev[i] = zLastTick[i] = z[i];
+        }
+        pinRestoredEndpoints(a, b);
+        contactT = -1.0F;
+        contactDx = contactDy = contactDz = 0.0D;
+        contactRefreshTick = UNINIT;
         invalidatePhysicsHistoryForRefinement();
     }
 
