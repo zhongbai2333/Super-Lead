@@ -53,12 +53,16 @@ final class LeadClientConnectionCache {
     }
 
     static void replaceAll(NetworkKey key, List<LeadConnection> connections) {
-        CONNECTIONS.put(key, new ArrayList<>(connections));
         Map<UUID, LeadConnection> byId = new LinkedHashMap<>();
         for (LeadConnection connection : connections) {
             byId.put(connection.id(), connection);
         }
         CONNECTIONS_BY_ID.put(key, byId);
+        // Full snapshots can contain the same long rope once for every watched
+        // chunk it intersects. Keep the public list canonical just like the
+        // chunk-delta path; otherwise static rope geometry overwrites by connection
+        // UUID while baked attachments are appended once per duplicate source.
+        rebuildConnectionList(key);
         CHUNK_CONNECTIONS.remove(key);
         CONNECTION_REFCOUNTS.remove(key);
     }

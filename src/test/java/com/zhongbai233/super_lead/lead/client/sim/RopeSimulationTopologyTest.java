@@ -111,4 +111,24 @@ class RopeSimulationTopologyTest {
         assertEquals(0.0D, sim.vx[middle], 1.0e-9D);
         assertFalse(sim.isSettled());
     }
+
+    @Test
+    void verticalWindProfileHasNoNetLiftAcrossRope() {
+        for (int segments : new int[] { 4, 5, 16, 31 }) {
+            double weightedSum = 0.0D;
+            for (int node = 1; node < segments; node++) {
+                double t = node / (double) segments;
+                weightedSum += Math.sin(Math.PI * t)
+                        * RopeSimulationStepper.verticalWindProfile(node, segments);
+            }
+            assertEquals(0.0D, weightedSum, 1.0e-12D,
+                    "vertical wind must bend locally without lifting the whole rope");
+        }
+    }
+
+    @Test
+    void verticalWindDoesNotPushPinnedEndpoints() {
+        assertEquals(0.0D, RopeSimulationStepper.verticalWindProfile(0, 16), 0.0D);
+        assertEquals(0.0D, RopeSimulationStepper.verticalWindProfile(16, 16), 0.0D);
+    }
 }

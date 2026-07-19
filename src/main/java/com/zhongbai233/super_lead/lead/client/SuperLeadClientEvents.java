@@ -1222,10 +1222,21 @@ public final class SuperLeadClientEvents {
                 sx /= sLen;
                 sz /= sLen;
             }
-            AttachmentSwingClient.tickDynamic(level, attachment.attachmentId(), attachment.lightX(), attachment.lightY(),
-                    attachment.lightZ(), tx, ty, tz, sx, sy, sz, lodDistSqr, tick);
+                // Collision is tested around the attachment body, but support inertia must
+                // continue tracking the point on the rope. Using the body center for both
+                // changes the tracked support position during dynamic -> mesh handoff and
+                // injects a small fake impulse into large hanging attachments.
+                Vec3 support = staticAttachmentSupportPoint(attachment);
+                AttachmentSwingClient.tickDynamicWithSupport(level, attachment.attachmentId(),
+                    attachment.lightX(), attachment.lightY(), attachment.lightZ(),
+                        support.x, support.y, support.z,
+                    tx, ty, tz, sx, sy, sz, lodDistSqr, tick);
         }
     }
+
+        static Vec3 staticAttachmentSupportPoint(RopeAttachmentRenderer.BakedAttachment attachment) {
+            return new Vec3(attachment.px(), attachment.py(), attachment.pz());
+        }
 
     private static int extractEnd(LeadConnection connection) {
         return connection.kind() == LeadKind.ITEM

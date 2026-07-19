@@ -4,11 +4,15 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.zhongbai233.super_lead.lead.RopeAttachment;
+import com.zhongbai233.super_lead.lead.client.render.RopeAttachmentRenderer;
 import com.zhongbai233.super_lead.lead.client.sim.RopeSimulation;
 import com.zhongbai233.super_lead.lead.client.sim.RopeTuning;
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.Map;
 import java.util.UUID;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.phys.Vec3;
 import org.junit.jupiter.api.Test;
 
@@ -134,5 +138,23 @@ class SuperLeadClientEventsTest {
 
         assertEquals(1, reverseNeighbors.size());
         assertTrue(reverseNeighbors.contains(sim));
+    }
+
+    @Test
+    void staticAttachmentKeepsRopePointAsSwingSupport() {
+        RopeAttachmentRenderer.BakedAttachment attachment = new RopeAttachmentRenderer.BakedAttachment(
+                UUID.randomUUID(), UUID.randomUUID(), ItemStack.EMPTY, true, false, 1,
+                3.0D, 7.0D, 11.0D,
+                2.0D, 7.0D, 11.0D,
+                4.0D, 7.0D, 11.0D,
+                3.0D, 5.5D, 11.0D,
+                RopeAttachment.OVERRIDE_DEFAULT, RopeAttachment.DISPLAY_DEFAULT,
+                RopeAttachment.OVERRIDE_DEFAULT, RopeAttachment.OVERRIDE_DEFAULT,
+                RopeAttachment.DOUBLE_DEFAULT, RopeAttachment.DOUBLE_DEFAULT,
+                RopeAttachment.DOUBLE_DEFAULT, RopeAttachment.DOUBLE_DEFAULT,
+                RopeAttachment.DOUBLE_DEFAULT, Map.of());
+
+        assertEquals(new Vec3(3.0D, 7.0D, 11.0D),
+                SuperLeadClientEvents.staticAttachmentSupportPoint(attachment));
     }
 }

@@ -174,21 +174,32 @@ public final class StaticRopeChunkRegistry {
         if (bakedAttachments.isEmpty()) {
             return List.of();
         }
-        ArrayList<RopeAttachmentRenderer.BakedAttachment> filtered = null;
-        for (int i = 0; i < bakedAttachments.size(); i++) {
-            RopeAttachmentRenderer.BakedAttachment attachment = bakedAttachments.get(i);
-            if (shouldDynamicLinger(attachment.connectionId(), currentTick)) {
-                if (filtered == null) {
-                    filtered = new ArrayList<>(bakedAttachments.size());
-                    for (int j = 0; j < i; j++) {
-                        filtered.add(bakedAttachments.get(j));
-                    }
-                }
-            } else if (filtered != null) {
-                filtered.add(attachment);
-            }
+        return selectBakedAttachmentsForRender(bakedAttachments,
+                attachment -> shouldDynamicLinger(attachment.connectionId(), currentTick));
+    }
+
+    static List<RopeAttachmentRenderer.BakedAttachment> selectBakedAttachmentsForRender(
+            List<RopeAttachmentRenderer.BakedAttachment> attachments,
+            java.util.function.Predicate<RopeAttachmentRenderer.BakedAttachment> excluded) {
+        if (attachments == null || attachments.isEmpty()) {
+            return List.of();
         }
-        return filtered == null ? bakedAttachments : filtered.isEmpty() ? List.of() : List.copyOf(filtered);
+        ArrayList<RopeAttachmentRenderer.BakedAttachment> selected = new ArrayList<>(attachments.size());
+        HashSet<UUID> seenAttachmentIds = new HashSet<>(attachments.size());
+        for (RopeAttachmentRenderer.BakedAttachment attachment : attachments) {
+            if (attachment == null || excluded.test(attachment)
+                    || !seenAttachmentIds.add(attachment.attachmentId())) {
+                continue;
+            }
+            selected.add(attachment);
+        }
+        if (selected.isEmpty()) {
+            return List.of();
+        }
+        if (selected.size() == attachments.size()) {
+            return attachments;
+        }
+        return List.copyOf(selected);
     }
 
     public RopeSectionSnapshot snapshotForRender(UUID connectionId, long currentTick) {

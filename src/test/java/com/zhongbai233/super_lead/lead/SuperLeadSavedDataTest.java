@@ -90,6 +90,17 @@ class SuperLeadSavedDataTest {
         assertEquals(1, LeadClientConnectionCache.connections(key).size());
     }
 
+        @Test
+        void clientFullSnapshotDeduplicatesMultiChunkRope() {
+                NetworkKey key = new NetworkKey(null, true);
+                LeadConnection connection = connection("00000000-0000-0000-0000-000000000006",
+                                new BlockPos(0, 64, 0), new BlockPos(32, 64, 0), LeadKind.NORMAL);
+
+                LeadClientConnectionCache.replaceAll(key, List.of(connection, connection));
+
+                assertEquals(List.of(connection), LeadClientConnectionCache.connections(key));
+        }
+
     private static LeadConnection connection(String id, BlockPos from, BlockPos to, LeadKind kind) {
         return new LeadConnection(UUID.fromString(id), new LeadAnchor(from, Direction.UP),
                 new LeadAnchor(to, Direction.UP), kind, 0, 0, 0, LeadConnection.MIN_LENGTH_UNITS, List.of(),

@@ -360,7 +360,21 @@ abstract class RopeSimulationStepper extends RopeSimulationContactConstraints {
         double force = tuning.windStrength() * wind.strengthScale() * wind.envelope() * nodeWeight * gravityScale;
         vx[nodeIndex] += wind.dirX() * force * h;
         vz[nodeIndex] += wind.dirZ() * force * h;
-        vy[nodeIndex] += force * tuning.windVerticalLift() * h;
+        // A constant positive lift on every interior node gives the rope a net
+        // vertical force, so long spans rise and fall as one object when a gust
+        // starts or ends. Keep vertical wind as a local shape disturbance instead:
+        // this profile has zero weighted sum across the span and therefore cannot
+        // levitate the rope's center of mass.
+        vy[nodeIndex] += force * tuning.windVerticalLift()
+                * verticalWindProfile(nodeIndex, segments) * h;
+    }
+
+    static double verticalWindProfile(int nodeIndex, int segmentCount) {
+        if (segmentCount <= 1 || nodeIndex <= 0 || nodeIndex >= segmentCount) {
+            return 0.0D;
+        }
+        double t = nodeIndex / (double) segmentCount;
+        return Math.cos(Math.PI * t);
     }
 
     private boolean windActive(Vec3 a, Vec3 b, long tick) {

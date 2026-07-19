@@ -6,7 +6,12 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.zhongbai233.super_lead.lead.RopeAttachment;
+import com.zhongbai233.super_lead.lead.client.render.RopeAttachmentRenderer;
+import java.util.List;
 import java.util.Map;
+import java.util.UUID;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.phys.AABB;
 import org.junit.jupiter.api.Test;
 
@@ -116,5 +121,34 @@ class StaticRopeChunkRegistryTest {
     void staleSectionBuildCannotCompleteRetirement() {
         assertFalse(StaticRopeChunkRegistry.generationsReached(Map.of(11L, 4L), Map.of(11L, 3L)));
         assertTrue(StaticRopeChunkRegistry.generationsReached(Map.of(11L, 4L), Map.of(11L, 5L)));
+    }
+
+    @Test
+    void bakedAttachmentSelectionKeepsOnlyFirstCopyOfAttachmentId() {
+        UUID connectionId = UUID.fromString("00000000-0000-0000-0000-000000000010");
+        UUID attachmentId = UUID.fromString("00000000-0000-0000-0000-000000000011");
+        RopeAttachmentRenderer.BakedAttachment first = bakedAttachment(connectionId, attachmentId, 1.0D);
+        RopeAttachmentRenderer.BakedAttachment duplicate = bakedAttachment(connectionId, attachmentId, 2.0D);
+
+        List<RopeAttachmentRenderer.BakedAttachment> selected =
+                StaticRopeChunkRegistry.selectBakedAttachmentsForRender(
+                        List.of(first, duplicate), ignored -> false);
+
+        assertEquals(List.of(first), selected);
+    }
+
+    private static RopeAttachmentRenderer.BakedAttachment bakedAttachment(
+            UUID connectionId, UUID attachmentId, double x) {
+        return new RopeAttachmentRenderer.BakedAttachment(
+            connectionId, attachmentId, ItemStack.EMPTY, true, false, 1,
+                x, 2.0D, 3.0D,
+                0.0D, 2.0D, 3.0D,
+                4.0D, 2.0D, 3.0D,
+                x, 1.5D, 3.0D,
+                RopeAttachment.OVERRIDE_DEFAULT, RopeAttachment.DISPLAY_DEFAULT,
+                RopeAttachment.OVERRIDE_DEFAULT, RopeAttachment.OVERRIDE_DEFAULT,
+                RopeAttachment.DOUBLE_DEFAULT, RopeAttachment.DOUBLE_DEFAULT,
+                RopeAttachment.DOUBLE_DEFAULT, RopeAttachment.DOUBLE_DEFAULT,
+                RopeAttachment.DOUBLE_DEFAULT, Map.of());
     }
 }
