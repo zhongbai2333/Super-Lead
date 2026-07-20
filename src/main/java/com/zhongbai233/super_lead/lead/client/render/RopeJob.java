@@ -17,6 +17,8 @@ public final class RopeJob {
     public final int extractEnd;
     /** True when the opaque base rope is already provided by the static chunk mesh. */
     public final boolean chunkMeshActive;
+    /** Per-rope interpolation phase; NaN means use the frame-wide partial tick. */
+    public final float renderPartialTick;
 
     public RopeJob(
             RopeSimulation sim,
@@ -31,7 +33,7 @@ public final class RopeJob {
             float[] pulsePositions,
             int extractEnd) {
         this(sim, blockA, blockB, skyA, skyB, highlightColor, kind, powered, tier,
-                pulsePositions, extractEnd, false);
+            pulsePositions, extractEnd, false, Float.NaN);
     }
 
     public RopeJob(
@@ -47,6 +49,22 @@ public final class RopeJob {
             float[] pulsePositions,
             int extractEnd,
             boolean chunkMeshActive) {
+            this(sim, blockA, blockB, skyA, skyB, highlightColor, kind, powered, tier,
+                pulsePositions, extractEnd, chunkMeshActive, Float.NaN);
+            }
+
+            public RopeJob(
+                RopeSimulation sim,
+                int blockA, int blockB,
+                int skyA, int skyB,
+                int highlightColor,
+                LeadKind kind,
+                boolean powered,
+                int tier,
+                float[] pulsePositions,
+                int extractEnd,
+                boolean chunkMeshActive,
+                float renderPartialTick) {
         this.sim = sim;
         this.blockA = blockA;
         this.blockB = blockB;
@@ -59,5 +77,6 @@ public final class RopeJob {
         this.pulsePositions = pulsePositions;
         this.extractEnd = extractEnd;
         this.chunkMeshActive = chunkMeshActive;
+        this.renderPartialTick = renderPartialTick;
     }
 }

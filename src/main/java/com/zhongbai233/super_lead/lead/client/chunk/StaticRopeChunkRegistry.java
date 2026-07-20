@@ -42,7 +42,10 @@ public final class StaticRopeChunkRegistry {
     private static final int CHUNK_MESH_FALLBACK_QUIET_TICKS = 3;
     private static final int CHUNK_MESH_STACK_QUIET_TICKS = 40;
     private static final int CHUNK_MESH_CLAIM_LINGER_TICKS = 3;
-    private static final int CHUNK_MESH_ACCEPTED_OVERLAP_TICKS = 2;
+    // One accepted tick is enough to bridge section-build publication to the custom
+    // geometry frame. Keeping two opaque copies longer makes tiny shape/light
+    // differences look like a hitch (or depth shimmer) when entering chunk mesh.
+    private static final int CHUNK_MESH_ACCEPTED_OVERLAP_TICKS = 1;
     private static final int CHUNK_MESH_DYNAMIC_HOLD_MIN_TICKS = 3;
     private static final int CHUNK_MESH_WIND_COOLDOWN_TICKS = 40;
     private static final int CHUNK_MESH_RETIRE_GRACE_TICKS = 2;

@@ -127,7 +127,7 @@ public final class SuperLeadClientPayloads {
         for (RopeContactPulse.Entry entry : payload.contacts()) {
             affected.add(entry.ropeId());
         }
-        SuperLeadClientEvents.disturbConnections(level, affected, level.getGameTime() + 8L);
+        SuperLeadClientEvents.disturbCollisionConnections(level, affected, level.getGameTime() + 8L);
     }
 
     private static void handleSyncRopeTripState(SyncRopeTripState payload, IPayloadContext context) {

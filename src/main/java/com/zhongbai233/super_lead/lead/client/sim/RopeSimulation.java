@@ -80,6 +80,34 @@ public final class RopeSimulation extends RopeSimulationStepper {
         return accumulator.result();
     }
 
+    /**
+     * Returns a cheap near-future collision risk against the actual rope segments.
+     * Unlike a whole-rope bounds test, empty space inside a long diagonal rope's
+     * bounding box does not count as proximity.
+     */
+    public double predictedBoxCollisionRisk(AABB box, double radius, double warningDistance) {
+        if (box == null) {
+            return 0.0D;
+        }
+        double minDistanceSqr = Double.POSITIVE_INFINITY;
+        for (int segment = 0; segment < segments; segment++) {
+            SegmentBoxContact contact = playerContactScratch.compute(
+                    x[segment], y[segment], z[segment],
+                    x[segment + 1], y[segment + 1], z[segment + 1], box);
+            minDistanceSqr = Math.min(minDistanceSqr, contact.distSqr);
+        }
+        double surfaceDistance = Math.max(0.0D, Math.sqrt(minDistanceSqr) - Math.max(0.0D, radius));
+        return collisionRiskForDistance(surfaceDistance, warningDistance);
+    }
+
+    static double collisionRiskForDistance(double distance, double warningDistance) {
+        if (distance <= 1.0e-6D) {
+            return 1.0D;
+        }
+        double warning = Math.max(1.0e-6D, warningDistance);
+        return Math.max(0.0D, Math.min(1.0D, 1.0D - distance / warning));
+    }
+
     private PlayerContactCurve preparePlayerContactCurve(PlayerContactCurve out) {
         double[] sampleX = x;
         double[] sampleY = y;

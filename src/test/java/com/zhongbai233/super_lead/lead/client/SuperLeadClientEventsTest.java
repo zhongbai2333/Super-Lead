@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.zhongbai233.super_lead.lead.RopeAttachment;
 import com.zhongbai233.super_lead.lead.client.render.RopeAttachmentRenderer;
+import com.zhongbai233.super_lead.lead.client.sim.RopeActivityScheduler;
 import com.zhongbai233.super_lead.lead.client.sim.RopeSimulation;
 import com.zhongbai233.super_lead.lead.client.sim.RopeTuning;
 import java.util.ArrayList;
@@ -156,5 +157,61 @@ class SuperLeadClientEventsTest {
 
         assertEquals(new Vec3(3.0D, 7.0D, 11.0D),
                 SuperLeadClientEvents.staticAttachmentSupportPoint(attachment));
+    }
+
+    @Test
+    void attachmentSwingUsesTickAlignedRopeShape() {
+        assertEquals(1.0F, SuperLeadClientEvents.attachmentSwingSamplePartialTick());
+    }
+
+    @Test
+    void collisionObservedMidTickRestartsOnlyThatTicksRenderInterpolation() {
+        var phase = new SuperLeadClientEvents.CollisionRenderPhase(100L, 0.60F);
+
+        assertEquals(0.0F, SuperLeadClientEvents.collisionRenderPartialTick(phase, 100L, 0.60F), 1.0e-6F);
+        assertEquals(0.5F, SuperLeadClientEvents.collisionRenderPartialTick(phase, 100L, 0.80F), 1.0e-6F);
+        assertEquals(1.0F, SuperLeadClientEvents.collisionRenderPartialTick(phase, 100L, 1.00F), 1.0e-6F);
+        assertEquals(0.20F, SuperLeadClientEvents.collisionRenderPartialTick(phase, 101L, 0.20F), 1.0e-6F);
+    }
+
+    @Test
+    void collisionRenderInterpolationDoesNotRunBeforeContactPhase() {
+        var phase = new SuperLeadClientEvents.CollisionRenderPhase(100L, 0.60F);
+
+        assertEquals(0.0F, SuperLeadClientEvents.collisionRenderPartialTick(phase, 100L, 0.40F), 1.0e-6F);
+        assertEquals(0.40F, SuperLeadClientEvents.collisionRenderPartialTick(null, 100L, 0.40F), 1.0e-6F);
+    }
+
+    @Test
+    void meshCollisionWakesImmediatelyBeforeCurrentTicksPhysicsPass() {
+        assertFalse(SuperLeadClientEvents.shouldQueueMeshCollisionWake(99L, 100L, false));
+    }
+
+    @Test
+    void meshCollisionQueuesAfterCurrentTicksPhysicsPass() {
+        assertTrue(SuperLeadClientEvents.shouldQueueMeshCollisionWake(100L, 100L, false));
+    }
+
+    @Test
+    void queuedMeshCollisionIsConsumedOnNextTick() {
+        assertFalse(SuperLeadClientEvents.shouldQueueMeshCollisionWake(100L, 101L, true));
+    }
+
+    @Test
+    void repeatedCollisionKeepsEarliestRenderPhaseWithinTick() {
+        var first = new SuperLeadClientEvents.CollisionRenderPhase(100L, 0.25F);
+
+        assertEquals(first, SuperLeadClientEvents.updatedCollisionRenderPhase(first, 100L, 0.70F));
+        assertEquals(0.10F,
+                SuperLeadClientEvents.updatedCollisionRenderPhase(first, 101L, 0.10F).partialTick(),
+                1.0e-6F);
+    }
+
+    @Test
+    void activeTrendOverridesSettledLongInterval() {
+        var active = new RopeActivityScheduler.State(
+                RopeActivityScheduler.Tier.ACTIVE, 0.5D, 0, 100L);
+
+        assertEquals(2, SuperLeadClientEvents.activityInterval(active, 0.0D, true));
     }
 }

@@ -155,9 +155,23 @@ public final class LeashBuilder {
                 kind, powered, tier, pulsePositions, extractEnd, chunkMeshActive);
     }
 
+            public static RopeJob collect(
+                RopeSimulation sim,
+                int blockA, int blockB,
+                int skyA, int skyB,
+                int highlightColor,
+                LeadKind kind,
+                boolean powered,
+                int tier,
+                float[] pulsePositions,
+                int extractEnd,
+                boolean chunkMeshActive,
+                float renderPartialTick) {
+            return new RopeJob(sim, blockA, blockB, skyA, skyB, highlightColor,
+                kind, powered, tier, pulsePositions, extractEnd, chunkMeshActive, renderPartialTick);
+            }
+
     private static final PoseStack BATCH_POSE = new PoseStack();
-    private static double[] batchTotalLengths = new double[0];
-    private static double[] batchVisualTotalLengths = new double[0];
     /**
      * Render-thread-only. When non-null, all subsequent vertex() calls are diverted
      * into this
@@ -195,23 +209,17 @@ public final class LeashBuilder {
             java.util.List<RopeJob> jobs) {
         if (jobs.isEmpty())
             return;
-        // Pre-prepare every sim's render snapshot OUTSIDE the lambda so prepareRender
-        // side
-        // effects (basis-vector scratch invalidation) happen once per rope per frame.
         int count = jobs.size();
-        if (batchTotalLengths.length < count) {
-            batchTotalLengths = new double[count];
-            batchVisualTotalLengths = new double[count];
-        }
-        double[] totalLengths = batchTotalLengths;
-        double[] visualTotalLengths = batchVisualTotalLengths;
-        for (int i = 0; i < count; i++) {
-            totalLengths[i] = Math.max(1.0e-6D, jobs.get(i).sim.prepareRender(partialTick));
-            visualTotalLengths[i] = Math.max(1.0e-6D, jobs.get(i).sim.visualRenderTotalLength());
-        }
         collector.submitCustomGeometry(BATCH_POSE, RopeRenderTypes.dynamicRope(), (poseState, buffer) -> {
             for (int i = 0; i < count; i++) {
-                renderJob(buffer, poseState, cameraPos, jobs.get(i), totalLengths[i], visualTotalLengths[i]);
+                RopeJob job = jobs.get(i);
+                float jobPartialTick = Float.isNaN(job.renderPartialTick) ? partialTick : job.renderPartialTick;
+                // Custom geometry executes later than collection. Other passes may
+                // have prepared the same sim at a different partial tick meanwhile,
+                // so establish this job's snapshot immediately before reading it.
+                double totalLength = Math.max(1.0e-6D, job.sim.prepareRender(jobPartialTick));
+                double visualTotalLength = Math.max(1.0e-6D, job.sim.visualRenderTotalLength());
+                renderJob(buffer, poseState, cameraPos, job, totalLength, visualTotalLength);
             }
         });
     }

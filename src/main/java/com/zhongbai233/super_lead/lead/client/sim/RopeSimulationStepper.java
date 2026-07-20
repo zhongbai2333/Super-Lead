@@ -108,6 +108,17 @@ abstract class RopeSimulationStepper extends RopeSimulationContactConstraints {
         if (delta > tuning.maxTickDelta())
             delta = tuning.maxTickDelta();
 
+        // Preserve the previous stepped endpoints before rememberEndpointsMoved()
+        // publishes the current ones. Substep selection and endpoint interpolation
+        // both need the old values; reading lastA/lastB afterwards silently reports
+        // zero endpoint speed and collapses every interpolation onto the new endpoint.
+        boolean hadEndpointHistory = endpointInit;
+        double previousAx = hadEndpointHistory ? lastAx : a.x;
+        double previousAy = hadEndpointHistory ? lastAy : a.y;
+        double previousAz = hadEndpointHistory ? lastAz : a.z;
+        double previousBx = hadEndpointHistory ? lastBx : b.x;
+        double previousBy = hadEndpointHistory ? lastBy : b.y;
+        double previousBz = hadEndpointHistory ? lastBz : b.z;
         boolean endpointMoved = rememberEndpointsMoved(a, b);
         boolean terrainNearby;
         boolean blockHashChangedNow;
@@ -151,14 +162,8 @@ abstract class RopeSimulationStepper extends RopeSimulationContactConstraints {
             settledTicks = 0;
         }
 
-        // Snapshot tick-start positions for render lerp + settle measurement.
-        for (int i = 0; i < nodes; i++) {
-            xLastTick[i] = x[i];
-            yLastTick[i] = y[i];
-            zLastTick[i] = z[i];
-        }
-
         if (!awake) {
+            snapshotRenderOrigin();
             for (int i = 0; i < nodes; i++) {
                 vx[i] = vy[i] = vz[i] = 0.0D;
             }
@@ -168,25 +173,44 @@ abstract class RopeSimulationStepper extends RopeSimulationContactConstraints {
             return false;
         }
 
-        prepareWindCache(currentTick);
         for (int t = 0; t < delta; t++) {
-            applyExternalContactPush(currentTick);
-            int substeps = chooseSubsteps(a, b);
+            if (isFinalCatchUpTick(t, delta)) {
+                // Render interpolation must cover only the final logical tick. When a
+                // low-FPS frame catches up four ticks, snapshotting before the whole
+                // loop makes partialTick interpolate tick 0 -> tick 4 and visibly lag
+                // before snapping forward. The final-tick origin produces the same
+                // tick 3 -> tick 4 interpolation used during normal 20 TPS rendering.
+                // Settle measurement also becomes independent of catch-up length.
+                snapshotRenderOrigin();
+            }
+            long simulationTick = catchUpSimulationTick(currentTick, delta, t);
+            prepareWindCache(simulationTick);
+            applyExternalContactPush(simulationTick);
+            int substeps = chooseSubsteps(a, b,
+                    previousAx, previousAy, previousAz,
+                    previousBx, previousBy, previousBz,
+                    delta, hadEndpointHistory);
             if (ropeStackContact) {
                 substeps = Math.min(substeps, MAX_CROWDED_SUBSTEPS);
             }
             double h = 1.0D / substeps;
             for (int sub = 0; sub < substeps; sub++) {
-                double frac = (sub + 1) / (double) substeps;
+                // Spread one endpoint move over the entire catch-up interval. The old
+                // formula restarted at 1/substeps for every logical tick, so a 4-tick
+                // catch-up moved old->new four times and teleported the pinned ends
+                // backwards between iterations. Constraint velocity reconstruction
+                // turned those teleports into the violent whipping most visible when
+                // low gravity cannot damp the injected transverse energy.
+                double frac = logicalSubstepFraction(t, sub, substeps, delta);
                 Vec3 aInterp = new Vec3(
-                        lastAx + (a.x - lastAx) * frac,
-                        lastAy + (a.y - lastAy) * frac,
-                        lastAz + (a.z - lastAz) * frac);
+                        previousAx + (a.x - previousAx) * frac,
+                        previousAy + (a.y - previousAy) * frac,
+                        previousAz + (a.z - previousAz) * frac);
                 Vec3 bInterp = new Vec3(
-                        lastBx + (b.x - lastBx) * frac,
-                        lastBy + (b.y - lastBy) * frac,
-                        lastBz + (b.z - lastBz) * frac);
-                substep(level, aInterp, bInterp, h, currentTick, terrainNearby,
+                        previousBx + (b.x - previousBx) * frac,
+                        previousBy + (b.y - previousBy) * frac,
+                        previousBz + (b.z - previousBz) * frac);
+                substep(level, aInterp, bInterp, h, simulationTick, terrainNearby,
                         neighbors, forceFields, entityPushActive ? entityContacts : List.of());
             }
         }
@@ -203,6 +227,14 @@ abstract class RopeSimulationStepper extends RopeSimulationContactConstraints {
         if (precomputeReady) {
             blockCache.setReadOnly(false);
             precomputeReady = false;
+        }
+    }
+
+    private void snapshotRenderOrigin() {
+        for (int i = 0; i < nodes; i++) {
+            xLastTick[i] = x[i];
+            yLastTick[i] = y[i];
+            zLastTick[i] = z[i];
         }
     }
 
@@ -327,11 +359,19 @@ abstract class RopeSimulationStepper extends RopeSimulationContactConstraints {
         }
     }
 
-    private int chooseSubsteps(Vec3 a, Vec3 b) {
-        if (!endpointInit)
+    private int chooseSubsteps(Vec3 a, Vec3 b,
+            double previousAx, double previousAy, double previousAz,
+            double previousBx, double previousBy, double previousBz,
+            long logicalTicks, boolean hadEndpointHistory) {
+        if (!hadEndpointHistory)
             return 1;
-        double daX = a.x - lastAx, daY = a.y - lastAy, daZ = a.z - lastAz;
-        double dbX = b.x - lastBx, dbY = b.y - lastBy, dbZ = b.z - lastBz;
+        double invTicks = endpointSpeedScale(logicalTicks);
+        double daX = (a.x - previousAx) * invTicks;
+        double daY = (a.y - previousAy) * invTicks;
+        double daZ = (a.z - previousAz) * invTicks;
+        double dbX = (b.x - previousBx) * invTicks;
+        double dbY = (b.y - previousBy) * invTicks;
+        double dbZ = (b.z - previousBz) * invTicks;
         double aSpeedSqr = daX * daX + daY * daY + daZ * daZ;
         double bSpeedSqr = dbX * dbX + dbY * dbY + dbZ * dbZ;
         double s2 = Math.max(Math.max(aSpeedSqr, bSpeedSqr), maxInteriorSpeedSqr());
@@ -342,6 +382,28 @@ abstract class RopeSimulationStepper extends RopeSimulationContactConstraints {
         if (s2 < substepSpeedTier3 * substepSpeedTier3)
             return 3;
         return maxSubsteps;
+    }
+
+    static double endpointSpeedScale(long logicalTicks) {
+        return 1.0D / Math.max(1L, logicalTicks);
+    }
+
+    static boolean isFinalCatchUpTick(int logicalTickIndex, long logicalTicks) {
+        return logicalTickIndex == Math.max(1L, logicalTicks) - 1L;
+    }
+
+    static long catchUpSimulationTick(long currentTick, long logicalTicks, int logicalTickIndex) {
+        long safeLogicalTicks = Math.max(1L, logicalTicks);
+        long clampedIndex = Math.max(0L, Math.min(safeLogicalTicks - 1L, logicalTickIndex));
+        return currentTick - safeLogicalTicks + 1L + clampedIndex;
+    }
+
+    static double logicalSubstepFraction(int logicalTick, int substep, int substeps, long logicalTicks) {
+        int safeSubsteps = Math.max(1, substeps);
+        long safeLogicalTicks = Math.max(1L, logicalTicks);
+        double completedTicks = Math.max(0, logicalTick)
+                + (Math.max(0, substep) + 1.0D) / safeSubsteps;
+        return Math.min(1.0D, completedTicks / safeLogicalTicks);
     }
 
     private void applyWind(int nodeIndex, long tick, double h, double gravityScale) {

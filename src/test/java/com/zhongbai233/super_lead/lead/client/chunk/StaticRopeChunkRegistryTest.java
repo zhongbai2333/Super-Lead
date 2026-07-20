@@ -17,13 +17,11 @@ import org.junit.jupiter.api.Test;
 
 class StaticRopeChunkRegistryTest {
     @Test
-    void dynamicRenderingOverlapsFirstTwoAcceptedMeshTicks() {
+    void dynamicRenderingKeepsOneAcceptedMeshSafetyTick() {
     assertTrue(StaticRopeChunkRegistry.handoffNeedsDynamicOverlap(
         true, Long.MIN_VALUE, 100L, 100L));
-    assertTrue(StaticRopeChunkRegistry.handoffNeedsDynamicOverlap(
-        true, Long.MIN_VALUE, 100L, 101L));
     assertFalse(StaticRopeChunkRegistry.handoffNeedsDynamicOverlap(
-        true, Long.MIN_VALUE, 100L, 102L));
+        true, Long.MIN_VALUE, 100L, 101L));
     }
 
     @Test

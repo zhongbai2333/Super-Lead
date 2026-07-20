@@ -84,6 +84,24 @@ abstract class RopeSimulationCore {
     protected final double[] renderY;
     protected final double[] renderZ;
     protected final double[] renderLengths;
+    // Short-lived visual handoff from an accepted chunk-mesh shape to a newly
+    // collision-solved dynamic shape. Unlike tick-local partial interpolation this
+    // survives low-FPS frames that cross one or more logical ticks.
+    protected final double[] transitionX;
+    protected final double[] transitionY;
+    protected final double[] transitionZ;
+    protected boolean renderTransitionActive;
+    protected double renderTransitionStartTime;
+    // Visual origin for adaptive 1/2/4/8-tick scheduling. Physics still advances
+    // by one fixed step; rendering distributes that result over the selected solve
+    // interval instead of moving for one tick and freezing for the remaining ticks.
+    protected final double[] scheduledRenderX;
+    protected final double[] scheduledRenderY;
+    protected final double[] scheduledRenderZ;
+    protected boolean scheduledRenderActive;
+    protected long scheduledRenderStartTick = UNINIT;
+    protected int scheduledRenderDurationTicks = 1;
+    protected long renderFrameTick = UNINIT;
     // Collision/render proxy curve. This is a smoothed, arc-length-resampled and
     // distance-projected representation of the raw solver nodes. It deliberately
     // keeps the same node count as the physical rope so existing rendering,
@@ -337,6 +355,12 @@ abstract class RopeSimulationCore {
         renderY = new double[nodes];
         renderZ = new double[nodes];
         renderLengths = new double[nodes];
+        transitionX = new double[nodes];
+        transitionY = new double[nodes];
+        transitionZ = new double[nodes];
+        scheduledRenderX = new double[nodes];
+        scheduledRenderY = new double[nodes];
+        scheduledRenderZ = new double[nodes];
         proxyX = new double[nodes];
         proxyY = new double[nodes];
         proxyZ = new double[nodes];
@@ -471,6 +495,9 @@ abstract class RopeSimulationCore {
         blockCache.reset();
         segAabb = null;
         renderStable = false;
+        scheduledRenderActive = false;
+        scheduledRenderStartTick = UNINIT;
+        scheduledRenderDurationTicks = 1;
         for (int i = 0; i < nodes; i++) {
             vx[i] = vy[i] = vz[i] = 0.0D;
             entityPushAccum[i] = 0.0D;
@@ -562,6 +589,9 @@ abstract class RopeSimulationCore {
         copy(other.xLastTick, xLastTick);
         copy(other.yLastTick, yLastTick);
         copy(other.zLastTick, zLastTick);
+        copy(other.transitionX, transitionX);
+        copy(other.transitionY, transitionY);
+        copy(other.transitionZ, transitionZ);
         copy(other.vx, vx);
         copy(other.vy, vy);
         copy(other.vz, vz);
@@ -598,6 +628,14 @@ abstract class RopeSimulationCore {
         quietTicks = other.quietTicks;
         ropeStackQuietTicks = other.ropeStackQuietTicks;
         renderStable = other.renderStable;
+        renderTransitionActive = other.renderTransitionActive;
+        renderTransitionStartTime = other.renderTransitionStartTime;
+        copy(other.scheduledRenderX, scheduledRenderX);
+        copy(other.scheduledRenderY, scheduledRenderY);
+        copy(other.scheduledRenderZ, scheduledRenderZ);
+        scheduledRenderActive = other.scheduledRenderActive;
+        scheduledRenderStartTick = other.scheduledRenderStartTick;
+        scheduledRenderDurationTicks = other.scheduledRenderDurationTicks;
 
         precomputeReady = false;
         blockCache.reset();
@@ -629,6 +667,12 @@ abstract class RopeSimulationCore {
         double lastTotal = lastLengths[other.nodes - 1];
         double[] prevLengths = cumulativeLengths(other.xPrev, other.yPrev, other.zPrev, other.nodes);
         double prevTotal = prevLengths[other.nodes - 1];
+        double[] transitionLengths = cumulativeLengths(
+            other.transitionX, other.transitionY, other.transitionZ, other.nodes);
+        double transitionTotal = transitionLengths[other.nodes - 1];
+        double[] scheduledLengths = cumulativeLengths(
+            other.scheduledRenderX, other.scheduledRenderY, other.scheduledRenderZ, other.nodes);
+        double scheduledTotal = scheduledLengths[other.nodes - 1];
 
         for (int i = 0; i < nodes; i++) {
             double t = i / (double) (nodes - 1);
@@ -637,6 +681,12 @@ abstract class RopeSimulationCore {
                     xLastTick, yLastTick, zLastTick, i);
             samplePolyline(other.xPrev, other.yPrev, other.zPrev, prevLengths, prevTotal, t,
                     xPrev, yPrev, zPrev, i);
+                samplePolyline(other.transitionX, other.transitionY, other.transitionZ,
+                    transitionLengths, transitionTotal, t,
+                    transitionX, transitionY, transitionZ, i);
+            samplePolyline(other.scheduledRenderX, other.scheduledRenderY, other.scheduledRenderZ,
+                    scheduledLengths, scheduledTotal, t,
+                    scheduledRenderX, scheduledRenderY, scheduledRenderZ, i);
             sampleVectorByIndex(other.vx, other.vy, other.vz, t, vx, vy, vz, i);
             entityPushAccum[i] = sampleScalarByIndex(other.entityPushAccum, t);
             supportNode[i] = false;
@@ -671,6 +721,11 @@ abstract class RopeSimulationCore {
         quietTicks = other.quietTicks;
         ropeStackQuietTicks = other.ropeStackQuietTicks;
         renderStable = other.renderStable;
+        renderTransitionActive = other.renderTransitionActive;
+        renderTransitionStartTime = other.renderTransitionStartTime;
+        scheduledRenderActive = other.scheduledRenderActive;
+        scheduledRenderStartTick = other.scheduledRenderStartTick;
+        scheduledRenderDurationTicks = other.scheduledRenderDurationTicks;
         useCollisionProxy = other.useCollisionProxy;
 
         precomputeReady = false;
@@ -908,6 +963,25 @@ abstract class RopeSimulationCore {
         return max;
     }
 
+    /**
+     * Cheap pre-step wake signal against the endpoints published by the previous
+     * physical solve. This deliberately does not mutate endpoint history: the
+     * stepper still owns publication and catch-up interpolation semantics.
+     */
+    public boolean hasEndpointWakeMovement(Vec3 a, Vec3 b) {
+        if (!endpointInit || a == null || b == null) {
+            return false;
+        }
+        double daX = a.x - lastAx;
+        double daY = a.y - lastAy;
+        double daZ = a.z - lastAz;
+        double dbX = b.x - lastBx;
+        double dbY = b.y - lastBy;
+        double dbZ = b.z - lastBz;
+        return daX * daX + daY * daY + daZ * daZ
+                + dbX * dbX + dbY * dbY + dbZ * dbZ > endpointWakeDistanceSqr;
+    }
+
     public Vec3 nodeAt(int i, float partialTick) {
         return new Vec3(
                 xLastTick[i] + (x[i] - xLastTick[i]) * partialTick,
@@ -944,6 +1018,21 @@ abstract class RopeSimulationCore {
             proxySourceX[i] = xLastTick[i] + (x[i] - xLastTick[i]) * partialTick;
             proxySourceY[i] = yLastTick[i] + (y[i] - yLastTick[i]) * partialTick;
             proxySourceZ[i] = zLastTick[i] + (z[i] - zLastTick[i]) * partialTick;
+        }
+        return RopeCollisionProxy.rebuild(nodes,
+                proxySourceX, proxySourceY, proxySourceZ,
+                desiredProxyLength(proxySourceX[0], proxySourceY[0], proxySourceZ[0],
+                        proxySourceX[nodes - 1], proxySourceY[nodes - 1], proxySourceZ[nodes - 1]),
+                renderX, renderY, renderZ, renderLengths,
+                proxyWorkX, proxyWorkY, proxyWorkZ);
+    }
+
+    protected double prepareRenderProxy(
+            double[] originX, double[] originY, double[] originZ, double progress) {
+        for (int i = 0; i < nodes; i++) {
+            proxySourceX[i] = originX[i] + (x[i] - originX[i]) * progress;
+            proxySourceY[i] = originY[i] + (y[i] - originY[i]) * progress;
+            proxySourceZ[i] = originZ[i] + (z[i] - originZ[i]) * progress;
         }
         return RopeCollisionProxy.rebuild(nodes,
                 proxySourceX, proxySourceY, proxySourceZ,

@@ -66,6 +66,44 @@ abstract class RopeSimulationVisualState extends RopeSimulationRenderCache {
         lastSteppedTick = currentTick - 1L;
     }
 
+    /** Drops time intentionally skipped by adaptive scheduling. */
+    public void prepareThrottledStep(long currentTick) {
+        lastTouchTick = currentTick;
+        lastSteppedTick = currentTick - 1L;
+    }
+
+    /**
+     * Starts a visual interval from the shape currently on screen. Calling this
+     * before every scheduled solve also makes an early HOT upshift continuous.
+     */
+    public void prepareScheduledRenderStep(long currentTick, int interval) {
+        double progress = scheduledRenderProgress(
+                currentTick, scheduledRenderStartTick, scheduledRenderDurationTicks);
+        for (int i = 0; i < nodes; i++) {
+            if (scheduledRenderActive) {
+                scheduledRenderX[i] += (x[i] - scheduledRenderX[i]) * progress;
+                scheduledRenderY[i] += (y[i] - scheduledRenderY[i]) * progress;
+                scheduledRenderZ[i] += (z[i] - scheduledRenderZ[i]) * progress;
+            } else {
+                scheduledRenderX[i] = x[i];
+                scheduledRenderY[i] = y[i];
+                scheduledRenderZ[i] = z[i];
+            }
+        }
+        scheduledRenderStartTick = currentTick;
+        scheduledRenderDurationTicks = Math.max(1, interval);
+        scheduledRenderActive = true;
+        renderStable = false;
+        renderCacheValid = false;
+    }
+
+    public void setRenderFrameTick(long currentTick) {
+        if (renderFrameTick != currentTick && scheduledRenderActive) {
+            renderCacheValid = false;
+        }
+        renderFrameTick = currentTick;
+    }
+
     /** Forces the next full-detail step to re-evaluate terrain and settle state. */
     public void wakeForRefinement() {
         invalidatePhysicsHistoryForRefinement();
@@ -88,6 +126,28 @@ abstract class RopeSimulationVisualState extends RopeSimulationRenderCache {
      */
     public void restorePolylineForRefinement(double[] sourceX, double[] sourceY, double[] sourceZ, Vec3 a, Vec3 b) {
         restoreShapeForRefinement(sourceX, sourceY, sourceZ, a, b);
+    }
+
+    /**
+     * Preserve the currently restored mesh shape as a cross-tick render origin.
+     * Physics may advance immediately; rendering catches up over a few ticks instead
+     * of relying on another frame occurring inside this same logical tick.
+     */
+    public void beginMeshCollisionRenderTransition(long currentTick, float partialTick) {
+        for (int i = 0; i < nodes; i++) {
+            transitionX[i] = x[i];
+            transitionY[i] = y[i];
+            transitionZ[i] = z[i];
+        }
+        renderTransitionStartTime = currentTick + Math.max(0.0F, Math.min(1.0F, partialTick));
+        renderTransitionActive = true;
+        scheduledRenderActive = false;
+        renderStable = false;
+        renderCacheValid = false;
+    }
+
+    public boolean hasMeshCollisionRenderTransition() {
+        return renderTransitionActive;
     }
 
     protected void setCatenary(Vec3 a, Vec3 b) {
@@ -172,8 +232,9 @@ abstract class RopeSimulationVisualState extends RopeSimulationRenderCache {
      * packets).
      */
     public boolean hasExternalContact(long currentTick) {
+        long age = currentTick - contactRefreshTick;
         return visualPushEnabled() && contactPushGain > 0.0D
-                && contactT >= 0.0F && (currentTick - contactRefreshTick) <= 5L;
+                && contactT >= 0.0F && age >= 0L && age <= 5L;
     }
 
     /**
