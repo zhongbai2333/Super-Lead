@@ -60,7 +60,7 @@ class StaticRopeChunkRegistryTest {
     }
 
     @Test
-    void lod3EntryCanConfirmThreeSparseLowMotionSamples() {
+    void sparseLowMotionSamplesAreDeduplicatedForHighLodEntry() {
         var first = StaticRopeChunkRegistry.advanceExitDebounce(null, 100L, 1.0e-4D);
         var repeatedFrame = StaticRopeChunkRegistry.advanceExitDebounce(first, 100L, 1.0e-4D);
         var second = StaticRopeChunkRegistry.advanceExitDebounce(repeatedFrame, 104L, 1.0e-4D);

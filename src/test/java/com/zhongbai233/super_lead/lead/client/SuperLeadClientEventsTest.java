@@ -12,12 +12,22 @@ import com.zhongbai233.super_lead.lead.client.sim.RopeTuning;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.phys.Vec3;
 import org.junit.jupiter.api.Test;
 
 class SuperLeadClientEventsTest {
+
+    @Test
+    void constantParrotLoadDoesNotRepeatedlyWakeStaticMesh() {
+        UUID rope = UUID.fromString("00000000-0000-0000-0000-000000000101");
+
+        assertTrue(SuperLeadClientEvents.changedMembership(Set.of(), Set.of(rope)).contains(rope));
+        assertTrue(SuperLeadClientEvents.changedMembership(Set.of(rope), Set.of(rope)).isEmpty());
+        assertTrue(SuperLeadClientEvents.changedMembership(Set.of(rope), Set.of()).contains(rope));
+    }
 
     @Test
     void renderLodLevelTracksConfiguredDistanceBands() {

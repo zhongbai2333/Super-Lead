@@ -123,6 +123,7 @@ public final class SuperLeadClientEvents {
     private static final List<RenderEntry> FRAME_RENDER_ENTRIES = new ArrayList<>();
     private static final Set<UUID> FRAME_STATIC_SIM_IDS = new HashSet<>();
     private static final Set<UUID> FRAME_PARROT_WEIGHTED_ROPES = new HashSet<>();
+    private static final Set<UUID> LAST_PARROT_WEIGHTED_ROPES = new HashSet<>();
     private static final Map<UUID, Long> FRAME_PHYSICS_NANOS = new HashMap<>();
     private static final Map<UUID, String> FRAME_PHYSICS_STATE = new HashMap<>();
     private static final Map<UUID, Long> LAST_DYNAMIC_STEP_TICK = new HashMap<>();
@@ -413,14 +414,21 @@ public final class SuperLeadClientEvents {
         // Must run after the stepping loop so LOD transitions within this frame are
         // captured.
         updateMaintainableSimIds(simEntries, staticSimIds);
-        releaseDynamicActiveStaticRopes(level, renderEntries, staticRopes, tick);
+        releaseDynamicActiveStaticRopes(level, renderEntries, staticRopes, parrotWeightedRopes, tick);
+        Set<UUID> changedParrotLoads = changedMembership(LAST_PARROT_WEIGHTED_ROPES, parrotWeightedRopes);
+        if (!changedParrotLoads.isEmpty()) {
+            // Wake once when a load appears or disappears. A constant weight may
+            // settle and be baked; invalidating every tick made that impossible.
+            disturbConnections(level, changedParrotLoads, tick + 8L);
+        }
+        LAST_PARROT_WEIGHTED_ROPES.clear();
+        LAST_PARROT_WEIGHTED_ROPES.addAll(parrotWeightedRopes);
         // Maintain static chunk meshes after the current physics tick so a newly
         // disturbed rope is evicted before this frame renders. Sparse terrain-LOD
         // ropes remain valid sim sources for collision-safe chunk mesh baking.
         staticRopes.tickMaintain(level,
             id -> maintainableSimIds.contains(id) ? SIMS.get(id) : null,
             lodDistanceByConnection);
-        staticRopes.invalidateConnections(level, parrotWeightedRopes);
         List<RopeAttachmentRenderer.BakedAttachment> bakedStaticAttachments = staticRopes
                 .bakedAttachmentsForRender(tick);
         // LOD: drop baked attachments for ropes past the physics distance so far
@@ -518,6 +526,7 @@ public final class SuperLeadClientEvents {
         FRAME_RENDER_ENTRIES.clear();
         FRAME_STATIC_SIM_IDS.clear();
         FRAME_PARROT_WEIGHTED_ROPES.clear();
+        LAST_PARROT_WEIGHTED_ROPES.clear();
         FRAME_PHYSICS_NANOS.clear();
         FRAME_PHYSICS_STATE.clear();
         previewSim = null;
@@ -1115,7 +1124,7 @@ public final class SuperLeadClientEvents {
     }
 
     private static void releaseDynamicActiveStaticRopes(ClientLevel level, List<RenderEntry> renderEntries,
-            StaticRopeChunkRegistry staticRopes, long tick) {
+            StaticRopeChunkRegistry staticRopes, Set<UUID> parrotWeightedRopes, long tick) {
         for (RenderEntry entry : renderEntries) {
             UUID id = entry.connection().id();
             RopeSimulation sim = entry.sim();
@@ -1134,8 +1143,7 @@ public final class SuperLeadClientEvents {
                 continue;
             }
             if (!RopePerchClientForces.forConnection(level, entry.connection(), sim).isEmpty()) {
-                staticRopes.holdDynamic(level, id, tick + 8L);
-                continue;
+                parrotWeightedRopes.add(id);
             }
             if (hasActualEntityContact(level, sim, entry.a(), entry.b())) {
                 staticRopes.holdDynamic(level, id, tick + 8L);
@@ -1146,6 +1154,24 @@ public final class SuperLeadClientEvents {
                 staticRopes.holdDynamic(level, id, tick + 8L);
             }
         }
+    }
+
+    static Set<UUID> changedMembership(Set<UUID> previous, Set<UUID> current) {
+        if ((previous == null || previous.isEmpty()) && (current == null || current.isEmpty())) {
+            return Set.of();
+        }
+        HashSet<UUID> changed = new HashSet<>();
+        if (previous != null) {
+            changed.addAll(previous);
+        }
+        if (current != null) {
+            for (UUID id : current) {
+                if (!changed.add(id)) {
+                    changed.remove(id);
+                }
+            }
+        }
+        return changed.isEmpty() ? Set.of() : Set.copyOf(changed);
     }
 
     private static boolean hasActualEntityContact(ClientLevel level, RopeSimulation sim, Vec3 a, Vec3 b) {

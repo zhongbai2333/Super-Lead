@@ -50,7 +50,9 @@ public final class StaticRopeChunkRegistry {
     private static final int CHUNK_MESH_WIND_COOLDOWN_TICKS = 40;
     private static final int CHUNK_MESH_RETIRE_GRACE_TICKS = 2;
     private static final int CHUNK_MESH_RETIRE_TIMEOUT_TICKS = 40;
-    private static final int LOD3_ENTRY_DEBOUNCE_STEPS = 3;
+    // Sparse high-LOD physics only publishes every few ticks. One low-motion sample
+    // is enough to enter the mesh; hard motion, wind and explicit holds still veto it.
+    private static final int HIGH_LOD_ENTRY_DEBOUNCE_STEPS = 1;
     private static final int HIGH_LOD_EXIT_DEBOUNCE_STEPS = 3;
     private static final double HIGH_LOD_HARD_EXIT_MOTION_SQR = 5.0e-4D;
     private static final int DIRTY_SECTIONS_PER_TICK = 12;
@@ -75,7 +77,7 @@ public final class StaticRopeChunkRegistry {
     private final Map<Long, Long> compiledGeneration = new HashMap<>();
     private final Map<UUID, RetiringMesh> retiringMeshes = new HashMap<>();
     private final Map<UUID, Long> dynamicHoldUntil = new HashMap<>();
-    private final Map<UUID, ExitDebounce> lod3EntryDebounce = new HashMap<>();
+    private final Map<UUID, ExitDebounce> highLodEntryDebounce = new HashMap<>();
     private final Map<UUID, ExitDebounce> highLodExitDebounce = new HashMap<>();
     /**
      * Claimed ropes whose baked light may have changed. Requests are coalesced until
@@ -350,7 +352,7 @@ public final class StaticRopeChunkRegistry {
         connectionSections.clear();
         bakedWithMissingAnchors.clear();
         dynamicHoldUntil.clear();
-        lod3EntryDebounce.clear();
+        highLodEntryDebounce.clear();
         highLodExitDebounce.clear();
         pendingLightRebakes.clear();
         lodDistanceSqr = Map.of();
@@ -520,7 +522,7 @@ public final class StaticRopeChunkRegistry {
         acceptedTick.keySet().retainAll(acceptedConnections);
         connectionSections.clear();
         connectionSections.putAll(nextConnectionSections);
-        lod3EntryDebounce.keySet().removeAll(removing);
+        highLodEntryDebounce.keySet().removeAll(removing);
         highLodExitDebounce.keySet().removeAll(removing);
         pendingLightRebakes.removeAll(removing);
         bakedWithMissingAnchors.removeAll(removing);
@@ -560,7 +562,7 @@ public final class StaticRopeChunkRegistry {
         }
         if (ids.isEmpty())
             return;
-        lod3EntryDebounce.keySet().removeAll(ids);
+        highLodEntryDebounce.keySet().removeAll(ids);
         highLodExitDebounce.keySet().removeAll(ids);
         long now = level.getGameTime();
         long effectiveUntil = Math.max(untilTick, now + CHUNK_MESH_DYNAMIC_HOLD_MIN_TICKS);
@@ -876,7 +878,7 @@ public final class StaticRopeChunkRegistry {
         retiringMeshes.clear();
         sectionGeneration.clear();
         compiledGeneration.clear();
-        lod3EntryDebounce.clear();
+        highLodEntryDebounce.clear();
         highLodExitDebounce.clear();
         lodDistanceSqr = Map.of();
         connectionSyncDirty = false;
@@ -963,7 +965,7 @@ public final class StaticRopeChunkRegistry {
         acceptedConnections = nextAcceptedConnections.isEmpty() ? Set.of() : Set.copyOf(nextAcceptedConnections);
         acceptedTick.keySet().retainAll(acceptedConnections);
         claimedFromSim = Set.copyOf(next.claimedFromSim);
-        lod3EntryDebounce.keySet().removeAll(next.claimed);
+        highLodEntryDebounce.keySet().removeAll(next.claimed);
         highLodExitDebounce.keySet().retainAll(next.claimed);
         sectionsAwaitingMesh.clear();
         sectionsAwaitingMesh.addAll(toDirty);
@@ -1098,20 +1100,20 @@ public final class StaticRopeChunkRegistry {
 
     private boolean isMeshEligible(UUID connectionId, RopeSimulation sim, long currentTick) {
         if (isQuiescent(connectionId, sim, currentTick)) {
-            lod3EntryDebounce.remove(connectionId);
+            highLodEntryDebounce.remove(connectionId);
             highLodExitDebounce.remove(connectionId);
             return true;
         }
         if (isWindCoolingDown(sim.lastWindActiveTick(), currentTick)) {
-            lod3EntryDebounce.remove(connectionId);
+            highLodEntryDebounce.remove(connectionId);
             highLodExitDebounce.remove(connectionId);
             return false;
         }
         if (!claimed.contains(connectionId)) {
             highLodExitDebounce.remove(connectionId);
-            return isLod3EntryStable(connectionId, sim);
+            return isHighLodEntryStable(connectionId, sim);
         }
-        lod3EntryDebounce.remove(connectionId);
+        highLodEntryDebounce.remove(connectionId);
         if (!isHighLod(connectionId)) {
             highLodExitDebounce.remove(connectionId);
             return false;
@@ -1132,19 +1134,19 @@ public final class StaticRopeChunkRegistry {
                 && currentTick - lastWindActiveTick <= CHUNK_MESH_WIND_COOLDOWN_TICKS;
     }
 
-    private boolean isLod3EntryStable(UUID connectionId, RopeSimulation sim) {
-        if (!isLod3(connectionId)) {
-            lod3EntryDebounce.remove(connectionId);
+    private boolean isHighLodEntryStable(UUID connectionId, RopeSimulation sim) {
+        if (!isHighLod(connectionId)) {
+            highLodEntryDebounce.remove(connectionId);
             return false;
         }
-        ExitDebounce previous = lod3EntryDebounce.get(connectionId);
+        ExitDebounce previous = highLodEntryDebounce.get(connectionId);
         ExitDebounce next = advanceExitDebounce(previous, sim.lastSteppedTick(), sim.maxNodeMotionSqr());
         if (next == null) {
-            lod3EntryDebounce.remove(connectionId);
+            highLodEntryDebounce.remove(connectionId);
             return false;
         }
-        lod3EntryDebounce.put(connectionId, next);
-        return next.nonQuietSteps() >= LOD3_ENTRY_DEBOUNCE_STEPS;
+        highLodEntryDebounce.put(connectionId, next);
+        return next.nonQuietSteps() >= HIGH_LOD_ENTRY_DEBOUNCE_STEPS;
     }
 
     private boolean isHighLod(UUID connectionId) {
@@ -1153,15 +1155,6 @@ public final class StaticRopeChunkRegistry {
             return false;
         }
         double threshold = ClientTuning.LOD_STRIDE4_DISTANCE.get();
-        return distanceSqr > threshold * threshold;
-    }
-
-    private boolean isLod3(UUID connectionId) {
-        Double distanceSqr = lodDistanceSqr.get(connectionId);
-        if (distanceSqr == null) {
-            return false;
-        }
-        double threshold = ClientTuning.LOD_RIBBON_DISTANCE.get();
         return distanceSqr > threshold * threshold;
     }
 
