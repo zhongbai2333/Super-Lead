@@ -87,21 +87,13 @@ public final class MekanismFluidBridge {
                 continue;
             }
 
-            try (Transaction tx = Transaction.openRoot()) {
-                int extracted = source.extract(slot, resource, Math.min(accepted, requested), tx);
-                if (extracted <= 0) {
-                    continue;
-                }
-                FluidStack extractedStack = resource.toStack(extracted);
-                if (extractedStack.isEmpty() || !effectiveFilter.test(extractedStack)) {
-                    continue;
-                }
-                int inserted = target.insert(resource, extracted, tx);
-                if (inserted <= 0) {
-                    continue;
-                }
-                tx.commit();
-                return inserted;
+            int transferred = ExactResourceTransfer.transfer(
+                    source, target, slot, resource, Math.min(accepted, requested), extracted -> {
+                        FluidStack extractedStack = resource.toStack(extracted);
+                        return !extractedStack.isEmpty() && effectiveFilter.test(extractedStack);
+                    });
+            if (transferred > 0) {
+                return transferred;
             }
         }
         return 0L;
@@ -135,17 +127,9 @@ public final class MekanismFluidBridge {
                 continue;
             }
 
-            try (Transaction tx = Transaction.openRoot()) {
-                int extracted = source.extract(slot, resource, accepted, tx);
-                if (extracted <= 0) {
-                    continue;
-                }
-                int inserted = target.insert(resource, extracted, tx);
-                if (inserted <= 0) {
-                    continue;
-                }
-                tx.commit();
-                return inserted;
+            int transferred = ExactResourceTransfer.transfer(source, target, slot, resource, accepted);
+            if (transferred > 0) {
+                return transferred;
             }
         }
         return 0L;

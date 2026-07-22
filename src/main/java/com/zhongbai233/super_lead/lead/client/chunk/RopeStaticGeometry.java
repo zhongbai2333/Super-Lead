@@ -183,21 +183,23 @@ public final class RopeStaticGeometry {
         return densifyForVisualStripes(points.x(), points.y(), points.z(), tuning);
     }
 
-    private static Points3 densifyForVisualStripes(double[] x, double[] y, double[] z, RopeTuning tuning) {
+    static Points3 densifyForVisualStripes(double[] x, double[] y, double[] z, RopeTuning tuning) {
         if (x.length < 2) {
             return new Points3(x, y, z);
         }
         double stripeLength = Math.max(0.05D, tuning.visualSegmentLength());
         double visualScale = visualArcScale(x, y, z, tuning);
         double geometryStripeLength = stripeLength / visualScale;
-        ArrayList<Double> outX = new ArrayList<>(x.length * 2);
-        ArrayList<Double> outY = new ArrayList<>(y.length * 2);
-        ArrayList<Double> outZ = new ArrayList<>(z.length * 2);
-        outX.add(x[0]);
-        outY.add(y[0]);
-        outZ.add(z[0]);
+        int outCount = densifiedPointCount(x, y, z, geometryStripeLength);
+        double[] outX = new double[outCount];
+        double[] outY = new double[outCount];
+        double[] outZ = new double[outCount];
+        outX[0] = x[0];
+        outY[0] = y[0];
+        outZ[0] = z[0];
 
         double arcStart = 0.0D;
+        int out = 1;
         for (int i = 0; i < x.length - 1; i++) {
             double ax = x[i], ay = y[i], az = z[i];
             double bx = x[i + 1], by = y[i + 1], bz = z[i + 1];
@@ -213,25 +215,46 @@ public final class RopeStaticGeometry {
                 double boundary = stripe * geometryStripeLength;
                 double t = (boundary - arcStart) / segmentLength;
                 if (t > 1.0e-5D && t < 1.0D - 1.0e-5D) {
-                    outX.add(ax + dx * t);
-                    outY.add(ay + dy * t);
-                    outZ.add(az + dz * t);
+                    outX[out] = ax + dx * t;
+                    outY[out] = ay + dy * t;
+                    outZ[out] = az + dz * t;
+                    out++;
                 }
             }
-            outX.add(bx);
-            outY.add(by);
-            outZ.add(bz);
+            outX[out] = bx;
+            outY[out] = by;
+            outZ[out] = bz;
+            out++;
             arcStart = arcEnd;
         }
-        return new Points3(toDoubleArray(outX), toDoubleArray(outY), toDoubleArray(outZ));
+        return new Points3(outX, outY, outZ);
     }
 
-    private static double[] toDoubleArray(List<Double> values) {
-        double[] out = new double[values.size()];
-        for (int i = 0; i < values.size(); i++) {
-            out[i] = values.get(i);
+    private static int densifiedPointCount(double[] x, double[] y, double[] z, double geometryStripeLength) {
+        int count = 1;
+        double arcStart = 0.0D;
+        for (int i = 0; i < x.length - 1; i++) {
+            double dx = x[i + 1] - x[i];
+            double dy = y[i + 1] - y[i];
+            double dz = z[i + 1] - z[i];
+            double segmentLength = Math.sqrt(dx * dx + dy * dy + dz * dz);
+            if (segmentLength <= 1.0e-6D) {
+                continue;
+            }
+            double arcEnd = arcStart + segmentLength;
+            int firstBoundary = (int) Math.floor(arcStart / geometryStripeLength) + 1;
+            int lastBoundary = (int) Math.floor((arcEnd - 1.0e-6D) / geometryStripeLength);
+            for (int stripe = firstBoundary; stripe <= lastBoundary; stripe++) {
+                double boundary = stripe * geometryStripeLength;
+                double t = (boundary - arcStart) / segmentLength;
+                if (t > 1.0e-5D && t < 1.0D - 1.0e-5D) {
+                    count++;
+                }
+            }
+            count++;
+            arcStart = arcEnd;
         }
-        return out;
+        return count;
     }
 
     static record Points3(double[] x, double[] y, double[] z) {

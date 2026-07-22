@@ -38,6 +38,12 @@ public final class RopeActivityScheduler {
     }
 
     public static State update(State previous, long tick, double sample, boolean forceHot) {
+        if (!Double.isFinite(sample)) {
+            if (forceHot || previous == null) {
+                return State.initial(tick);
+            }
+            return previous;
+        }
         double clamped = clamp01(sample);
         if (previous == null || tick < previous.lastSampleTick()) {
             return forceHot ? State.initial(tick) : new State(tierFor(clamped), clamped, 0, tick);
@@ -66,6 +72,9 @@ public final class RopeActivityScheduler {
     }
 
     static Tier tierFor(double activity) {
+        if (!Double.isFinite(activity)) {
+            return Tier.HOT;
+        }
         double value = clamp01(activity);
         for (Tier tier : Tier.values()) {
             if (value >= tier.entryThreshold) {

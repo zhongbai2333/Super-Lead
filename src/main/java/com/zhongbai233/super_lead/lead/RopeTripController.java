@@ -191,7 +191,20 @@ final class RopeTripController {
     static void clear(ServerLevel level) {
         NetworkKey dim = NetworkKey.of(level);
         NEXT_ALLOWED_TICK.remove(dim);
-        FORCED_CRAWLS.remove(dim);
+        Map<UUID, ForcedCrawl> crawls = FORCED_CRAWLS.remove(dim);
+        if (crawls == null) {
+            return;
+        }
+        for (UUID playerId : crawls.keySet()) {
+            ServerPlayer player = level.getServer().getPlayerList().getPlayer(playerId);
+            if (player == null) {
+                continue;
+            }
+            if (player.getForcedPose() == Pose.SWIMMING) {
+                player.setForcedPose(null);
+            }
+            sendTripState(player, SyncRopeTripState.inactive(player.getId()));
+        }
     }
 
     static void clearAll() {

@@ -42,20 +42,26 @@ public final class StaticRopeChunkRegistry {
     private static final int CHUNK_MESH_FALLBACK_QUIET_TICKS = 3;
     private static final int CHUNK_MESH_STACK_QUIET_TICKS = 40;
     private static final int CHUNK_MESH_CLAIM_LINGER_TICKS = 3;
-    // One accepted tick is enough to bridge section-build publication to the custom
-    // geometry frame. Keeping two opaque copies longer makes tiny shape/light
-    // differences look like a hitch (or depth shimmer) when entering chunk mesh.
+    // Section compilation can be observed just before its GPU buffer becomes visible.
+    // Keep the source dynamic shape for one logical tick so entering a mesh cannot
+    // produce an empty frame. The bake comes from the same simulation snapshot, so
+    // this bounded overlap is visually coincident rather than a stale second rope.
     private static final int CHUNK_MESH_ACCEPTED_OVERLAP_TICKS = 1;
     private static final int CHUNK_MESH_DYNAMIC_HOLD_MIN_TICKS = 3;
     private static final int CHUNK_MESH_WIND_COOLDOWN_TICKS = 40;
-    private static final int CHUNK_MESH_RETIRE_GRACE_TICKS = 2;
+    private static final int CHUNK_MESH_RETIRE_GRACE_TICKS = 0;
     private static final int CHUNK_MESH_RETIRE_TIMEOUT_TICKS = 40;
     // Sparse high-LOD physics only publishes every few ticks. One low-motion sample
     // is enough to enter the mesh; hard motion, wind and explicit holds still veto it.
-    private static final int HIGH_LOD_ENTRY_DEBOUNCE_STEPS = 1;
-    private static final int HIGH_LOD_EXIT_DEBOUNCE_STEPS = 3;
+    // Once claimed, the same hard-motion threshold is used at every LOD. Requiring a
+    // claimed near rope to remain fully settled made the claim disappear while its
+    // section was still compiling, then immediately reappear on the next quiet sample.
+    private static final int HIGH_LOD_ENTRY_DEBOUNCE_STEPS = 3;
     private static final double HIGH_LOD_HARD_EXIT_MOTION_SQR = 5.0e-4D;
-    private static final int DIRTY_SECTIONS_PER_TICK = 12;
+    private static final int URGENT_DIRTY_SECTIONS_PER_TICK = 12;
+    private static final int NEW_MESH_SECTIONS_PER_TICK = 2;
+    private static final int UNOBSERVED_BUILD_RETRY_TICKS = 20;
+    private static final int WATCHDOG_INTERVAL_TICKS = 20;
 
     public static StaticRopeChunkRegistry get() {
         return INSTANCE;
@@ -72,20 +78,26 @@ public final class StaticRopeChunkRegistry {
     private Set<UUID> claimedFromSim = Set.of();
     private final Map<UUID, Set<Long>> connectionSections = new HashMap<>();
     private final Set<Long> pendingDirtySections = new LinkedHashSet<>();
+    private final Set<Long> pendingUrgentDirtySections = new LinkedHashSet<>();
+    private final Map<Long, Long> lastDirtySubmitTick = new HashMap<>();
     private final Set<Long> sectionsAwaitingMesh = new LinkedHashSet<>();
+    private final Set<Long> publishedWatchdogSections = new LinkedHashSet<>();
     private final Map<Long, Long> sectionGeneration = new HashMap<>();
     private final Map<Long, Long> compiledGeneration = new HashMap<>();
     private final Map<UUID, RetiringMesh> retiringMeshes = new HashMap<>();
+    private final Map<UUID, List<RopeAttachmentRenderer.BakedAttachment>> retiringAttachments = new HashMap<>();
     private final Map<UUID, Long> dynamicHoldUntil = new HashMap<>();
     private final Map<UUID, ExitDebounce> highLodEntryDebounce = new HashMap<>();
-    private final Map<UUID, ExitDebounce> highLodExitDebounce = new HashMap<>();
     /**
      * Claimed ropes whose baked light may have changed. Requests are coalesced until
      * the next maintenance pass so several nearby dynamic lights cause one rebuild.
      */
     private final Set<UUID> pendingLightRebakes = new HashSet<>();
-    private Map<UUID, Double> lodDistanceSqr = Map.of();
+    private final Set<UUID> highLodConnections = new HashSet<>();
+    private final Set<UUID> desiredScratch = new HashSet<>();
+    private final Set<UUID> desiredFromSimScratch = new HashSet<>();
     private long lastMaintenanceTick = Long.MIN_VALUE;
+    private long lastWatchdogProbeTick = Long.MIN_VALUE;
     private boolean connectionSyncDirty;
     /**
      * Static bakes made before anchor chunks load use default block shapes; retry
@@ -121,7 +133,9 @@ public final class StaticRopeChunkRegistry {
         if (generation < previous)
             return;
         compiledGeneration.put(sectionPosLong, generation);
-        if (generation == sectionGeneration.getOrDefault(sectionPosLong, 0L)) {
+        boolean currentGeneration = generation == sectionGeneration.getOrDefault(sectionPosLong, 0L);
+        if (currentGeneration) {
+            lastDirtySubmitTick.remove(sectionPosLong);
             markSectionMeshAccepted(sectionPosLong, currentTick);
         }
         for (Map.Entry<UUID, RetiringMesh> entry : retiringMeshes.entrySet()) {
@@ -138,20 +152,37 @@ public final class StaticRopeChunkRegistry {
         return bySection.keySet();
     }
 
-    public synchronized Set<Long> unmeshedPublishedSectionKeys() {
-        if (sectionsAwaitingMesh.isEmpty())
+    /**
+     * Returns a bounded rotating sample of published sections. This preserves the
+     * empty-section recovery watchdog without walking every static rope section on
+     * every client tick.
+     */
+    public synchronized Set<Long> watchdogPublishedSectionKeys(long currentTick) {
+        if (publishedWatchdogSections.isEmpty()
+                || !watchdogProbeDue(lastWatchdogProbeTick, currentTick, WATCHDOG_INTERVAL_TICKS)) {
             return Set.of();
+        }
+        lastWatchdogProbeTick = currentTick;
         LinkedHashSet<Long> out = new LinkedHashSet<>();
-        var it = sectionsAwaitingMesh.iterator();
-        while (it.hasNext() && out.size() < DIRTY_SECTIONS_PER_TICK) {
+        var it = publishedWatchdogSections.iterator();
+        while (it.hasNext() && out.size() < URGENT_DIRTY_SECTIONS_PER_TICK) {
             long key = it.next();
             it.remove();
-            if (bySection.containsKey(key) && !meshedSections.contains(key)) {
+            if (bySection.containsKey(key)) {
                 out.add(key);
             }
         }
-        sectionsAwaitingMesh.addAll(out);
+        publishedWatchdogSections.addAll(out);
         return out.isEmpty() ? Set.of() : Set.copyOf(out);
+    }
+
+    public synchronized void queueDueUnmeshedRetries(long currentTick) {
+        Set<Long> queued = queueDueUnmeshedRetries(
+                sectionsAwaitingMesh, bySection.keySet(), meshedSections,
+                pendingDirtySections, pendingUrgentDirtySections, lastDirtySubmitTick,
+                currentTick, UNOBSERVED_BUILD_RETRY_TICKS, NEW_MESH_SECTIONS_PER_TICK);
+        pendingUrgentDirtySections.addAll(queued);
+        debugDirtyQueue = pendingDirtySections.size() + pendingUrgentDirtySections.size();
     }
 
     private synchronized void markSectionMeshAccepted(long sectionPosLong, long currentTick) {
@@ -175,12 +206,35 @@ public final class StaticRopeChunkRegistry {
         return sections != null && !sections.isEmpty() && meshedSections.containsAll(sections);
     }
 
+    /**
+     * True only while the previous vanilla section buffer is still the visual
+     * fallback. Once its clear generation is observed, dynamic rendering can resume
+     * immediately even if maintenance has not removed the retirement record yet.
+     */
+    public synchronized boolean retirementNeedsStaticFallback(UUID connectionId) {
+        RetiringMesh retiring = connectionId == null ? null : retiringMeshes.get(connectionId);
+        return retiring != null && retirementNeedsStaticFallback(retiring.completedTick());
+    }
+
+    static boolean retirementNeedsStaticFallback(long completedTick) {
+        return completedTick == Long.MIN_VALUE;
+    }
+
     public List<RopeAttachmentRenderer.BakedAttachment> bakedAttachmentsForRender(long currentTick) {
-        if (bakedAttachments.isEmpty()) {
+        if (bakedAttachments.isEmpty() && retiringAttachments.isEmpty()) {
             return List.of();
         }
-        return selectBakedAttachmentsForRender(bakedAttachments,
-                attachment -> shouldDynamicLinger(attachment.connectionId(), currentTick));
+        ArrayList<RopeAttachmentRenderer.BakedAttachment> candidates = new ArrayList<>(bakedAttachments);
+        synchronized (this) {
+            for (Map.Entry<UUID, List<RopeAttachmentRenderer.BakedAttachment>> entry : retiringAttachments.entrySet()) {
+                if (retirementNeedsStaticFallback(entry.getKey())) {
+                    candidates.addAll(entry.getValue());
+                }
+            }
+        }
+        return selectBakedAttachmentsForRender(candidates,
+                attachment -> !isMeshAccepted(attachment.connectionId())
+                        && !retirementNeedsStaticFallback(attachment.connectionId()));
     }
 
     static List<RopeAttachmentRenderer.BakedAttachment> selectBakedAttachmentsForRender(
@@ -353,15 +407,21 @@ public final class StaticRopeChunkRegistry {
         bakedWithMissingAnchors.clear();
         dynamicHoldUntil.clear();
         highLodEntryDebounce.clear();
-        highLodExitDebounce.clear();
         pendingLightRebakes.clear();
-        lodDistanceSqr = Map.of();
+        highLodConnections.clear();
+        desiredScratch.clear();
+        desiredFromSimScratch.clear();
         lastMaintenanceTick = Long.MIN_VALUE;
+        lastWatchdogProbeTick = Long.MIN_VALUE;
         sectionsAwaitingMesh.clear();
+        publishedWatchdogSections.clear();
         pendingDirtySections.clear();
+        pendingUrgentDirtySections.clear();
+        lastDirtySubmitTick.clear();
         sectionGeneration.clear();
         compiledGeneration.clear();
         retiringMeshes.clear();
+        retiringAttachments.clear();
         connectionSyncDirty = false;
         stressSources = List.of();
         realSources = List.of();
@@ -369,7 +429,7 @@ public final class StaticRopeChunkRegistry {
     }
 
     public synchronized void flushPendingDirtySections() {
-        if (pendingDirtySections.isEmpty()) {
+        if (pendingDirtySections.isEmpty() && pendingUrgentDirtySections.isEmpty()) {
             debugDirtyFlushedLastTick = 0;
             debugDirtyQueue = 0;
             return;
@@ -377,19 +437,37 @@ public final class StaticRopeChunkRegistry {
         Minecraft mc = Minecraft.getInstance();
         if (mc.level == null || mc.levelRenderer == null) {
             debugDirtyFlushedLastTick = 0;
-            debugDirtyQueue = pendingDirtySections.size();
+            debugDirtyQueue = pendingDirtySections.size() + pendingUrgentDirtySections.size();
             return;
         }
-        Set<Long> dirty = new LinkedHashSet<>();
-        var it = pendingDirtySections.iterator();
-        while (it.hasNext() && dirty.size() < DIRTY_SECTIONS_PER_TICK) {
-            long key = it.next();
-            dirty.add(key);
-            it.remove();
-        }
+        Set<Long> dirty = drainDirtyBatch(
+                pendingUrgentDirtySections, pendingDirtySections,
+                URGENT_DIRTY_SECTIONS_PER_TICK, NEW_MESH_SECTIONS_PER_TICK);
         submitDirtySectionsNow(mc, dirty);
+        long currentTick = mc.level.getGameTime();
+        for (long key : dirty) {
+            lastDirtySubmitTick.put(key, currentTick);
+        }
         debugDirtyFlushedLastTick = dirty.size();
-        debugDirtyQueue = pendingDirtySections.size();
+        debugDirtyQueue = pendingDirtySections.size() + pendingUrgentDirtySections.size();
+    }
+
+    static Set<Long> drainDirtyBatch(
+            Set<Long> urgent, Set<Long> normal, int totalBudget, int normalBudget) {
+        int safeTotalBudget = Math.max(0, totalBudget);
+        LinkedHashSet<Long> batch = new LinkedHashSet<>();
+        var urgentIt = urgent.iterator();
+        while (urgentIt.hasNext() && batch.size() < safeTotalBudget) {
+            batch.add(urgentIt.next());
+            urgentIt.remove();
+        }
+        int remainingNormal = Math.min(Math.max(0, normalBudget), safeTotalBudget - batch.size());
+        var normalIt = normal.iterator();
+        while (normalIt.hasNext() && remainingNormal-- > 0) {
+            batch.add(normalIt.next());
+            normalIt.remove();
+        }
+        return batch;
     }
 
     public synchronized void clearStressSources(Level level) {
@@ -503,16 +581,25 @@ public final class StaticRopeChunkRegistry {
                 nextConnectionSections, nextMeshedSections);
 
         bySection = Map.copyOf(nextBySection);
+        publishedWatchdogSections.retainAll(nextBySection.keySet());
+        publishedWatchdogSections.addAll(nextBySection.keySet());
         byConnection = nextByConnection.isEmpty() ? Map.of() : Map.copyOf(nextByConnection);
         if (!bakedAttachments.isEmpty()) {
             ArrayList<RopeAttachmentRenderer.BakedAttachment> nextAttachments = new ArrayList<>(
                     bakedAttachments.size());
+            Map<UUID, List<RopeAttachmentRenderer.BakedAttachment>> retiringCopies = new HashMap<>();
             for (RopeAttachmentRenderer.BakedAttachment attachment : bakedAttachments) {
                 if (!removing.contains(attachment.connectionId())) {
                     nextAttachments.add(attachment);
+                } else if (retiring.contains(attachment.connectionId())) {
+                    retiringCopies.computeIfAbsent(attachment.connectionId(), ignored -> new ArrayList<>())
+                            .add(attachment);
                 }
             }
             bakedAttachments = nextAttachments.isEmpty() ? List.of() : List.copyOf(nextAttachments);
+            for (Map.Entry<UUID, List<RopeAttachmentRenderer.BakedAttachment>> entry : retiringCopies.entrySet()) {
+                retiringAttachments.put(entry.getKey(), List.copyOf(entry.getValue()));
+            }
         }
         claimed = Set.copyOf(nextClaimed);
         claimedFromSim = Set.copyOf(nextClaimedFromSim);
@@ -523,7 +610,6 @@ public final class StaticRopeChunkRegistry {
         connectionSections.clear();
         connectionSections.putAll(nextConnectionSections);
         highLodEntryDebounce.keySet().removeAll(removing);
-        highLodExitDebounce.keySet().removeAll(removing);
         pendingLightRebakes.removeAll(removing);
         bakedWithMissingAnchors.removeAll(removing);
         sectionsAwaitingMesh.removeIf(section -> !nextBySection.containsKey(section));
@@ -532,7 +618,7 @@ public final class StaticRopeChunkRegistry {
                 sectionsAwaitingMesh.add(section);
             }
         }
-        markSectionsDirty(dirty);
+        markSectionsDirty(dirty, true);
         if (!retiring.isEmpty() && !dirty.isEmpty()) {
             Map<Long, Long> targets = new HashMap<>();
             for (long section : dirty) {
@@ -563,16 +649,22 @@ public final class StaticRopeChunkRegistry {
         if (ids.isEmpty())
             return;
         highLodEntryDebounce.keySet().removeAll(ids);
-        highLodExitDebounce.keySet().removeAll(ids);
         long now = level.getGameTime();
         long effectiveUntil = Math.max(untilTick, now + CHUNK_MESH_DYNAMIC_HOLD_MIN_TICKS);
+        Set<UUID> newlyHeldPublished = new HashSet<>();
         for (UUID id : ids) {
             Long previous = dynamicHoldUntil.get(id);
             if (previous == null || previous < effectiveUntil) {
                 dynamicHoldUntil.put(id, effectiveUntil);
             }
+            if (previous == null && (claimed.contains(id) || connectionSections.containsKey(id)
+                    || byConnection.containsKey(id))) {
+                newlyHeldPublished.add(id);
+            }
         }
-        invalidateConnections(level, ids);
+        if (!newlyHeldPublished.isEmpty()) {
+            invalidateConnections(level, newlyHeldPublished);
+        }
     }
 
     public synchronized Set<UUID> invalidateNearBlock(ClientLevel level, BlockPos pos) {
@@ -661,9 +753,7 @@ public final class StaticRopeChunkRegistry {
         if (now == lastMaintenanceTick)
             return;
         lastMaintenanceTick = now;
-        lodDistanceSqr = lodDistanceByConnection == null || lodDistanceByConnection.isEmpty()
-                ? Map.of()
-                : Map.copyOf(lodDistanceByConnection);
+        updateHighLodConnections(lodDistanceByConnection);
         pruneDynamicHolds(now);
         boolean enabled = ClientTuning.MODE_CHUNK_MESH_STATIC_ROPES.get()
                 && ClientTuning.MODE_RENDER3D.get();
@@ -679,8 +769,10 @@ public final class StaticRopeChunkRegistry {
                 }
             }
         }
-        Set<UUID> desired = new HashSet<>();
-        Set<UUID> desiredFromSim = new HashSet<>();
+        Set<UUID> desired = desiredScratch;
+        Set<UUID> desiredFromSim = desiredFromSimScratch;
+        desired.clear();
+        desiredFromSim.clear();
         int eligible = 0;
         int waitingQuiet = 0;
         int readyFromSim = 0;
@@ -829,6 +921,8 @@ public final class StaticRopeChunkRegistry {
         nextMeshedSections.retainAll(nextBySection.keySet());
         nextMeshedSections.removeAll(changedSections);
         bySection = Map.copyOf(nextBySection);
+        publishedWatchdogSections.retainAll(nextBySection.keySet());
+        publishedWatchdogSections.addAll(nextBySection.keySet());
         byConnection = Map.copyOf(nextByConnection);
         bakedAttachments = nextAttachments.isEmpty() ? List.of() : List.copyOf(nextAttachments);
         meshedSections = nextMeshedSections.isEmpty() ? Set.of() : Set.copyOf(nextMeshedSections);
@@ -837,7 +931,7 @@ public final class StaticRopeChunkRegistry {
         acceptedTick.keySet().retainAll(acceptedConnections);
         sectionsAwaitingMesh.addAll(changedSections);
         pendingLightRebakes.removeAll(completed);
-        markSectionsDirty(changedSections);
+        markSectionsDirty(changedSections, true);
     }
 
     private void rebuild(Level level) {
@@ -865,6 +959,7 @@ public final class StaticRopeChunkRegistry {
             return;
         Set<Long> toDirty = new HashSet<>(bySection.keySet());
         bySection = Map.of();
+        publishedWatchdogSections.clear();
         byConnection = Map.of();
         bakedAttachments = List.of();
         claimed = Set.of();
@@ -876,13 +971,13 @@ public final class StaticRopeChunkRegistry {
         connectionSections.clear();
         dynamicHoldUntil.clear();
         retiringMeshes.clear();
+        retiringAttachments.clear();
         sectionGeneration.clear();
         compiledGeneration.clear();
         highLodEntryDebounce.clear();
-        highLodExitDebounce.clear();
-        lodDistanceSqr = Map.of();
+        highLodConnections.clear();
         connectionSyncDirty = false;
-        markSectionsDirty(toDirty);
+        markSectionsDirty(toDirty, true);
     }
 
     private static boolean staticMeshEnabled() {
@@ -947,6 +1042,7 @@ public final class StaticRopeChunkRegistry {
             publishedBySection.put(e.getKey(), List.copyOf(e.getValue()));
         }
 
+        Set<Long> previouslyMeshedSections = meshedSections;
         Set<Long> toDirty = changedSectionKeys(bySection, publishedBySection);
         HashSet<Long> nextMeshedSections = new HashSet<>(meshedSections);
         nextMeshedSections.retainAll(publishedBySection.keySet());
@@ -957,6 +1053,8 @@ public final class StaticRopeChunkRegistry {
         Map<UUID, Long> nextClaimTick = copyClaimTicks(next.claimed, now);
 
         bySection = Map.copyOf(publishedBySection);
+        publishedWatchdogSections.retainAll(publishedBySection.keySet());
+        publishedWatchdogSections.addAll(publishedBySection.keySet());
         byConnection = next.byConnection.isEmpty() ? Map.of() : Map.copyOf(next.byConnection);
         bakedAttachments = next.bakedAttachments.isEmpty() ? List.of() : List.copyOf(next.bakedAttachments);
         claimed = Set.copyOf(next.claimed);
@@ -966,7 +1064,6 @@ public final class StaticRopeChunkRegistry {
         acceptedTick.keySet().retainAll(acceptedConnections);
         claimedFromSim = Set.copyOf(next.claimedFromSim);
         highLodEntryDebounce.keySet().removeAll(next.claimed);
-        highLodExitDebounce.keySet().retainAll(next.claimed);
         sectionsAwaitingMesh.clear();
         sectionsAwaitingMesh.addAll(toDirty);
         connectionSections.clear();
@@ -975,7 +1072,14 @@ public final class StaticRopeChunkRegistry {
         pendingLightRebakes.clear();
         connectionSyncDirty = false;
 
-        markSectionsDirty(toDirty);
+        HashSet<Long> urgentDirty = new HashSet<>(toDirty);
+        urgentDirty.retainAll(previouslyMeshedSections);
+        markSectionsDirty(urgentDirty, true);
+        if (urgentDirty.size() != toDirty.size()) {
+            HashSet<Long> newDirty = new HashSet<>(toDirty);
+            newDirty.removeAll(urgentDirty);
+            markSectionsDirty(newDirty, false);
+        }
     }
 
     private static HashSet<UUID> acceptedConnectionsForSections(
@@ -1099,33 +1203,34 @@ public final class StaticRopeChunkRegistry {
     }
 
     private boolean isMeshEligible(UUID connectionId, RopeSimulation sim, long currentTick) {
+        // A rope inside its configured wind-physics range must remain dynamic for the
+        // whole wind cycle, including calm gaps. Baking during each gap and retiring
+        // on the next gust repeatedly rebuilds chunk sections and produces visible
+        // handoff stalls.
+        if (sim.hasEnabledWindPhysics()) {
+            highLodEntryDebounce.remove(connectionId);
+            return false;
+        }
         if (isQuiescent(connectionId, sim, currentTick)) {
             highLodEntryDebounce.remove(connectionId);
-            highLodExitDebounce.remove(connectionId);
             return true;
         }
         if (isWindCoolingDown(sim.lastWindActiveTick(), currentTick)) {
             highLodEntryDebounce.remove(connectionId);
-            highLodExitDebounce.remove(connectionId);
             return false;
         }
         if (!claimed.contains(connectionId)) {
-            highLodExitDebounce.remove(connectionId);
             return isHighLodEntryStable(connectionId, sim);
         }
         highLodEntryDebounce.remove(connectionId);
-        if (!isHighLod(connectionId)) {
-            highLodExitDebounce.remove(connectionId);
+        if (!shouldRetainClaim(sim.maxNodeMotionSqr())) {
             return false;
         }
-        ExitDebounce previous = highLodExitDebounce.get(connectionId);
-        ExitDebounce next = advanceExitDebounce(previous, sim.lastSteppedTick(), sim.maxNodeMotionSqr());
-        if (next == null) {
-            highLodExitDebounce.remove(connectionId);
-            return false;
-        }
-        highLodExitDebounce.put(connectionId, next);
-        return next.nonQuietSteps() < HIGH_LOD_EXIT_DEBOUNCE_STEPS;
+        return true;
+    }
+
+    static boolean shouldRetainClaim(double motionSqr) {
+        return motionSqr < HIGH_LOD_HARD_EXIT_MOTION_SQR;
     }
 
     static boolean isWindCoolingDown(long lastWindActiveTick, long currentTick) {
@@ -1150,12 +1255,22 @@ public final class StaticRopeChunkRegistry {
     }
 
     private boolean isHighLod(UUID connectionId) {
-        Double distanceSqr = lodDistanceSqr.get(connectionId);
-        if (distanceSqr == null) {
-            return false;
+        return highLodConnections.contains(connectionId);
+    }
+
+    private void updateHighLodConnections(Map<UUID, Double> lodDistanceByConnection) {
+        highLodConnections.clear();
+        if (lodDistanceByConnection == null || lodDistanceByConnection.isEmpty()) {
+            return;
         }
         double threshold = ClientTuning.LOD_STRIDE4_DISTANCE.get();
-        return distanceSqr > threshold * threshold;
+        double thresholdSqr = threshold * threshold;
+        for (Map.Entry<UUID, Double> entry : lodDistanceByConnection.entrySet()) {
+            Double distanceSqr = entry.getValue();
+            if (distanceSqr != null && distanceSqr > thresholdSqr) {
+                highLodConnections.add(entry.getKey());
+            }
+        }
     }
 
     static ExitDebounce advanceExitDebounce(ExitDebounce previous, long steppedTick, double motionSqr) {
@@ -1191,6 +1306,7 @@ public final class StaticRopeChunkRegistry {
         if (!retiringMeshes.isEmpty()) {
             retiringMeshes.entrySet().removeIf(entry -> retirementReleased(entry.getValue(), currentTick));
         }
+        retiringAttachments.keySet().removeIf(id -> !retiringMeshes.containsKey(id));
     }
 
     private static boolean retirementReleased(RetiringMesh retiring, long currentTick) {
@@ -1210,14 +1326,23 @@ public final class StaticRopeChunkRegistry {
         return level.getChunk(cx, cz, ChunkStatus.FULL, false) != null;
     }
 
-    private void markSectionsDirty(Set<Long> sectionKeys) {
+    private void markSectionsDirty(Set<Long> sectionKeys, boolean urgent) {
         if (sectionKeys.isEmpty())
             return;
         for (long section : sectionKeys) {
             sectionGeneration.put(section, sectionGeneration.getOrDefault(section, 0L) + 1L);
         }
-        pendingDirtySections.addAll(sectionKeys);
-        debugDirtyQueue = pendingDirtySections.size();
+        if (urgent) {
+            pendingDirtySections.removeAll(sectionKeys);
+            pendingUrgentDirtySections.addAll(sectionKeys);
+        } else {
+            for (long key : sectionKeys) {
+                if (!pendingUrgentDirtySections.contains(key)) {
+                    pendingDirtySections.add(key);
+                }
+            }
+        }
+        debugDirtyQueue = pendingDirtySections.size() + pendingUrgentDirtySections.size();
     }
 
     private static void submitDirtySectionsNow(Minecraft mc, Set<Long> sectionKeys) {
@@ -1253,6 +1378,42 @@ public final class StaticRopeChunkRegistry {
         debugReadyAnchorBake = 0;
         debugDirtyQueue = 0;
         debugDirtyFlushedLastTick = 0;
+    }
+
+    static boolean buildRetryDue(long submittedAt, long currentTick, int retryTicks) {
+        return submittedAt == Long.MIN_VALUE
+                || currentTick < submittedAt
+                || currentTick - submittedAt >= Math.max(1, retryTicks);
+    }
+
+    static boolean watchdogProbeDue(long lastProbeTick, long currentTick, int intervalTicks) {
+        return lastProbeTick == Long.MIN_VALUE
+                || currentTick < lastProbeTick
+                || currentTick - lastProbeTick >= Math.max(1, intervalTicks);
+    }
+
+    static Set<Long> queueDueUnmeshedRetries(
+            Set<Long> awaiting, Set<Long> published, Set<Long> meshed,
+            Set<Long> pendingNormal, Set<Long> pendingUrgent,
+            Map<Long, Long> lastSubmittedAt, long currentTick, int retryTicks, int budget) {
+        if (awaiting.isEmpty()) {
+            return Set.of();
+        }
+        awaiting.removeIf(key -> !published.contains(key) || meshed.contains(key));
+        LinkedHashSet<Long> queued = new LinkedHashSet<>();
+        for (long key : awaiting) {
+            if (queued.size() >= Math.max(0, budget)) {
+                break;
+            }
+            if (pendingNormal.contains(key) || pendingUrgent.contains(key)) {
+                continue;
+            }
+            long submittedAt = lastSubmittedAt.getOrDefault(key, Long.MIN_VALUE);
+            if (buildRetryDue(submittedAt, currentTick, retryTicks)) {
+                queued.add(key);
+            }
+        }
+        return queued.isEmpty() ? Set.of() : Set.copyOf(queued);
     }
 
     static boolean generationsReached(Map<Long, Long> targets, Map<Long, Long> compiled) {

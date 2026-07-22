@@ -33,7 +33,7 @@ final class ServerRopeCurve {
     private static final int CACHE_MAX_ENTRIES = 512;
     private static final long STATIC_CACHE_MAX_AGE_TICKS = 100L;
     private static final Map<CacheKey, CacheEntry> CACHE = new HashMap<>();
-    private static long terrainVersion;
+    private static final Map<ResourceKey<Level>, Long> TERRAIN_VERSIONS = new HashMap<>();
 
     private ServerRopeCurve() {
     }
@@ -47,13 +47,19 @@ final class ServerRopeCurve {
             return from(a, b, tuning, level, connection);
         }
         long now = level.getGameTime();
-        CacheKey key = new CacheKey(level.dimension(), connection.id(), SuperLeadSavedData.get(level).generation(),
-            connection.physicsPreset(), tuning, vecKey(a), vecKey(b), terrainVersion);
+        CacheKey key = new CacheKey(level.dimension(), connectionGeometry(connection),
+            connection.physicsPreset(), tuning, vecKey(a), vecKey(b), terrainVersion(level));
         CacheEntry cached = CACHE.get(key);
         if (cached != null && now - cached.createdTick() <= STATIC_CACHE_MAX_AGE_TICKS) {
             return cached.shape();
         }
         Shape shape = from(a, b, tuning, level, connection);
+        // Keep at most one geometric variant per connection. Endpoint, preset or
+        // tuning changes are rare, while power and transfer-state updates are common
+        // and no longer invalidate unrelated ropes through a dimension-wide revision.
+        CACHE.keySet().removeIf(existing -> existing.dimension().equals(key.dimension())
+                && existing.geometry().connectionId().equals(key.geometry().connectionId())
+                && !existing.equals(key));
         if (CACHE.size() >= CACHE_MAX_ENTRIES) {
             CACHE.clear();
         }
@@ -67,11 +73,29 @@ final class ServerRopeCurve {
 
     static void invalidateAll() {
         CACHE.clear();
+        TERRAIN_VERSIONS.clear();
     }
 
-    static void invalidateTerrain() {
-        terrainVersion++;
-        CACHE.clear();
+    static void invalidateTerrain(ServerLevel level) {
+        if (level == null) {
+            return;
+        }
+        ResourceKey<Level> dimension = level.dimension();
+        TERRAIN_VERSIONS.put(dimension, TERRAIN_VERSIONS.getOrDefault(dimension, 0L) + 1L);
+        CACHE.keySet().removeIf(key -> key.dimension().equals(dimension));
+    }
+
+    static void clear(ServerLevel level) {
+        if (level == null) {
+            return;
+        }
+        ResourceKey<Level> dimension = level.dimension();
+        TERRAIN_VERSIONS.remove(dimension);
+        CACHE.keySet().removeIf(key -> key.dimension().equals(dimension));
+    }
+
+    private static long terrainVersion(ServerLevel level) {
+        return TERRAIN_VERSIONS.getOrDefault(level.dimension(), 0L);
     }
 
     private static boolean shouldCache(ServerLevel level, LeadConnection connection, ServerPhysicsTuning tuning) {
@@ -80,6 +104,10 @@ final class ServerRopeCurve {
 
     private static VecKey vecKey(Vec3 vec) {
         return new VecKey(Double.doubleToLongBits(vec.x), Double.doubleToLongBits(vec.y), Double.doubleToLongBits(vec.z));
+    }
+
+    static ConnectionGeometry connectionGeometry(LeadConnection connection) {
+        return new ConnectionGeometry(connection.id(), connection.from().pos().asLong(), connection.to().pos().asLong());
     }
 
     private static Shape from(Vec3 a, Vec3 b, ServerPhysicsTuning tuning, ServerLevel level,
@@ -660,7 +688,10 @@ final class ServerRopeCurve {
     private record VecKey(long x, long y, long z) {
     }
 
-    private record CacheKey(ResourceKey<Level> dimension, UUID connectionId, long ropeGeneration,
+    static record ConnectionGeometry(UUID connectionId, long fromPos, long toPos) {
+    }
+
+    private record CacheKey(ResourceKey<Level> dimension, ConnectionGeometry geometry,
             String physicsPreset, ServerPhysicsTuning tuning, VecKey a, VecKey b, long terrainVersion) {
     }
 

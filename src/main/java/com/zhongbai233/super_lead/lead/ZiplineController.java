@@ -52,9 +52,11 @@ public final class ZiplineController {
     private static final double KNOT_FACING_TIE_EPSILON = 0.06D;
     public static final double START_ATTACH_DISTANCE = 3.0D;
     private static final double START_ATTACH_DISTANCE_SQR = START_ATTACH_DISTANCE * START_ATTACH_DISTANCE;
+    private static final long SNAPSHOT_INTERVAL_TICKS = 2L;
 
     private static final Map<NetworkKey, Map<UUID, RiderState>> STATES = new HashMap<>();
-    private static final Map<NetworkKey, Integer> LAST_SENT_COUNT = new HashMap<>();
+    private static final Map<NetworkKey, Map<UUID, UUID>> LAST_SENT_RIDERS = new HashMap<>();
+    private static final Map<NetworkKey, Long> LAST_SENT_TICKS = new HashMap<>();
 
     private ZiplineController() {
     }
@@ -116,6 +118,7 @@ public final class ZiplineController {
         player.setOnGround(false);
         player.resetFallDistance();
         player.sendOverlayMessage(Component.translatable("message.super_lead.zipline_dismount"));
+        broadcastSnapshot(level, playersById(level), states, true, true);
         return true;
     }
 
@@ -123,16 +126,21 @@ public final class ZiplineController {
         NetworkKey key = NetworkKey.of(level);
         Map<UUID, RiderState> states = STATES.get(key);
         if (states == null || states.isEmpty()) {
-            broadcast(level, List.of());
+            broadcastSnapshot(level, Map.of(), null, false, false);
             return;
         }
 
         Map<UUID, ServerPlayer> playersById = playersById(level);
         List<UUID> remove = new ArrayList<>();
+        boolean stateChanged = false;
         for (RiderState state : states.values()) {
             ServerPlayer player = playersById.get(state.playerId);
+            UUID previousConnectionId = state.connectionId;
             if (player == null || !tickOne(level, player, state)) {
                 remove.add(state.playerId);
+                stateChanged = true;
+            } else if (!previousConnectionId.equals(state.connectionId)) {
+                stateChanged = true;
             }
         }
 
@@ -146,7 +154,7 @@ public final class ZiplineController {
         if (states.isEmpty()) {
             STATES.remove(key);
         }
-        broadcast(level, snapshot(playersById, states));
+        broadcastSnapshot(level, playersById, states, false, stateChanged);
     }
 
     public static void stopEverywhere(ServerPlayer player) {
@@ -159,6 +167,36 @@ public final class ZiplineController {
                 finish(player, removed, Vec3.ZERO);
             }
         }
+        if (player.level() instanceof ServerLevel level) {
+            NetworkKey key = NetworkKey.of(level);
+            Map<UUID, RiderState> states = STATES.get(key);
+            if (states != null && states.isEmpty()) {
+                STATES.remove(key);
+                states = null;
+            }
+            broadcastSnapshot(level, playersById(level), states, true, true);
+        }
+    }
+
+    public static void clear(ServerLevel level) {
+        if (level == null) {
+            return;
+        }
+        NetworkKey key = NetworkKey.of(level);
+        Map<UUID, RiderState> states = STATES.remove(key);
+        LAST_SENT_RIDERS.remove(key);
+        LAST_SENT_TICKS.remove(key);
+        if (states == null || states.isEmpty()) {
+            return;
+        }
+        Map<UUID, ServerPlayer> players = playersById(level);
+        for (RiderState state : states.values()) {
+            ServerPlayer player = players.get(state.playerId);
+            if (player != null) {
+                finish(player, state, Vec3.ZERO);
+            }
+        }
+        PacketDistributor.sendToPlayersInDimension(level, new SyncZiplines(List.of()));
     }
 
     public static boolean isZiplining(Player player) {
@@ -466,15 +504,41 @@ public final class ZiplineController {
         return entries;
     }
 
-    private static void broadcast(ServerLevel level, List<SyncZiplines.Entry> entries) {
+    private static Map<UUID, UUID> riderSignature(Map<UUID, RiderState> states) {
+        if (states == null || states.isEmpty()) {
+            return Map.of();
+        }
+        Map<UUID, UUID> signature = new HashMap<>(states.size());
+        for (RiderState state : states.values()) {
+            signature.put(state.playerId, state.connectionId);
+        }
+        return signature;
+    }
+
+    private static void broadcastSnapshot(ServerLevel level, Map<UUID, ServerPlayer> playersById,
+            Map<UUID, RiderState> states, boolean force, boolean stateChanged) {
         NetworkKey key = NetworkKey.of(level);
-        int count = entries.size();
-        int previous = LAST_SENT_COUNT.getOrDefault(key, 0);
-        if (count == 0 && previous == 0) {
+        Map<UUID, UUID> previous = LAST_SENT_RIDERS.get(key);
+        long now = level.getGameTime();
+        boolean hasCurrent = states != null && !states.isEmpty();
+        boolean hadPrevious = previous != null && !previous.isEmpty();
+        long lastSentTick = LAST_SENT_TICKS.getOrDefault(key, Long.MIN_VALUE);
+        if (!shouldBuildSnapshot(force, stateChanged, hasCurrent, hadPrevious, lastSentTick, now)) {
             return;
         }
-        LAST_SENT_COUNT.put(key, count);
+        Map<UUID, UUID> signature = riderSignature(states);
+        List<SyncZiplines.Entry> entries = snapshot(playersById, states);
+        LAST_SENT_RIDERS.put(key, Map.copyOf(signature));
+        LAST_SENT_TICKS.put(key, now);
         PacketDistributor.sendToPlayersInDimension(level, new SyncZiplines(entries));
+    }
+
+    static boolean shouldBuildSnapshot(boolean force, boolean stateChanged,
+            boolean hasCurrent, boolean hadPrevious, long lastSentTick, long now) {
+        if (force || stateChanged || hasCurrent != hadPrevious) {
+            return true;
+        }
+        return hasCurrent && now - lastSentTick >= SNAPSHOT_INTERVAL_TICKS;
     }
 
     private static Map<UUID, ServerPlayer> playersById(ServerLevel level) {

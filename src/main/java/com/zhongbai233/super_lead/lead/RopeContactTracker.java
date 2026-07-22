@@ -9,6 +9,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import net.minecraft.network.protocol.game.ClientboundSetEntityMotionPacket;
 import net.minecraft.server.level.ServerLevel;
@@ -43,16 +44,15 @@ public final class RopeContactTracker {
     private static final long CLIENT_CONTACT_MIN_INTERVAL_TICKS = 1L;
     private static final double CLIENT_REPORT_DEFLECTION_FRACTION = 0.35D;
     private static final double CLIENT_REPORT_MAX_DEPTH = 0.75D;
+    private static final int MAX_VALID_CONTACT_ROPES_PER_PLAYER_TICK = 8;
     private static final Map<NetworkKey, Map<ContactKey, Long>> CLIENT_CONTACT_LAST_ACCEPTED = new HashMap<>();
-    // Rigid-rope inelastic contact: vanilla jump speed for kicking off a rope
-    // perch.
-    private static final double CONTACT_TOP_JUMP_SPEED = 0.42D;
-    private static final double CONTACT_SIDE_HARD_DEPTH_FRACTION = 0.65D;
-    private static final double CONTACT_EXIT_INPUT_DOT = -0.50D;
+    private static final Map<NetworkKey, Map<UUID, ContactTickBudget>> CLIENT_CONTACT_BUDGETS = new HashMap<>();
     private static final double NORMAL_EPSILON = 1.0e-5D;
     private static final long CLIENT_CONTACT_TTL_TICKS = 5L;
 
-    private static final Map<NetworkKey, Integer> LAST_SENT_COUNT = new HashMap<>();
+    private static final long SNAPSHOT_INTERVAL_TICKS = 2L;
+    private static final Map<NetworkKey, Set<ContactKey>> LAST_SENT_KEYS = new HashMap<>();
+    private static final Map<NetworkKey, Long> LAST_SENT_TICKS = new HashMap<>();
     private static final Map<NetworkKey, Map<ContactKey, AcceptedClientContact>> CLIENT_CONTACTS = new HashMap<>();
 
     private static volatile long lastTickNanos;
@@ -102,17 +102,15 @@ public final class RopeContactTracker {
         long now = level.getGameTime();
         NetworkKey dim = NetworkKey.of(level);
         ContactKey key = new ContactKey(report.ropeId(), player.getUUID());
+        java.util.Optional<LeadConnection> opt = SuperLeadNetwork.findConnectionById(level, report.ropeId());
+        if (opt.isEmpty())
+            return;
         Map<ContactKey, Long> lastAccepted = CLIENT_CONTACT_LAST_ACCEPTED.computeIfAbsent(dim,
                 ignored -> new HashMap<>());
         Long lastTick = lastAccepted.get(key);
         if (lastTick != null && now - lastTick < CLIENT_CONTACT_MIN_INTERVAL_TICKS) {
             return;
         }
-        lastAccepted.put(key, now);
-
-        java.util.Optional<LeadConnection> opt = SuperLeadNetwork.findConnectionById(level, report.ropeId());
-        if (opt.isEmpty())
-            return;
         LeadConnection connection = opt.get();
         boolean normalContactKind = connection.kind() == LeadKind.NORMAL || connection.kind() == LeadKind.REDSTONE;
 
@@ -177,6 +175,9 @@ public final class RopeContactTracker {
         }
         if (contact == null)
             return;
+        if (!tryConsumeContactBudget(dim, player.getUUID(), now))
+            return;
+        lastAccepted.put(key, now);
 
         ParrotRopePerchController.disturb(level, connection.id(), contact.point());
 
@@ -232,6 +233,32 @@ public final class RopeContactTracker {
         return Math.max(0.015D, Math.min(VISUAL_MAX_DEFLECT, Math.min(slackLimited, tensionLimited)));
     }
 
+    private static boolean tryConsumeContactBudget(NetworkKey dimension, UUID playerId, long tick) {
+        Map<UUID, ContactTickBudget> budgets = CLIENT_CONTACT_BUDGETS.computeIfAbsent(
+                dimension, ignored -> new HashMap<>());
+        ContactTickBudget previous = budgets.get(playerId);
+        ContactTickBudget next = nextContactBudget(previous, tick, MAX_VALID_CONTACT_ROPES_PER_PLAYER_TICK);
+        if (next == null) {
+            return false;
+        }
+        budgets.put(playerId, next);
+        return true;
+    }
+
+    static ContactTickBudget nextContactBudget(ContactTickBudget previous, long tick, int maxContacts) {
+        int safeMax = Math.max(0, maxContacts);
+        if (safeMax == 0) {
+            return null;
+        }
+        if (previous == null || previous.tick() != tick) {
+            return new ContactTickBudget(tick, 1);
+        }
+        if (previous.count() >= safeMax) {
+            return null;
+        }
+        return new ContactTickBudget(tick, previous.count() + 1);
+    }
+
     private static Vec3 perpendicularToTangent(Vec3 normal, double tangentX, double tangentY, double tangentZ) {
         double tLenSqr = tangentX * tangentX + tangentY * tangentY + tangentZ * tangentZ;
         if (tLenSqr <= 1.0e-10D) {
@@ -254,6 +281,13 @@ public final class RopeContactTracker {
         NetworkKey dim = NetworkKey.of(level);
         Map<ContactKey, AcceptedClientContact> contacts = CLIENT_CONTACTS.get(dim);
         Map<ContactKey, Long> lastAccepted = CLIENT_CONTACT_LAST_ACCEPTED.get(dim);
+        Map<UUID, ContactTickBudget> budgets = CLIENT_CONTACT_BUDGETS.get(dim);
+        if (budgets != null) {
+            budgets.entrySet().removeIf(e -> e.getValue().tick() < now);
+            if (budgets.isEmpty()) {
+                CLIENT_CONTACT_BUDGETS.remove(dim);
+            }
+        }
         if (lastAccepted != null) {
             lastAccepted.entrySet().removeIf(e -> now - e.getValue() > CLIENT_CONTACT_TTL_TICKS);
             if (lastAccepted.isEmpty()) {
@@ -261,8 +295,8 @@ public final class RopeContactTracker {
             }
         }
         if (contacts == null || contacts.isEmpty()) {
-            if (LAST_SENT_COUNT.getOrDefault(dim, 0) > 0) {
-                broadcast(level, List.of());
+            if (hasPreviouslySentContacts(dim)) {
+                broadcast(level, List.of(), Set.of(), now);
             }
             lastContacts = 0;
             return;
@@ -271,17 +305,22 @@ public final class RopeContactTracker {
         contacts.entrySet().removeIf(e -> now - e.getValue().tick() > CLIENT_CONTACT_TTL_TICKS);
         if (contacts.isEmpty()) {
             CLIENT_CONTACTS.remove(dim);
-            broadcast(level, List.of());
+            broadcast(level, List.of(), Set.of(), now);
             lastContacts = 0;
             return;
         }
 
+        Set<ContactKey> currentKeys = contacts.keySet();
+        if (!shouldBroadcast(dim, currentKeys, now)) {
+            lastContacts = contacts.size();
+            return;
+        }
         List<RopeContactPulse.Entry> pulse = new ArrayList<>(contacts.size());
         for (AcceptedClientContact c : contacts.values()) {
             pulse.add(new RopeContactPulse.Entry(c.ropeId(), c.playerId(), c.t(), c.dx(), c.dy(), c.dz(),
                     c.push().x(), c.push().z(), c.push().mag()));
         }
-        broadcast(level, pulse);
+        broadcast(level, pulse, currentKeys, now);
         lastContacts = pulse.size();
     }
 
@@ -315,9 +354,9 @@ public final class RopeContactTracker {
             // Foot support is a vertical ground constraint, not a curved-surface
             // normal projection. Keep horizontal motion intact so the rope does not
             // behave like a slippery cylinder under the player's feet.
-            if (jumpDown && v.y < CONTACT_TOP_JUMP_SPEED) {
-                double impulseMag = CONTACT_TOP_JUMP_SPEED - v.y;
-                player.setDeltaMovement(v.x, CONTACT_TOP_JUMP_SPEED, v.z);
+            if (jumpDown && v.y < RopeContactRules.TOP_JUMP_SPEED) {
+                double impulseMag = RopeContactRules.TOP_JUMP_SPEED - v.y;
+                player.setDeltaMovement(v.x, RopeContactRules.TOP_JUMP_SPEED, v.z);
                 player.hurtMarked = true;
                 player.connection.send(new ClientboundSetEntityMotionPacket(player));
                 return new AppliedPush(0.0F, 0.0F, (float) impulseMag, (float) depthRatio);
@@ -336,7 +375,7 @@ public final class RopeContactTracker {
         if (n == null)
             return AppliedPush.NONE;
 
-        double hardDepth = radius * CONTACT_SIDE_HARD_DEPTH_FRACTION;
+        double hardDepth = radius * RopeContactRules.SIDE_HARD_DEPTH_FRACTION;
         if (depth < hardDepth)
             return AppliedPush.NONE;
 
@@ -344,7 +383,7 @@ public final class RopeContactTracker {
         double inputDot = inputX * n.x + inputZ * n.z;
         // Let the player escape if they have any input away from the rope or are
         // already moving away — don't fight their intent with position pushes.
-        if (vn >= 0.0D || inputDot > CONTACT_EXIT_INPUT_DOT) {
+        if (!RopeContactRules.shouldBlockSideMotion(vn, inputDot)) {
             player.hurtMarked = true;
             return new AppliedPush(0.0F, 0.0F, 0.0F, (float) depthRatio);
         }
@@ -503,33 +542,52 @@ public final class RopeContactTracker {
         return new Vec3(x / len, y / len, z / len);
     }
 
-    private static void broadcast(ServerLevel level, List<RopeContactPulse.Entry> pulse) {
+    private static boolean hasPreviouslySentContacts(NetworkKey key) {
+        Set<ContactKey> previous = LAST_SENT_KEYS.get(key);
+        return previous != null && !previous.isEmpty();
+    }
+
+    private static boolean shouldBroadcast(NetworkKey key, Set<ContactKey> currentKeys, long now) {
+        Set<ContactKey> previous = LAST_SENT_KEYS.get(key);
+        if (previous == null || !previous.equals(currentKeys)) {
+            return true;
+        }
+        return now - LAST_SENT_TICKS.getOrDefault(key, Long.MIN_VALUE) >= SNAPSHOT_INTERVAL_TICKS;
+    }
+
+    private static void broadcast(ServerLevel level, List<RopeContactPulse.Entry> pulse,
+            Set<ContactKey> currentKeys, long now) {
         NetworkKey key = NetworkKey.of(level);
-        Integer last = LAST_SENT_COUNT.get(key);
-        if (pulse.isEmpty() && (last == null || last == 0))
-            return;
-        LAST_SENT_COUNT.put(key, pulse.size());
+        LAST_SENT_KEYS.put(key, Set.copyOf(currentKeys));
+        LAST_SENT_TICKS.put(key, now);
         PacketDistributor.sendToPlayersInDimension(level, new RopeContactPulse(pulse));
     }
 
     /** Forget per-dimension state for a level (e.g. on shutdown). */
     public static void clear(ServerLevel level) {
         NetworkKey key = NetworkKey.of(level);
-        LAST_SENT_COUNT.remove(key);
+        LAST_SENT_KEYS.remove(key);
+        LAST_SENT_TICKS.remove(key);
         CLIENT_CONTACTS.remove(key);
         CLIENT_CONTACT_LAST_ACCEPTED.remove(key);
+        CLIENT_CONTACT_BUDGETS.remove(key);
         RopeTripController.clear(level);
     }
 
     public static void clearAllSims() {
         CLIENT_CONTACTS.clear();
         CLIENT_CONTACT_LAST_ACCEPTED.clear();
-        LAST_SENT_COUNT.clear();
+        CLIENT_CONTACT_BUDGETS.clear();
+        LAST_SENT_KEYS.clear();
+        LAST_SENT_TICKS.clear();
         RopeTripController.clearAll();
         lastContacts = 0;
     }
 
     private record ContactKey(UUID ropeId, UUID playerId) {
+    }
+
+    static record ContactTickBudget(long tick, int count) {
     }
 
     private record ContactEstimate(double t, Vec3 point, Vec3 normal, double depth, double slack) {

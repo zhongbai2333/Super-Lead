@@ -1,6 +1,7 @@
 package com.zhongbai233.super_lead.lead.client.sim;
 
 import com.zhongbai233.super_lead.lead.physics.RopeSagModel;
+import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import java.util.List;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.Vec3;
@@ -16,8 +17,18 @@ import net.minecraft.world.phys.Vec3;
 abstract class RopeSimulationStepper extends RopeSimulationContactConstraints {
     private static final int MAX_CROWDED_SUBSTEPS = 2;
     private static final int MAX_CROWDED_SOLVER_ITERATIONS = 12;
+    private final double[] windNodeWeight;
+    private final double[] windVerticalProfile;
+    private final double[] windSampleScratch = new double[4];
+
     protected RopeSimulationStepper(Vec3 a, Vec3 b, long seed, RopeTuning tuning) {
         super(a, b, seed, tuning);
+        windNodeWeight = new double[nodes];
+        windVerticalProfile = new double[nodes];
+        for (int i = 1; i < nodes - 1; i++) {
+            windNodeWeight[i] = Math.sin(Math.PI * i / (double) segments);
+            windVerticalProfile[i] = verticalWindProfile(i, segments);
+        }
     }
 
     // ============================================================================================
@@ -148,6 +159,10 @@ abstract class RopeSimulationStepper extends RopeSimulationContactConstraints {
         // slack=0 instead of waking a few trapped joints every tick.
         boolean entityPushActive = visualPushEnabled() && !entityContacts.isEmpty();
         boolean forceActive = !forceFields.isEmpty();
+        // step() is also a public compatibility entry and cannot assume the client
+        // scheduler already called hasActiveWind(). Keep the cell cache aligned with
+        // this logical tick before reading it.
+        prepareWindCache(currentTick);
         boolean windActive = windActive(a, b, currentTick);
         if (windActive) {
             lastWindActiveTick = currentTick;
@@ -202,15 +217,14 @@ abstract class RopeSimulationStepper extends RopeSimulationContactConstraints {
                 // turned those teleports into the violent whipping most visible when
                 // low gravity cannot damp the injected transverse energy.
                 double frac = logicalSubstepFraction(t, sub, substeps, delta);
-                Vec3 aInterp = new Vec3(
-                        previousAx + (a.x - previousAx) * frac,
-                        previousAy + (a.y - previousAy) * frac,
-                        previousAz + (a.z - previousAz) * frac);
-                Vec3 bInterp = new Vec3(
-                        previousBx + (b.x - previousBx) * frac,
-                        previousBy + (b.y - previousBy) * frac,
-                        previousBz + (b.z - previousBz) * frac);
-                substep(level, aInterp, bInterp, h, simulationTick, terrainNearby,
+                double interpAx = previousAx + (a.x - previousAx) * frac;
+                double interpAy = previousAy + (a.y - previousAy) * frac;
+                double interpAz = previousAz + (a.z - previousAz) * frac;
+                double interpBx = previousBx + (b.x - previousBx) * frac;
+                double interpBy = previousBy + (b.y - previousBy) * frac;
+                double interpBz = previousBz + (b.z - previousBz) * frac;
+                substep(level, interpAx, interpAy, interpAz, interpBx, interpBy, interpBz,
+                    h, simulationTick, terrainNearby,
                         neighbors, forceFields, entityPushActive ? entityContacts : List.of());
             }
         }
@@ -242,7 +256,8 @@ abstract class RopeSimulationStepper extends RopeSimulationContactConstraints {
     // Substep
     // ============================================================================================
     private void substep(
-            Level level, Vec3 a, Vec3 b, double h, long tick, boolean terrainEnabled,
+            Level level, double ax, double ay, double az, double bx, double by, double bz,
+            double h, long tick, boolean terrainEnabled,
             List<RopeSimulation> neighbors,
             List<RopeForceField> forceFields,
             List<RopeEntityContact> entityContacts) {
@@ -284,14 +299,18 @@ abstract class RopeSimulationStepper extends RopeSimulationContactConstraints {
             y[i] += vy[i] * h;
             z[i] += vz[i] * h;
         }
-        pinEndpoints(a, b);
+        pinEndpoints(ax, ay, az, bx, by, bz);
 
         // 2. Reset XPBD lambdas at substep start
         for (int i = 0; i < segments; i++)
             lambdaDistance[i] = 0.0D;
 
         // 3. Unified constraint loop
-        double targetLen = RopeSagModel.physicsTargetLength(a, b, tuning.slack(), tuning.gravity()) / segments;
+        double chordX = bx - ax;
+        double chordY = by - ay;
+        double chordZ = bz - az;
+        double chord = Math.sqrt(chordX * chordX + chordY * chordY + chordZ * chordZ);
+        double targetLen = RopeSagModel.physicsTargetLength(chord, tuning.slack(), tuning.gravity()) / segments;
         double alphaTilde = tuning.compliance() / (h * h);
         int iterations;
         if (terrainEnabled || !entityContacts.isEmpty() || !forceFields.isEmpty()) {
@@ -328,16 +347,15 @@ abstract class RopeSimulationStepper extends RopeSimulationContactConstraints {
                 solveTerrainConstraints(level);
             if (!neighbors.isEmpty())
                 solveRopeRopeConstraints(neighbors);
-            pinEndpoints(a, b);
+            pinEndpoints(ax, ay, az, bx, by, bz);
             if (canEarlyExitDistanceSolve && it + 1 >= minPasses && maxDistanceError <= distanceConvergedError) {
                 break;
             }
         }
 
         if (!terrainEnabled && entityContacts.isEmpty() && !hasExternalContact(tick)) {
-            solveDistanceConstraints(targetLen, 0.0D, true);
-            solveDistanceConstraints(targetLen, 0.0D, false);
-            pinEndpoints(a, b);
+            finalizeFreeDistanceConstraints(targetLen);
+            pinEndpoints(ax, ay, az, bx, by, bz);
         }
 
         // 4. Reconstruct velocity from position delta
@@ -355,7 +373,7 @@ abstract class RopeSimulationStepper extends RopeSimulationContactConstraints {
             }
         }
         if (tautWeight > 0.0D) {
-            applyTautProjection(a, b, tautWeight, true);
+            applyTautProjection(ax, ay, az, bx, by, bz, tautWeight, true);
         }
     }
 
@@ -410,25 +428,47 @@ abstract class RopeSimulationStepper extends RopeSimulationContactConstraints {
         if (!windEnabled()) {
             return;
         }
-        WindSample wind = windAt(x[nodeIndex], z[nodeIndex], tick);
-        if (wind.envelope() <= 1.0e-5D) {
+        sampleWind(x[nodeIndex], z[nodeIndex], tick, windSampleScratch);
+        double envelope = windSampleScratch[0];
+        if (!isWindEnvelopeActive(envelope)) {
             return;
         }
-        double t = nodeIndex / (double) segments;
-        double nodeWeight = Math.sin(Math.PI * t);
+        double nodeWeight = windNodeWeight[nodeIndex];
         if (nodeWeight <= 1.0e-5D) {
             return;
         }
-        double force = tuning.windStrength() * wind.strengthScale() * wind.envelope() * nodeWeight * gravityScale;
-        vx[nodeIndex] += wind.dirX() * force * h;
-        vz[nodeIndex] += wind.dirZ() * force * h;
+        double force = tuning.windStrength() * windSampleScratch[3] * envelope * nodeWeight * gravityScale;
+        double windX = windSampleScratch[1] * force;
+        double windY = force * tuning.windVerticalLift()
+            * windVerticalProfile[nodeIndex];
+        double windZ = windSampleScratch[2] * force;
+        int before = Math.max(0, nodeIndex - 1);
+        int after = Math.min(nodes - 1, nodeIndex + 1);
+        projectWindOffTangent(windX, windY, windZ,
+            x[after] - x[before], y[after] - y[before], z[after] - z[before], forceScratch);
+        vx[nodeIndex] += forceScratch[0] * h;
+        vy[nodeIndex] += forceScratch[1] * h;
+        vz[nodeIndex] += forceScratch[2] * h;
         // A constant positive lift on every interior node gives the rope a net
         // vertical force, so long spans rise and fall as one object when a gust
         // starts or ends. Keep vertical wind as a local shape disturbance instead:
         // this profile has zero weighted sum across the span and therefore cannot
         // levitate the rope's center of mass.
-        vy[nodeIndex] += force * tuning.windVerticalLift()
-                * verticalWindProfile(nodeIndex, segments) * h;
+    }
+
+    static void projectWindOffTangent(double fx, double fy, double fz,
+            double tx, double ty, double tz, double[] out) {
+        double tangentLenSqr = tx * tx + ty * ty + tz * tz;
+        if (tangentLenSqr <= 1.0e-12D) {
+            out[0] = fx;
+            out[1] = fy;
+            out[2] = fz;
+            return;
+        }
+        double alongScale = (fx * tx + fy * ty + fz * tz) / tangentLenSqr;
+        out[0] = fx - tx * alongScale;
+        out[1] = fy - ty * alongScale;
+        out[2] = fz - tz * alongScale;
     }
 
     static double verticalWindProfile(int nodeIndex, int segmentCount) {
@@ -443,9 +483,19 @@ abstract class RopeSimulationStepper extends RopeSimulationContactConstraints {
         if (!windEnabled() || RopeSagModel.tautProjectionWeight(tuning.slack()) >= 0.98D) {
             return false;
         }
+        if (windProbeMatches(tick, tuning, a, b)) {
+            return windProbeActive;
+        }
         double mx = (a.x + b.x) * 0.5D;
         double mz = (a.z + b.z) * 0.5D;
-        return windAt(mx, mz, tick).envelope() > 0.025D;
+        sampleWind(mx, mz, tick, windSampleScratch);
+        boolean active = isWindEnvelopeActive(windSampleScratch[0]);
+        rememberWindProbe(tick, tuning, a, b, active);
+        return active;
+    }
+
+    static boolean isWindEnvelopeActive(double envelope) {
+        return envelope > 1.0e-5D;
     }
 
     /**
@@ -468,34 +518,44 @@ abstract class RopeSimulationStepper extends RopeSimulationContactConstraints {
      * Per-step cell-center wind cache. Key = ((long)cellX << 32) | (cellZ &
      * 0xFFFFFFFFL).
      */
-    private final java.util.HashMap<Long, WindSample> windCellCache = new java.util.HashMap<>(16);
+    private final Long2ObjectOpenHashMap<WindSample> windCellCache = new Long2ObjectOpenHashMap<>(16);
     private long windCacheTick = Long.MIN_VALUE;
+    private RopeTuning windCacheTuning;
+    private long windProbeTick = Long.MIN_VALUE;
+    private RopeTuning windProbeTuning;
+    private double windProbeAx, windProbeAy, windProbeAz;
+    private double windProbeBx, windProbeBy, windProbeBz;
+    private boolean windProbeActive;
+    private long windQuadTick = Long.MIN_VALUE;
+    private RopeTuning windQuadTuning;
+    private int windQuadX, windQuadZ;
+    private WindSample windQuad00, windQuad10, windQuad01, windQuad11;
     /**
      * Shared constants precomputed once per step to avoid repeated trig & division.
      */
     private double windSharedDirX, windSharedDirZ, windSharedSpeed, windSharedCycleTicks;
     private boolean windSharedReady;
+    private RopeTuning windSharedTuning;
 
-    /**
-     * Clear the per-tick wind cache and invalidate shared constants. Called before
-     * substep loop.
-     */
+    /** Clears cell samples when the logical tick or immutable tuning changes. */
     private void prepareWindCache(long tick) {
-        if (windCacheTick != tick) {
+        if (windCacheTick != tick || windCacheTuning != tuning) {
             windCellCache.clear();
             windCacheTick = tick;
+            windCacheTuning = tuning;
+            windQuadTick = Long.MIN_VALUE;
         }
-        windSharedReady = false;
     }
 
     private void ensureWindShared() {
-        if (windSharedReady)
+        if (windSharedReady && windSharedTuning == tuning)
             return;
         double baseDirRad = Math.toRadians(tuning.windDirectionDeg());
         windSharedDirX = Math.cos(baseDirRad);
         windSharedDirZ = Math.sin(baseDirRad);
         windSharedSpeed = Math.max(1.0e-5D, tuning.windSpeed());
         windSharedCycleTicks = Math.max(8.0D, tuning.windWaveLength() / windSharedSpeed);
+        windSharedTuning = tuning;
         windSharedReady = true;
     }
 
@@ -515,7 +575,7 @@ abstract class RopeSimulationStepper extends RopeSimulationContactConstraints {
      * so every position maps to the correct seed-based wind cell. Cell-center
      * results are cached per tick — nodes sharing cells avoid recomputation.
      */
-    private WindSample windAt(double wx, double wz, long tick) {
+    private void sampleWind(double wx, double wz, long tick, double[] out) {
         ensureWindShared();
 
         double ccx = wx / WIND_CELL_SIZE - 0.5D;
@@ -525,12 +585,62 @@ abstract class RopeSimulationStepper extends RopeSimulationContactConstraints {
         double tx = ccx - ix;
         double tz = ccz - iz;
 
-        WindSample s00 = windAtCellCenterCached(ix, iz, tick);
-        WindSample s10 = windAtCellCenterCached(ix + 1, iz, tick);
-        WindSample s01 = windAtCellCenterCached(ix, iz + 1, tick);
-        WindSample s11 = windAtCellCenterCached(ix + 1, iz + 1, tick);
+        prepareWindQuad(ix, iz, tick);
 
-        return bilinearBlendWind(s00, s10, s01, s11, tx, tz);
+        bilinearBlendWind(windQuad00, windQuad10, windQuad01, windQuad11, tx, tz,
+            windSharedDirX, windSharedDirZ, out);
+    }
+
+    private void prepareWindQuad(int ix, int iz, long tick) {
+        if (windQuadKeyMatches(windQuadTick, windQuadTuning, windQuadX, windQuadZ,
+                tick, tuning, ix, iz)) {
+            return;
+        }
+        windQuad00 = windAtCellCenterCached(ix, iz, tick);
+        windQuad10 = windAtCellCenterCached(ix + 1, iz, tick);
+        windQuad01 = windAtCellCenterCached(ix, iz + 1, tick);
+        windQuad11 = windAtCellCenterCached(ix + 1, iz + 1, tick);
+        windQuadTick = tick;
+        windQuadTuning = tuning;
+        windQuadX = ix;
+        windQuadZ = iz;
+    }
+
+    private boolean windProbeMatches(long tick, RopeTuning currentTuning, Vec3 a, Vec3 b) {
+        return windProbeKeyMatches(windProbeTick, windProbeTuning,
+            windProbeAx, windProbeAy, windProbeAz, windProbeBx, windProbeBy, windProbeBz,
+            tick, currentTuning, a.x, a.y, a.z, b.x, b.y, b.z);
+    }
+
+    private void rememberWindProbe(long tick, RopeTuning currentTuning, Vec3 a, Vec3 b, boolean active) {
+        windProbeTick = tick;
+        windProbeTuning = currentTuning;
+        windProbeAx = a.x;
+        windProbeAy = a.y;
+        windProbeAz = a.z;
+        windProbeBx = b.x;
+        windProbeBy = b.y;
+        windProbeBz = b.z;
+        windProbeActive = active;
+    }
+
+    static boolean sameBits(double a, double b) {
+        return Double.doubleToLongBits(a) == Double.doubleToLongBits(b);
+    }
+
+    static boolean windProbeKeyMatches(long cachedTick, Object cachedTuning,
+            double cachedAx, double cachedAy, double cachedAz,
+            double cachedBx, double cachedBy, double cachedBz,
+            long tick, Object currentTuning,
+            double ax, double ay, double az, double bx, double by, double bz) {
+        return cachedTick == tick && cachedTuning == currentTuning
+                && sameBits(cachedAx, ax) && sameBits(cachedAy, ay) && sameBits(cachedAz, az)
+                && sameBits(cachedBx, bx) && sameBits(cachedBy, by) && sameBits(cachedBz, bz);
+    }
+
+    static boolean windQuadKeyMatches(long cachedTick, Object cachedTuning, int cachedX, int cachedZ,
+            long tick, Object currentTuning, int ix, int iz) {
+        return cachedTick == tick && cachedTuning == currentTuning && cachedX == ix && cachedZ == iz;
     }
 
     /**
@@ -566,9 +676,9 @@ abstract class RopeSimulationStepper extends RopeSimulationContactConstraints {
      * strength are reconstructed from the blended force, producing smooth
      * transitions across cell boundaries.
      */
-    private WindSample bilinearBlendWind(
+    static void bilinearBlendWind(
             WindSample s00, WindSample s10, WindSample s01, WindSample s11,
-            double tx, double tz) {
+            double tx, double tz, double fallbackDirX, double fallbackDirZ, double[] out) {
         double f00 = s00.envelope() * s00.strengthScale();
         double f10 = s10.envelope() * s10.strengthScale();
         double f01 = s01.envelope() * s01.strengthScale();
@@ -585,7 +695,11 @@ abstract class RopeSimulationStepper extends RopeSimulationContactConstraints {
                 lerp(s01.envelope(), s11.envelope(), tx), tz);
 
         if (blendedEnv <= 1.0e-5) {
-            return new WindSample(0.0D, windSharedDirX, windSharedDirZ, 0.0D);
+            out[0] = 0.0D;
+            out[1] = fallbackDirX;
+            out[2] = fallbackDirZ;
+            out[3] = 0.0D;
+            return;
         }
 
         double forceMag = Math.sqrt(blendedFX * blendedFX + blendedFZ * blendedFZ);
@@ -600,7 +714,10 @@ abstract class RopeSimulationStepper extends RopeSimulationContactConstraints {
             strength = 0.0;
         }
 
-        return new WindSample(blendedEnv, dirX, dirZ, Math.max(0.22, strength));
+        out[0] = blendedEnv;
+        out[1] = dirX;
+        out[2] = dirZ;
+        out[3] = Math.max(0.0D, strength);
     }
 
     private WindSample windEventAt(long eventIndex, double windClock, double baseCycleTicks, long windSeed) {
@@ -734,7 +851,7 @@ abstract class RopeSimulationStepper extends RopeSimulationContactConstraints {
         return Math.max(min, Math.min(max, value));
     }
 
-    private record WindSample(double envelope, double dirX, double dirZ, double strengthScale) {
+    record WindSample(double envelope, double dirX, double dirZ, double strengthScale) {
         static final WindSample NONE = new WindSample(0.0D, 0.0D, 0.0D, 0.0D);
     }
 

@@ -17,7 +17,9 @@ final class LeadRuntimeCacheEvents {
             LeadTransferService.discardLevelState(level);
             LeadSignalService.clearEnergySafetyState(level);
             RopeContactTracker.clear(level);
-            RopeTripController.clear(level);
+            ZiplineController.clear(level);
+            ParrotRopePerchController.clear(level);
+            ServerRopeCurve.clear(level);
         }
     }
 }

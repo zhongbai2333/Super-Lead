@@ -64,25 +64,52 @@ public final class ParrotRopePerchController {
     }
 
     public static void tick(ServerLevel level) {
-        Map<UUID, PerchState> states = PERCHES.computeIfAbsent(level.dimension(), ignored -> new HashMap<>());
-        Map<UUID, Long> cooldowns = COOLDOWNS.computeIfAbsent(level.dimension(), ignored -> new HashMap<>());
-        List<LeadConnection> connections = SuperLeadNetwork.connections(level);
-        Map<UUID, LeadConnection> byId = byId(connections);
+        ResourceKey<Level> dimension = level.dimension();
         long tick = level.getGameTime();
-        cooldowns.entrySet().removeIf(entry -> entry.getValue() <= tick);
         cleanupBoostedRopes(level, tick);
+        Map<UUID, PerchState> states = PERCHES.get(dimension);
+        Map<UUID, Long> cooldowns = COOLDOWNS.get(dimension);
+        if (cooldowns != null) {
+            cooldowns.entrySet().removeIf(entry -> entry.getValue() <= tick);
+            if (cooldowns.isEmpty()) {
+                COOLDOWNS.remove(dimension);
+                cooldowns = null;
+            }
+        }
 
-        updateExisting(level, connections, byId, states, cooldowns, tick);
-        if (tick % SCAN_INTERVAL_TICKS == 0L) {
+        boolean scanForNewPerches = shouldScanForNewPerches(tick);
+        if ((states == null || states.isEmpty()) && !scanForNewPerches) {
+            cleanupApproachStarts(level);
+            return;
+        }
+
+        if (states == null) {
+            states = new HashMap<>();
+            PERCHES.put(dimension, states);
+        }
+        if (cooldowns == null) {
+            cooldowns = new HashMap<>();
+            COOLDOWNS.put(dimension, cooldowns);
+        }
+        List<LeadConnection> connections = SuperLeadNetwork.connections(level);
+
+        if (!states.isEmpty()) {
+            updateExisting(level, connections, byId(connections), states, cooldowns, tick);
+        }
+        if (scanForNewPerches) {
             acquireNewPerches(level, connections, states, cooldowns, tick);
         }
         if (states.isEmpty()) {
-            PERCHES.remove(level.dimension());
+            PERCHES.remove(dimension);
         }
         if (cooldowns.isEmpty()) {
-            COOLDOWNS.remove(level.dimension());
+            COOLDOWNS.remove(dimension);
         }
         cleanupApproachStarts(level);
+    }
+
+    static boolean shouldScanForNewPerches(long tick) {
+        return Math.floorMod(tick, SCAN_INTERVAL_TICKS) == 0L;
     }
 
     public static void disturb(ServerLevel level, UUID connectionId, Vec3 point) {
@@ -126,6 +153,26 @@ public final class ParrotRopePerchController {
             COOLDOWNS.remove(level.dimension());
         }
         cleanupApproachStarts(level);
+    }
+
+    public static void clear(ServerLevel level) {
+        if (level == null) {
+            return;
+        }
+        ResourceKey<Level> dimension = level.dimension();
+        Map<UUID, PerchState> states = PERCHES.remove(dimension);
+        if (states != null) {
+            for (Map.Entry<UUID, PerchState> entry : states.entrySet()) {
+                Entity entity = level.getEntityInAnyDimension(entry.getKey());
+                if (entity instanceof Parrot parrot) {
+                    release(parrot, entry.getValue());
+                }
+            }
+        }
+        COOLDOWNS.remove(dimension);
+        APPROACH_START_TICK.remove(dimension);
+        BOOSTED_ROPES.remove(dimension);
+        SCAN_CURSOR.remove(dimension);
     }
 
     private static void updateExisting(ServerLevel level, List<LeadConnection> connections,

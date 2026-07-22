@@ -117,21 +117,11 @@ public final class MekanismChemicalBridge {
                 continue;
             }
 
-            try (Transaction tx = Transaction.openRoot()) {
-                int extracted = source.extract(slot, resource, Math.min(accepted, requested), tx);
-                if (extracted <= 0) {
-                    continue;
-                }
-                ChemicalStack extractedStack = resource.toStack(extracted);
-                if (!effectiveFilter.test(extractedStack)) {
-                    continue;
-                }
-                int inserted = target.insert(resource, extracted, tx);
-                if (inserted <= 0) {
-                    continue;
-                }
-                tx.commit();
-                return inserted;
+            int transferred = ExactResourceTransfer.transfer(
+                    source, target, slot, resource, Math.min(accepted, requested),
+                    extracted -> effectiveFilter.test(resource.toStack(extracted)));
+            if (transferred > 0) {
+                return transferred;
             }
         }
         return 0L;

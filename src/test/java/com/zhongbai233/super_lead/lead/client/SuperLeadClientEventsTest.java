@@ -21,6 +21,14 @@ import org.junit.jupiter.api.Test;
 class SuperLeadClientEventsTest {
 
     @Test
+    void roundRobinTraversalWrapsWithoutSkippingEntries() {
+        assertEquals(2, SuperLeadClientEvents.roundRobinIndex(2, 0, 4));
+        assertEquals(3, SuperLeadClientEvents.roundRobinIndex(2, 1, 4));
+        assertEquals(0, SuperLeadClientEvents.roundRobinIndex(2, 2, 4));
+        assertEquals(1, SuperLeadClientEvents.roundRobinIndex(2, 3, 4));
+    }
+
+    @Test
     void constantParrotLoadDoesNotRepeatedlyWakeStaticMesh() {
         UUID rope = UUID.fromString("00000000-0000-0000-0000-000000000101");
 
@@ -60,6 +68,25 @@ class SuperLeadClientEventsTest {
     @Test
     void terrainLodRunsAgainAtIntervalBoundary() {
         assertTrue(SuperLeadClientEvents.shouldStepTerrainLod(100L, 104L));
+    }
+
+    @Test
+    void entityContactCandidatesAreReusedOnlyWithinSameGameTick() {
+        assertTrue(SuperLeadClientEvents.canReuseEntityContactSnapshot(100L, 100L));
+        assertFalse(SuperLeadClientEvents.canReuseEntityContactSnapshot(100L, 101L));
+        assertFalse(SuperLeadClientEvents.canReuseEntityContactSnapshot(Long.MIN_VALUE, 100L));
+    }
+
+    @Test
+    void maintainableSimulationMembershipPublishesOncePerGameTick() {
+        assertTrue(SuperLeadClientEvents.shouldUpdateMaintainableSimIds(99L, 100L));
+        assertFalse(SuperLeadClientEvents.shouldUpdateMaintainableSimIds(100L, 100L));
+    }
+
+    @Test
+    void parrotForceSnapshotsAreReusedOnlyWithinSameGameTick() {
+        assertTrue(SuperLeadClientEvents.canReusePerchForceSnapshot(100L, 100L));
+        assertFalse(SuperLeadClientEvents.canReusePerchForceSnapshot(100L, 101L));
     }
 
     @Test
@@ -223,5 +250,14 @@ class SuperLeadClientEventsTest {
                 RopeActivityScheduler.Tier.ACTIVE, 0.5D, 0, 100L);
 
         assertEquals(2, SuperLeadClientEvents.activityInterval(active, 0.0D, true));
+    }
+
+    @Test
+    void activeWindForcesContinuousPhysicsEvenWhenActivityWouldThrottle() {
+        var active = new RopeActivityScheduler.State(
+                RopeActivityScheduler.Tier.ACTIVE, 0.5D, 0, 100L);
+
+        assertEquals(1, SuperLeadClientEvents.scheduledPhysicsInterval(active, 256.0D, true, true));
+        assertEquals(2, SuperLeadClientEvents.scheduledPhysicsInterval(active, 256.0D, true, false));
     }
 }

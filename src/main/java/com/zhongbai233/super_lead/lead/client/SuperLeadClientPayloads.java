@@ -103,6 +103,8 @@ public final class SuperLeadClientPayloads {
 
     private static void handleClearRopeCache(ClearRopeCache payload, IPayloadContext context) {
         var level = context.player().level();
+        RopeContactsClient.clear();
+        ZiplineClientState.clear();
         SuperLeadNetwork.replaceConnections(level, java.util.List.of());
         StaticRopeChunkRegistry.get()
                 .onConnectionsReplaced(level, java.util.List.of());

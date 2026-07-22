@@ -5,7 +5,6 @@ import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.renderer.LevelRenderer;
-import net.minecraft.core.SectionPos;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
@@ -26,19 +25,16 @@ public final class EmptySectionRescuer {
             return;
 
         StaticRopeChunkRegistry reg = StaticRopeChunkRegistry.get();
+        reg.queueDueUnmeshedRetries(level.getGameTime());
         reg.flushPendingDirtySections();
         if (!reg.isActive())
             return;
 
         LongOpenHashSet emptySet = level.getChunkSource().getLoadedEmptySections();
-        for (long key : reg.publishedSectionKeys()) {
+        for (long key : reg.watchdogPublishedSectionKeys(level.getGameTime())) {
             if (emptySet.remove(key)) {
                 levelRenderer.onSectionBecomingNonEmpty(key);
             }
-        }
-        for (long key : reg.unmeshedPublishedSectionKeys()) {
-            levelRenderer.onSectionBecomingNonEmpty(key);
-            levelRenderer.setSectionDirty(SectionPos.x(key), SectionPos.y(key), SectionPos.z(key));
         }
     }
 }

@@ -239,6 +239,11 @@ public final class SuperLeadNetwork {
         LeadClientConnectionCache.unloadChunk(level, chunk);
     }
 
+    /** Clears all client connection mirrors when leaving a server or client world. */
+    public static void clearClientConnections() {
+        LeadClientConnectionCache.clearAll();
+    }
+
     public static void pruneInvalid(Level level) {
         if (!level.isClientSide() && level instanceof ServerLevel serverLevel) {
             SuperLeadSavedData data = SuperLeadSavedData.get(serverLevel);

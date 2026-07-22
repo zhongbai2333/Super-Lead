@@ -18,6 +18,7 @@ abstract class RopeSimulationTerrainConstraints extends RopeSimulationVisualStat
     private static final int ANCHOR_COLLISION_SKIP_SEGMENTS = 1;
 
     private final SegmentBoxContact terrainSegmentBoxContact = new SegmentBoxContact();
+    protected final double[] segmentEndpointCorrectionScratch = new double[2];
 
     protected RopeSimulationTerrainConstraints(Vec3 a, Vec3 b, long seed, RopeTuning tuning) {
         super(a, b, seed, tuning);
@@ -146,39 +147,17 @@ abstract class RopeSimulationTerrainConstraints extends RopeSimulationVisualStat
             ny = 1.0D;
             nz = 0.0D;
         }
-        // Distribute correction. For a capsule the contact authority at parameter s is
-        // split
-        // (1-s) to endpoint a and s to endpoint b. We scale by 1/(w_a*(1-s)^2 +
-        // w_b*s^2) so the
-        // closest point actually moves by pushLen, matching the node pass behaviour.
-        double wa = pinned[a] ? 0.0D : 1.0D;
-        double wb = pinned[b] ? 0.0D : 1.0D;
-        double oneMinusS = 1.0D - contact.s;
-        double denom = wa * oneMinusS * oneMinusS + wb * contact.s * contact.s;
-        if (denom < 1.0e-9D)
+        if (!SegmentEndpointCorrection.compute(
+                contact.s, pinned[a], pinned[b], pushLen, segmentEndpointCorrectionScratch)) {
             return;
-        double k = pushLen / denom;
-        // Per-endpoint magnitude cap. The geometric scaling above is correct, but when
-        // one end
-        // is pinned and the contact sits near that end (small effective lever arm), the
-        // free
-        // followed by the distance constraint yanking the rope back. Capping the
-        // per-step move
-        // to 2x pushLen sacrifices nothing physical (the next iteration finishes the
-        // resolve)
-        // and kills the snap cleanly.
-        double maxStep = 2.0D * pushLen;
-        if (wa > 0.0D) {
-            double ka = k * wa * oneMinusS;
-            if (ka > maxStep)
-                ka = maxStep;
-            applyTerrainCorrection(a, nx * ka, ny * ka, nz * ka);
         }
-        if (wb > 0.0D) {
-            double kb = k * wb * contact.s;
-            if (kb > maxStep)
-                kb = maxStep;
-            applyTerrainCorrection(b, nx * kb, ny * kb, nz * kb);
+        if (segmentEndpointCorrectionScratch[0] > 0.0D) {
+            applyTerrainCorrection(a, nx * segmentEndpointCorrectionScratch[0],
+                    ny * segmentEndpointCorrectionScratch[0], nz * segmentEndpointCorrectionScratch[0]);
+        }
+        if (segmentEndpointCorrectionScratch[1] > 0.0D) {
+            applyTerrainCorrection(b, nx * segmentEndpointCorrectionScratch[1],
+                    ny * segmentEndpointCorrectionScratch[1], nz * segmentEndpointCorrectionScratch[1]);
         }
     }
 

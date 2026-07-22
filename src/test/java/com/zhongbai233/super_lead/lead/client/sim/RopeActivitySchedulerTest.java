@@ -45,4 +45,22 @@ class RopeActivitySchedulerTest {
         assertEquals(4, RopeActivityScheduler.Tier.COOLING.interval());
         assertEquals(8, RopeActivityScheduler.Tier.IDLE.interval());
     }
+
+    @Test
+    void nonFiniteSampleCannotPoisonExistingSchedulerState() {
+        var active = new RopeActivityScheduler.State(
+                RopeActivityScheduler.Tier.ACTIVE, 0.50D, 1, 100L);
+
+        assertSame(active, RopeActivityScheduler.update(active, 101L, Double.NaN, false));
+        assertSame(active, RopeActivityScheduler.update(active, 101L, Double.POSITIVE_INFINITY, false));
+    }
+
+    @Test
+    void nonFiniteFirstSampleFailsSafeToHot() {
+        var state = RopeActivityScheduler.update(null, 100L, Double.NaN, false);
+
+        assertEquals(RopeActivityScheduler.Tier.HOT, state.tier());
+        assertEquals(1.0D, state.activity(), 0.0D);
+        assertEquals(RopeActivityScheduler.Tier.HOT, RopeActivityScheduler.tierFor(Double.NaN));
+    }
 }

@@ -42,12 +42,7 @@ import net.neoforged.neoforge.transfer.transaction.Transaction;
  * cutting and rendering-sync code.
  */
 final class LeadTransferService {
-    private static final Map<BlockPos, Integer> ITEM_RR_CURSOR = new HashMap<>();
-    private static final Map<BlockPos, Integer> FLUID_RR_CURSOR = new HashMap<>();
-    private static final Map<BlockPos, Integer> PRESSURIZED_RR_CURSOR = new HashMap<>();
-    private static final Map<BlockPos, Long> MUSIC_PLAYER_COOLDOWN = new HashMap<>();
-    private static final Map<BlockPos, Long> MUSIC_PLAYER_FALSE_SINCE = new HashMap<>();
-    private static final Set<BlockPos> MUSIC_PLAYER_WAS_PLAYING = new HashSet<>();
+    private static final Map<ServerLevel, RuntimeState> RUNTIME_STATES = new HashMap<>();
     private static final int MAX_TRANSFER_SEARCH_DEPTH = 64;
     private static final int ITEM_PULSE_DURATION_TICKS = 10;
     private static final int MUSIC_PLAYER_EXTRACT_COOLDOWN_TICKS = 200; // 绳子送入后完整保护（等待解码+播放完毕）
@@ -64,6 +59,10 @@ final class LeadTransferService {
     private static final Map<ServerLevel, Map<LeadKind, Map<BlockPos, List<LeadConnection>>>> CACHED_STARTS_BY_SOURCE = new HashMap<>();
 
     private LeadTransferService() {
+    }
+
+    private static RuntimeState runtimeState(ServerLevel level) {
+        return RUNTIME_STATES.computeIfAbsent(level, ignored -> new RuntimeState());
     }
 
     private static Long cachedGeneration(ServerLevel level, LeadKind kind) {
@@ -94,11 +93,12 @@ final class LeadTransferService {
         if (level.getGameTime() % Config.itemTransferIntervalTicks() != 0L) {
             return;
         }
+        RuntimeState state = runtimeState(level);
         // 清理过期的唱片机记录
-        MUSIC_PLAYER_COOLDOWN.values().removeIf(until -> level.getGameTime() >= until);
-        MUSIC_PLAYER_FALSE_SINCE.values().removeIf(
+        state.musicPlayerCooldown.values().removeIf(until -> level.getGameTime() >= until);
+        state.musicPlayerFalseSince.values().removeIf(
                 since -> level.getGameTime() - since > MUSIC_PLAYER_DISC_DEBOUNCE_TICKS * 4);
-        MUSIC_PLAYER_WAS_PLAYING.removeIf(pos -> {
+        state.musicPlayerWasPlaying.removeIf(pos -> {
             if (level.getBlockEntity(pos) instanceof TileEntityMusicPlayer te) {
                 return !hasDiscInside(te);
             }
@@ -107,7 +107,7 @@ final class LeadTransferService {
             }
             return true;
         });
-        tickTransfer(level, LeadKind.ITEM, Capabilities.Item.BLOCK, ITEM_RR_CURSOR,
+        tickTransfer(level, LeadKind.ITEM, Capabilities.Item.BLOCK, state.itemRrCursor,
                 rope -> Math.min(64, 1 << Math.min(Config.itemTierMax(), rope.tier())));
     }
 
@@ -115,7 +115,7 @@ final class LeadTransferService {
         if (level.getGameTime() % Config.itemTransferIntervalTicks() != 0L) {
             return;
         }
-        tickTransfer(level, LeadKind.FLUID, Capabilities.Fluid.BLOCK, FLUID_RR_CURSOR,
+        tickTransfer(level, LeadKind.FLUID, Capabilities.Fluid.BLOCK, runtimeState(level).fluidRrCursor,
                 rope -> Config.fluidBucketAmount() * (1 << Math.min(Config.fluidTierMax(), rope.tier())));
 
         // Also try Mekanism's fluid capability for tanks that don't expose
@@ -140,10 +140,7 @@ final class LeadTransferService {
         CACHED_GENERATION.clear();
         CACHED_ROPES_AT.clear();
         CACHED_STARTS_BY_SOURCE.clear();
-        ITEM_RR_CURSOR.clear();
-        FLUID_RR_CURSOR.clear();
-        PRESSURIZED_RR_CURSOR.clear();
-        MUSIC_PLAYER_WAS_PLAYING.clear();
+        RUNTIME_STATES.clear();
     }
 
     /**
@@ -157,6 +154,7 @@ final class LeadTransferService {
 
     static void discardLevelState(ServerLevel level) {
         invalidateCachesFor(level);
+        RUNTIME_STATES.remove(level);
         if (isAe2Loaded()) {
             AE2NetworkBridge.clearDimension(level.dimension());
         }
@@ -204,6 +202,7 @@ final class LeadTransferService {
     }
 
     private static void tickPressurizedTransfer(ServerLevel level) {
+        Map<BlockPos, Integer> rrCursor = runtimeState(level).pressurizedRrCursor;
         SuperLeadSavedData data = SuperLeadSavedData.get(level);
 
         List<LeadConnection> pressurizedConnections = data.connectionsOfKindFast(LeadKind.PRESSURIZED);
@@ -248,7 +247,7 @@ final class LeadTransferService {
             }
 
             int n = ropes.size();
-            int start = PRESSURIZED_RR_CURSOR.getOrDefault(sourcePos, 0) % n;
+            int start = rrCursor.getOrDefault(sourcePos, 0) % n;
             TransferSearchContext search = new TransferSearchContext();
 
             for (int step = 0; step < n; step++) {
@@ -265,7 +264,7 @@ final class LeadTransferService {
                 search.reset(rope, rope.extractAnchor() == 2);
 
                 if (walkAndTransferPressurized(level, sourceAnchor, batch, firstFar, ropesAt,
-                        PRESSURIZED_RR_CURSOR, chemicalHandlers, search.visited, search.path, search.rrChoices, 1)) {
+                        rrCursor, chemicalHandlers, search.visited, search.path, search.rrChoices, 1)) {
                     long now = level.getGameTime();
                     for (int i = 0; i < search.path.size(); i++) {
                         PathStep s = search.path.get(i);
@@ -273,9 +272,9 @@ final class LeadTransferService {
                         SuperLeadPayloads.sendItemPulse(level,
                                 new ItemPulse(s.rope.id(), s.reverse, startTick, ITEM_PULSE_DURATION_TICKS));
                     }
-                    PRESSURIZED_RR_CURSOR.put(sourcePos, (idx + 1) % n);
+                    rrCursor.put(sourcePos, (idx + 1) % n);
                     for (RrChoice rc : search.rrChoices) {
-                        PRESSURIZED_RR_CURSOR.put(rc.knot, (rc.idx + 1) % rc.n);
+                        rrCursor.put(rc.knot, (rc.idx + 1) % rc.n);
                     }
                     break;
                 }
@@ -295,6 +294,7 @@ final class LeadTransferService {
      * {@code ResourceHandler<FluidResource>}.
      */
     private static void tickMekanismFluidTransfer(ServerLevel level) {
+        Map<BlockPos, Integer> rrCursor = runtimeState(level).fluidRrCursor;
         SuperLeadSavedData data = SuperLeadSavedData.get(level);
         List<LeadConnection> fluidConnections = data.connectionsOfKindFast(LeadKind.FLUID);
         if (fluidConnections.isEmpty()) {
@@ -338,7 +338,7 @@ final class LeadTransferService {
             }
 
             int n = ropes.size();
-            int start = FLUID_RR_CURSOR.getOrDefault(sourcePos, 0) % n;
+            int start = rrCursor.getOrDefault(sourcePos, 0) % n;
             TransferSearchContext search = new TransferSearchContext();
 
             for (int step = 0; step < n; step++) {
@@ -356,7 +356,7 @@ final class LeadTransferService {
                 search.reset(rope, rope.extractAnchor() == 2);
 
                 if (walkAndTransferMekFluid(level, sourceAnchor, batch, firstFar, ropesAt,
-                        FLUID_RR_CURSOR, fluidHandlers, search.visited, search.path, search.rrChoices, 1)) {
+                        rrCursor, fluidHandlers, search.visited, search.path, search.rrChoices, 1)) {
                     long now = level.getGameTime();
                     for (int i = 0; i < search.path.size(); i++) {
                         PathStep s = search.path.get(i);
@@ -364,9 +364,9 @@ final class LeadTransferService {
                         SuperLeadPayloads.sendItemPulse(level,
                                 new ItemPulse(s.rope.id(), s.reverse, startTick, ITEM_PULSE_DURATION_TICKS));
                     }
-                    FLUID_RR_CURSOR.put(sourcePos, (idx + 1) % n);
+                    rrCursor.put(sourcePos, (idx + 1) % n);
                     for (RrChoice rc : search.rrChoices) {
-                        FLUID_RR_CURSOR.put(rc.knot, (rc.idx + 1) % rc.n);
+                        rrCursor.put(rc.knot, (rc.idx + 1) % rc.n);
                     }
                     break;
                 }
@@ -400,8 +400,8 @@ final class LeadTransferService {
         }
 
         BlockPos knot = current.pos().immutable();
-        List<LeadConnection> all = ropesAt.getOrDefault(knot, List.of());
-        int n = unvisitedBranchCount(all, visited);
+        List<LeadConnection> branches = unvisitedBranches(ropesAt.getOrDefault(knot, List.of()), visited);
+        int n = branches.size();
         if (n == 0) {
             return false;
         }
@@ -409,10 +409,7 @@ final class LeadTransferService {
         int rrStart = rrCursor.getOrDefault(knot, 0) % n;
         for (int step = 0; step < n; step++) {
             int idx = (rrStart + step) % n;
-            LeadConnection branch = unvisitedBranchAt(all, visited, idx);
-            if (branch == null) {
-                continue;
-            }
+            LeadConnection branch = branches.get(idx);
             boolean enteredFromSide = branch.from().pos().equals(knot);
             LeadAnchor far = enteredFromSide ? branch.to() : branch.from();
             boolean reverse = !enteredFromSide;
@@ -497,8 +494,9 @@ final class LeadTransferService {
 
     private static boolean isMusicPlayerBlocked(ServerLevel level, BlockPos pos) {
         long now = level.getGameTime();
+        RuntimeState state = runtimeState(level);
 
-        Long cooldownUntil = MUSIC_PLAYER_COOLDOWN.get(pos);
+        Long cooldownUntil = state.musicPlayerCooldown.get(pos);
         if (cooldownUntil != null && now < cooldownUntil) {
             return true;
         }
@@ -506,69 +504,69 @@ final class LeadTransferService {
         // 普通音乐机 (NetMusic TileEntityMusicPlayer)
         if (isNetMusicLoaded() && level.getBlockEntity(pos) instanceof TileEntityMusicPlayer te) {
             if (te.isPlay()) {
-                MUSIC_PLAYER_FALSE_SINCE.remove(pos);
-                MUSIC_PLAYER_WAS_PLAYING.add(pos);
+                state.musicPlayerFalseSince.remove(pos);
+                state.musicPlayerWasPlaying.add(pos);
                 return true;
             }
 
             boolean discInside = hasDiscInside(te);
             if (!discInside) {
-                MUSIC_PLAYER_WAS_PLAYING.remove(pos);
-                Long falseSince = MUSIC_PLAYER_FALSE_SINCE.get(pos);
+                state.musicPlayerWasPlaying.remove(pos);
+                Long falseSince = state.musicPlayerFalseSince.get(pos);
                 if (falseSince == null) {
-                    MUSIC_PLAYER_FALSE_SINCE.put(pos, now);
+                    state.musicPlayerFalseSince.put(pos, now);
                     return true;
                 }
                 if (now - falseSince < MUSIC_PLAYER_FALSE_DEBOUNCE_TICKS) {
                     return true;
                 }
-                MUSIC_PLAYER_FALSE_SINCE.remove(pos);
+                state.musicPlayerFalseSince.remove(pos);
                 return false;
             }
 
-            boolean wasPlaying = MUSIC_PLAYER_WAS_PLAYING.contains(pos);
+            boolean wasPlaying = state.musicPlayerWasPlaying.contains(pos);
             long debounce = wasPlaying ? MUSIC_PLAYER_FALSE_DEBOUNCE_TICKS : MUSIC_PLAYER_DISC_DEBOUNCE_TICKS;
-            Long falseSince = MUSIC_PLAYER_FALSE_SINCE.get(pos);
+            Long falseSince = state.musicPlayerFalseSince.get(pos);
             if (falseSince == null) {
-                MUSIC_PLAYER_FALSE_SINCE.put(pos, now);
+                state.musicPlayerFalseSince.put(pos, now);
                 return true;
             }
             if (now - falseSince < debounce) {
                 return true;
             }
-            MUSIC_PLAYER_FALSE_SINCE.remove(pos);
-            MUSIC_PLAYER_WAS_PLAYING.remove(pos);
+            state.musicPlayerFalseSince.remove(pos);
+            state.musicPlayerWasPlaying.remove(pos);
             return false;
         }
 
         // 现代音乐机 (NetMusicCanPlayBili ModernTurntableBlockEntity)
         if (isNetMusicCanPlayBiliLoaded() && level.getBlockEntity(pos) instanceof ModernTurntableBlockEntity mte) {
             if (mte.isPlaying()) {
-                MUSIC_PLAYER_FALSE_SINCE.remove(pos);
-                MUSIC_PLAYER_WAS_PLAYING.add(pos);
+                state.musicPlayerFalseSince.remove(pos);
+                state.musicPlayerWasPlaying.add(pos);
                 return true;
             }
 
             boolean discInside = mte.hasDisc();
             if (!discInside) {
-                MUSIC_PLAYER_WAS_PLAYING.remove(pos);
-                MUSIC_PLAYER_FALSE_SINCE.remove(pos);
+                state.musicPlayerWasPlaying.remove(pos);
+                state.musicPlayerFalseSince.remove(pos);
                 return false;
             }
 
             // 有唱片但没在播放：等待 debounce 后允许抽取
-            boolean wasPlaying = MUSIC_PLAYER_WAS_PLAYING.contains(pos);
+            boolean wasPlaying = state.musicPlayerWasPlaying.contains(pos);
             long debounce = wasPlaying ? MUSIC_PLAYER_FALSE_DEBOUNCE_TICKS : MUSIC_PLAYER_DISC_DEBOUNCE_TICKS;
-            Long falseSince = MUSIC_PLAYER_FALSE_SINCE.get(pos);
+            Long falseSince = state.musicPlayerFalseSince.get(pos);
             if (falseSince == null) {
-                MUSIC_PLAYER_FALSE_SINCE.put(pos, now);
+                state.musicPlayerFalseSince.put(pos, now);
                 return true;
             }
             if (now - falseSince < debounce) {
                 return true;
             }
-            MUSIC_PLAYER_FALSE_SINCE.remove(pos);
-            MUSIC_PLAYER_WAS_PLAYING.remove(pos);
+            state.musicPlayerFalseSince.remove(pos);
+            state.musicPlayerWasPlaying.remove(pos);
             return false;
         }
 
@@ -577,6 +575,7 @@ final class LeadTransferService {
 
     @SuppressWarnings("null")
     private static void tryTriggerMusicPlayerPlay(ServerLevel level, LeadAnchor anchor) {
+        RuntimeState state = runtimeState(level);
         // 普通音乐机 (NetMusic)
         if (isNetMusicLoaded() && level.getBlockEntity(anchor.pos()) instanceof TileEntityMusicPlayer te) {
             var inv = te.getPlayerInv();
@@ -588,9 +587,9 @@ final class LeadTransferService {
             ItemMusicCD.SongInfo info = ItemMusicCD.getSongInfo(res.toStack());
             if (info != null) {
                 te.setPlayToClient(info);
-                MUSIC_PLAYER_COOLDOWN.put(anchor.pos(),
+                state.musicPlayerCooldown.put(anchor.pos(),
                         level.getGameTime() + MUSIC_PLAYER_EXTRACT_COOLDOWN_TICKS);
-                MUSIC_PLAYER_FALSE_SINCE.remove(anchor.pos());
+                state.musicPlayerFalseSince.remove(anchor.pos());
             }
             return;
         }
@@ -610,9 +609,9 @@ final class LeadTransferService {
                     64.0, false);
             if (player instanceof net.minecraft.server.level.ServerPlayer sp) {
                 mte.startFromDisc(sp);
-                MUSIC_PLAYER_COOLDOWN.put(anchor.pos(),
+                state.musicPlayerCooldown.put(anchor.pos(),
                         level.getGameTime() + MUSIC_PLAYER_EXTRACT_COOLDOWN_TICKS);
-                MUSIC_PLAYER_FALSE_SINCE.remove(anchor.pos());
+                state.musicPlayerFalseSince.remove(anchor.pos());
             }
         }
     }
@@ -777,8 +776,8 @@ final class LeadTransferService {
         }
 
         BlockPos knot = current.pos().immutable();
-        List<LeadConnection> all = ropesAt.getOrDefault(knot, List.of());
-        int n = unvisitedBranchCount(all, visited);
+        List<LeadConnection> branches = unvisitedBranches(ropesAt.getOrDefault(knot, List.of()), visited);
+        int n = branches.size();
         if (n == 0) {
             return false;
         }
@@ -786,10 +785,7 @@ final class LeadTransferService {
         int rrStart = rrCursor.getOrDefault(knot, 0) % n;
         for (int step = 0; step < n; step++) {
             int idx = (rrStart + step) % n;
-            LeadConnection branch = unvisitedBranchAt(all, visited, idx);
-            if (branch == null) {
-                continue;
-            }
+            LeadConnection branch = branches.get(idx);
             boolean enteredFromSide = branch.from().pos().equals(knot);
             LeadAnchor far = enteredFromSide ? branch.to() : branch.from();
             boolean reverse = !enteredFromSide;
@@ -831,8 +827,8 @@ final class LeadTransferService {
         }
 
         BlockPos knot = current.pos().immutable();
-        List<LeadConnection> all = ropesAt.getOrDefault(knot, List.of());
-        int n = unvisitedBranchCount(all, visited);
+        List<LeadConnection> branches = unvisitedBranches(ropesAt.getOrDefault(knot, List.of()), visited);
+        int n = branches.size();
         if (n == 0) {
             return false;
         }
@@ -840,10 +836,7 @@ final class LeadTransferService {
         int rrStart = rrCursor.getOrDefault(knot, 0) % n;
         for (int step = 0; step < n; step++) {
             int idx = (rrStart + step) % n;
-            LeadConnection branch = unvisitedBranchAt(all, visited, idx);
-            if (branch == null) {
-                continue;
-            }
+            LeadConnection branch = branches.get(idx);
             boolean enteredFromSide = branch.from().pos().equals(knot);
             LeadAnchor far = enteredFromSide ? branch.to() : branch.from();
             boolean reverse = !enteredFromSide;
@@ -864,28 +857,17 @@ final class LeadTransferService {
         return false;
     }
 
-    private static int unvisitedBranchCount(List<LeadConnection> all, Set<UUID> visited) {
-        int count = 0;
+    static List<LeadConnection> unvisitedBranches(List<LeadConnection> all, Set<UUID> visited) {
+        if (all.isEmpty()) {
+            return List.of();
+        }
+        List<LeadConnection> branches = new ArrayList<>(all.size());
         for (LeadConnection connection : all) {
             if (!visited.contains(connection.id())) {
-                count++;
+                branches.add(connection);
             }
         }
-        return count;
-    }
-
-    private static LeadConnection unvisitedBranchAt(List<LeadConnection> all, Set<UUID> visited, int branchIndex) {
-        int current = 0;
-        for (LeadConnection connection : all) {
-            if (visited.contains(connection.id())) {
-                continue;
-            }
-            if (current == branchIndex) {
-                return connection;
-            }
-            current++;
-        }
-        return null;
+        return branches.isEmpty() ? List.of() : branches;
     }
 
     private static <R extends Resource> ResourceHandler<R> handler(
@@ -1060,5 +1042,14 @@ final class LeadTransferService {
             }
             return found;
         }
+    }
+
+    private static final class RuntimeState {
+        private final Map<BlockPos, Integer> itemRrCursor = new HashMap<>();
+        private final Map<BlockPos, Integer> fluidRrCursor = new HashMap<>();
+        private final Map<BlockPos, Integer> pressurizedRrCursor = new HashMap<>();
+        private final Map<BlockPos, Long> musicPlayerCooldown = new HashMap<>();
+        private final Map<BlockPos, Long> musicPlayerFalseSince = new HashMap<>();
+        private final Set<BlockPos> musicPlayerWasPlaying = new HashSet<>();
     }
 }

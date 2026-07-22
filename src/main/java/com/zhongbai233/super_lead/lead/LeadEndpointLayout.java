@@ -3,9 +3,12 @@ package com.zhongbai233.super_lead.lead;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
+import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.state.BlockState;
@@ -24,6 +27,7 @@ public final class LeadEndpointLayout {
     private static final double GRID_DIMENSION_THRESHOLD = 0.42D;
     private static final double FACE_MARGIN = 0.16D;
     private static final double FACE_MARGIN_FRACTION = 0.22D;
+    private static final Map<NetworkKey, CachedEndpoints> CLIENT_CACHE = new HashMap<>();
 
     private LeadEndpointLayout() {
     }
@@ -35,6 +39,23 @@ public final class LeadEndpointLayout {
         if (connections == null || connections.isEmpty()) {
             return Map.of();
         }
+        if (level != null && level.isClientSide()
+                && connections == LeadClientConnectionCache.connections(level)) {
+            NetworkKey key = NetworkKey.of(level);
+            long revision = LeadClientConnectionCache.endpointLayoutRevision(level);
+            CachedEndpoints cached = CLIENT_CACHE.get(key);
+            if (cached != null && cached.revision() == revision) {
+                return cached.endpoints();
+            }
+            Map<UUID, Endpoints> computed = computeEndpointsByConnection(level, connections);
+            CLIENT_CACHE.put(key, new CachedEndpoints(revision, computed, anchorPositions(connections)));
+            return computed;
+        }
+        return computeEndpointsByConnection(level, connections);
+    }
+
+    private static Map<UUID, Endpoints> computeEndpointsByConnection(Level level,
+            List<LeadConnection> connections) {
         Map<AnchorPair, List<LeadConnection>> groups = new HashMap<>();
         for (LeadConnection connection : connections) {
             if (connection != null) {
@@ -60,7 +81,45 @@ public final class LeadEndpointLayout {
                         attachmentPoint(level, connection.to(), placement)));
             }
         }
-        return endpoints;
+        return Map.copyOf(endpoints);
+    }
+
+    public static void invalidateClientNear(Level level, BlockPos changedPos) {
+        if (level == null || changedPos == null || !level.isClientSide()) {
+            return;
+        }
+        NetworkKey key = NetworkKey.of(level);
+        CachedEndpoints cached = CLIENT_CACHE.get(key);
+        if (cached != null && affectsAnchorNeighborhood(cached.anchorPositions(), changedPos)) {
+            CLIENT_CACHE.remove(key);
+        }
+    }
+
+    public static void clearClientCache() {
+        CLIENT_CACHE.clear();
+    }
+
+    static boolean affectsAnchorNeighborhood(Set<BlockPos> anchors, BlockPos changedPos) {
+        if (anchors == null || anchors.isEmpty() || changedPos == null) {
+            return false;
+        }
+        for (BlockPos anchor : anchors) {
+            if (Math.abs(anchor.getX() - changedPos.getX()) <= 1
+                    && Math.abs(anchor.getY() - changedPos.getY()) <= 1
+                    && Math.abs(anchor.getZ() - changedPos.getZ()) <= 1) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static Set<BlockPos> anchorPositions(List<LeadConnection> connections) {
+        HashSet<BlockPos> positions = new HashSet<>(connections.size() * 2);
+        for (LeadConnection connection : connections) {
+            positions.add(connection.from().pos());
+            positions.add(connection.to().pos());
+        }
+        return Set.copyOf(positions);
     }
 
     public static Endpoints endpoints(Level level, LeadConnection connection, List<LeadConnection> allConnections) {
@@ -223,5 +282,8 @@ public final class LeadEndpointLayout {
             int pos = Long.compare(a.pos().asLong(), b.pos().asLong());
             return pos != 0 ? pos : Integer.compare(a.face().ordinal(), b.face().ordinal());
         }
+    }
+
+    private record CachedEndpoints(long revision, Map<UUID, Endpoints> endpoints, Set<BlockPos> anchorPositions) {
     }
 }

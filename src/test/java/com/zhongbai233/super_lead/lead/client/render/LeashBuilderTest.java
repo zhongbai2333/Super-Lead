@@ -1,6 +1,8 @@
 package com.zhongbai233.super_lead.lead.client.render;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.zhongbai233.super_lead.lead.client.geom.BoundedHermiteCurve;
 import com.zhongbai233.super_lead.lead.client.sim.RopeSimulation;
@@ -13,12 +15,12 @@ class LeashBuilderTest {
 
     @Test
     void bakedFaceCullingAcceptsTwoTrailingEndCaps() {
-        assertEquals(true, LeashBuilder.hasCullableBakedLayout(12, 12 * 16 + 8));
+        assertTrue(LeashBuilder.hasCullableBakedLayout(12, 12 * 16 + 8));
     }
 
     @Test
     void bakedFaceCullingRejectsUnexpectedVertexLayout() {
-        assertEquals(false, LeashBuilder.hasCullableBakedLayout(12, 12 * 16 + 4));
+        assertFalse(LeashBuilder.hasCullableBakedLayout(12, 12 * 16 + 4));
     }
 
     @Test

@@ -460,6 +460,16 @@ abstract class RopeSimulationCore {
         this.windPhysicsEnabled = enabled;
     }
 
+    /** Whether wind can currently drive this simulation at its present LOD. */
+    public boolean hasEnabledWindPhysics() {
+        return windPhysicsEnabled
+                && tuning.windEnabled()
+                && tuning.windStrength() > 0.0D
+                && tuning.windWaveLength() > 1.0e-5D
+                && tuning.windSpeed() > 0.0D
+                && RopeSagModel.tautProjectionWeight(tuning.slack()) < 0.98D;
+    }
+
     public boolean setTuning(RopeTuning tuning) {
         RopeTuning next = tuning != null ? tuning : RopeTuning.localDefaults();
         if (this.tuning == next)
@@ -509,23 +519,28 @@ abstract class RopeSimulationCore {
     }
 
     protected void applyTautProjection(Vec3 a, Vec3 b, double weight, boolean preserveContactNodes) {
+        applyTautProjection(a.x, a.y, a.z, b.x, b.y, b.z, weight, preserveContactNodes);
+    }
+
+    protected void applyTautProjection(double ax, double ay, double az,
+            double bx, double by, double bz, double weight, boolean preserveContactNodes) {
         if (weight <= 0.0D || nodes < 3) {
             return;
         }
         double clamped = Math.min(1.0D, weight);
         double keepVelocity = 1.0D - clamped;
         boolean tensionContact = hasTensionContactTarget();
-        double dx = b.x - a.x;
-        double dy = b.y - a.y;
-        double dz = b.z - a.z;
+        double dx = bx - ax;
+        double dy = by - ay;
+        double dz = bz - az;
         for (int i = 1; i < nodes - 1; i++) {
             if (!tensionContact && preserveContactNodes && (contactNode[i] || supportNode[i])) {
                 continue;
             }
             double t = i / (double) segments;
-            double tx = a.x + dx * t;
-            double ty = a.y + dy * t;
-            double tz = a.z + dz * t;
+            double tx = ax + dx * t;
+            double ty = ay + dy * t;
+            double tz = az + dz * t;
             if (tensionContact) {
                 double vWeight = RopeContactResponseModel.spanVWeight(t, contactT);
                 tx += contactDx * vWeight * contactPushGain;
@@ -1127,12 +1142,16 @@ abstract class RopeSimulationCore {
     }
 
     protected void pinEndpoints(Vec3 a, Vec3 b) {
-        x[0] = a.x;
-        y[0] = a.y;
-        z[0] = a.z;
-        x[nodes - 1] = b.x;
-        y[nodes - 1] = b.y;
-        z[nodes - 1] = b.z;
+        pinEndpoints(a.x, a.y, a.z, b.x, b.y, b.z);
+    }
+
+    protected void pinEndpoints(double ax, double ay, double az, double bx, double by, double bz) {
+        x[0] = ax;
+        y[0] = ay;
+        z[0] = az;
+        x[nodes - 1] = bx;
+        y[nodes - 1] = by;
+        z[nodes - 1] = bz;
     }
 
     protected void clearContactState() {

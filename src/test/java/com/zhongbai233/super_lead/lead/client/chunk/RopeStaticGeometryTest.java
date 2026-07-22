@@ -3,6 +3,7 @@ package com.zhongbai233.super_lead.lead.client.chunk;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
+import com.zhongbai233.super_lead.lead.client.sim.RopeTuning;
 import org.junit.jupiter.api.Test;
 
 class RopeStaticGeometryTest {
@@ -52,5 +53,23 @@ class RopeStaticGeometryTest {
         assertEquals(y[1], smoothed.y()[2]);
         assertEquals(x[2], smoothed.x()[4]);
         assertEquals(y[2], smoothed.y()[4]);
+    }
+
+    @Test
+    void visualStripeDensificationSkipsZeroLengthSegmentsWithoutTrailingZeros() {
+        double[] x = { 0.0D, 0.0D, 1.0D, 1.0D };
+        double[] y = new double[x.length];
+        double[] z = new double[x.length];
+
+        RopeStaticGeometry.Points3 points = RopeStaticGeometry.densifyForVisualStripes(
+                x, y, z, RopeTuning.localDefaults());
+
+        assertEquals(points.x().length, points.y().length);
+        assertEquals(points.x().length, points.z().length);
+        assertEquals(0.0D, points.x()[0]);
+        assertEquals(1.0D, points.x()[points.x().length - 1]);
+        for (int i = 1; i < points.x().length; i++) {
+            org.junit.jupiter.api.Assertions.assertTrue(points.x()[i] > points.x()[i - 1]);
+        }
     }
 }

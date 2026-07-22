@@ -46,6 +46,7 @@ public final class RopeDynamicLights {
     private static final int MAX_LIGHT = 15;
     private static final int FALLBACK_NODE_COUNT = 16;
     private static final Map<BlockPos, Source> ACTIVE = new ConcurrentHashMap<>();
+    private static volatile Map<LightCell, List<Source>> SPATIAL_INDEX = Map.of();
     private static ClientLevel activeLevel;
 
     private RopeDynamicLights() {
@@ -82,6 +83,7 @@ public final class RopeDynamicLights {
         ClientLevel level = activeLevel;
         List<BlockPos> oldPositions = List.copyOf(ACTIVE.keySet());
         ACTIVE.clear();
+        SPATIAL_INDEX = Map.of();
         activeLevel = null;
         if (level != null) {
             markDirty(level, oldPositions);
@@ -104,24 +106,36 @@ public final class RopeDynamicLights {
         if (activeLevel == null || pos == null || ACTIVE.isEmpty()) {
             return 0;
         }
-
         double qx = pos.getX() + 0.5D;
         double qy = pos.getY() + 0.5D;
         double qz = pos.getZ() + 0.5D;
         int best = 0;
-        for (Source source : ACTIVE.values()) {
-            double dx = qx - source.x;
-            double dy = qy - source.y;
-            double dz = qz - source.z;
-            double distSqr = dx * dx + dy * dy + dz * dz;
-            if (distSqr > EFFECT_RADIUS_SQR) {
-                continue;
-            }
-            int light = (int) Math.ceil(source.blockLight - Math.sqrt(distSqr) * LIGHT_FALLOFF_PER_BLOCK);
-            if (light > best) {
-                best = light;
-                if (best >= MAX_LIGHT) {
-                    return MAX_LIGHT;
+        LightCellRange range = LightCellRange.around(qx, qy, qz, EFFECT_RADIUS, EFFECT_RADIUS);
+        Map<LightCell, List<Source>> index = SPATIAL_INDEX;
+        for (int cx = range.minX(); cx <= range.maxX(); cx++) {
+            for (int cy = range.minY(); cy <= range.maxY(); cy++) {
+                for (int cz = range.minZ(); cz <= range.maxZ(); cz++) {
+                    List<Source> sources = index.get(new LightCell(cx, cy, cz));
+                    if (sources == null) {
+                        continue;
+                    }
+                    for (Source source : sources) {
+                        double dx = qx - source.x;
+                        double dy = qy - source.y;
+                        double dz = qz - source.z;
+                        double distSqr = dx * dx + dy * dy + dz * dz;
+                        if (distSqr > EFFECT_RADIUS_SQR) {
+                            continue;
+                        }
+                        int light = (int) Math.ceil(
+                                source.blockLight - Math.sqrt(distSqr) * LIGHT_FALLOFF_PER_BLOCK);
+                        if (light > best) {
+                            best = light;
+                            if (best >= MAX_LIGHT) {
+                                return MAX_LIGHT;
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -295,6 +309,27 @@ public final class RopeDynamicLights {
             }
         }
         markDirty(level, dirty);
+        SPATIAL_INDEX = buildSpatialIndex(desired);
+    }
+
+    static Map<LightCell, List<Source>> buildSpatialIndex(Map<BlockPos, Source> sources) {
+        if (sources == null || sources.isEmpty()) {
+            return Map.of();
+        }
+        Map<LightCell, List<Source>> index = new HashMap<>();
+        for (Source source : sources.values()) {
+            LightCell cell = LightCell.of(source.x, source.y, source.z);
+            index.computeIfAbsent(cell, ignored -> new java.util.ArrayList<>()).add(source);
+        }
+        Map<LightCell, List<Source>> immutable = new HashMap<>(index.size());
+        for (Map.Entry<LightCell, List<Source>> entry : index.entrySet()) {
+            immutable.put(entry.getKey(), List.copyOf(entry.getValue()));
+        }
+        return Map.copyOf(immutable);
+    }
+
+    static LightCellRange queryCellRange(double x, double y, double z, double radius) {
+        return LightCellRange.around(x, y, z, radius, radius);
     }
 
     private static BlockPos lightSourcePos(ClientLevel level, double x, double y, double z) {
@@ -364,12 +399,35 @@ public final class RopeDynamicLights {
         return nodeCount - 2;
     }
 
-    private record Source(double x, double y, double z, int blockLight) {
+    record Source(double x, double y, double z, int blockLight) {
         double distanceToSqr(Source other) {
             double dx = x - other.x;
             double dy = y - other.y;
             double dz = z - other.z;
             return dx * dx + dy * dy + dz * dz;
+        }
+    }
+
+    private record LightCell(int x, int y, int z) {
+        static LightCell of(double x, double y, double z) {
+            return new LightCell(cell(x), cell(y), cell(z));
+        }
+
+        private static int cell(double coordinate) {
+            return (int) Math.floor(coordinate / EFFECT_RADIUS);
+        }
+    }
+
+    record LightCellRange(int minX, int maxX, int minY, int maxY, int minZ, int maxZ) {
+        static LightCellRange around(double x, double y, double z, double radius, double cellSize) {
+            return new LightCellRange(
+                    cell(x - radius, cellSize), cell(x + radius, cellSize),
+                    cell(y - radius, cellSize), cell(y + radius, cellSize),
+                    cell(z - radius, cellSize), cell(z + radius, cellSize));
+        }
+
+        private static int cell(double coordinate, double cellSize) {
+            return (int) Math.floor(coordinate / cellSize);
         }
     }
 }

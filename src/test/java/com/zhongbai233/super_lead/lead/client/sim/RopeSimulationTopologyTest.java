@@ -85,8 +85,8 @@ class RopeSimulationTopologyTest {
         assertFalse(fine.isSettled());
     }
 
-        @Test
-        void meshExitRestoreAlsoReplacesReusableSimulationShapeAndRenderHistory() {
+    @Test
+    void meshExitRestoreAlsoReplacesReusableSimulationShapeAndRenderHistory() {
         RopeSimulation reusable = new RopeSimulation(A, B, 31L,
             RopeTuning.localDefaults().withTopology(0.5D, 64));
         int middle = reusable.nodeCount() / 2;
@@ -106,10 +106,10 @@ class RopeSimulationTopologyTest {
         assertEquals(0.0D, reusable.vy[middle], 1.0e-9D,
             "stale velocity must not kick the rope during the visual handoff");
         assertFalse(reusable.isSettled());
-        }
+    }
 
-        @Test
-        void meshCollisionTransitionSurvivesAcrossLogicalTicks() {
+    @Test
+    void meshCollisionTransitionSurvivesAcrossLogicalTicks() {
         double initial = RopeSimulationRenderCache.meshCollisionTransitionProgress(
             100.60D, 100.60D, 3.0D, 0.18D);
         double nextTick = RopeSimulationRenderCache.meshCollisionTransitionProgress(
@@ -156,7 +156,7 @@ class RopeSimulationTopologyTest {
         sim.contactNode[middle] = true;
         sim.vx[middle] = 1.0D;
 
-        sim.wakeForTerrainChange();
+        sim.wakeForPhysicsChange();
 
         assertEquals(0, sim.settledTicks);
         assertEquals(0, sim.quietTicks);
@@ -182,6 +182,81 @@ class RopeSimulationTopologyTest {
             assertEquals(0.0D, weightedSum, 1.0e-12D,
                     "vertical wind must bend locally without lifting the whole rope");
         }
+    }
+
+    @Test
+    void windSchedulerUsesSameEnvelopeThresholdAsForceApplication() {
+        assertFalse(RopeSimulationStepper.isWindEnvelopeActive(1.0e-5D));
+        assertTrue(RopeSimulationStepper.isWindEnvelopeActive(1.0001e-5D));
+        assertTrue(RopeSimulationStepper.isWindEnvelopeActive(0.01D));
+    }
+
+    @Test
+    void windParallelToRopeDoesNotCompressDistanceConstraints() {
+        double[] projected = new double[3];
+
+        RopeSimulationStepper.projectWindOffTangent(
+                2.0D, 0.0D, 0.0D, 4.0D, 0.0D, 0.0D, projected);
+
+        assertEquals(0.0D, projected[0], 1.0e-12D);
+        assertEquals(0.0D, projected[1], 1.0e-12D);
+        assertEquals(0.0D, projected[2], 1.0e-12D);
+    }
+
+    @Test
+    void windPerpendicularToRopeKeepsItsPhysicalForce() {
+        double[] projected = new double[3];
+
+        RopeSimulationStepper.projectWindOffTangent(
+                0.0D, 0.5D, 2.0D, 4.0D, 0.0D, 0.0D, projected);
+
+        assertEquals(0.0D, projected[0], 1.0e-12D);
+        assertEquals(0.5D, projected[1], 1.0e-12D);
+        assertEquals(2.0D, projected[2], 1.0e-12D);
+    }
+
+    @Test
+    void diagonalWindRemovesOnlyTangentialComponent() {
+        double[] projected = new double[3];
+
+        RopeSimulationStepper.projectWindOffTangent(
+                1.0D, 0.0D, 1.0D, 1.0D, 0.0D, 0.0D, projected);
+
+        assertEquals(0.0D, projected[0], 1.0e-12D);
+        assertEquals(0.0D, projected[1], 1.0e-12D);
+        assertEquals(1.0D, projected[2], 1.0e-12D);
+    }
+
+    @Test
+    void projectedWindIsOrthogonalToArbitrarySlopedRope() {
+        double[] projected = new double[3];
+
+        RopeSimulationStepper.projectWindOffTangent(
+                0.7D, -0.3D, 1.2D, 2.0D, 3.0D, -4.0D, projected);
+
+        double tangentDot = projected[0] * 2.0D + projected[1] * 3.0D - projected[2] * 4.0D;
+        assertEquals(0.0D, tangentDot, 1.0e-12D);
+    }
+
+    @Test
+    void degenerateLocalRopeSegmentKeepsFiniteWindForce() {
+        double[] projected = new double[3];
+
+        RopeSimulationStepper.projectWindOffTangent(
+                0.7D, -0.3D, 1.2D, 0.0D, 0.0D, 0.0D, projected);
+
+        assertEquals(0.7D, projected[0], 0.0D);
+        assertEquals(-0.3D, projected[1], 0.0D);
+        assertEquals(1.2D, projected[2], 0.0D);
+    }
+
+    @Test
+    void coincidentRopesUseOppositeStableContactNormals() {
+        Vec3 forward = RopeSimulationContactConstraints.pairStableSeparation(11L, 29L);
+        Vec3 reverse = RopeSimulationContactConstraints.pairStableSeparation(29L, 11L);
+
+        assertEquals(0.0D, forward.add(reverse).lengthSqr(), 1.0e-12D);
+        assertEquals(1.0D, forward.lengthSqr(), 1.0e-12D);
     }
 
     @Test
@@ -244,6 +319,19 @@ class RopeSimulationTopologyTest {
         assertTrue(sim.hasExternalContact(100L));
         assertTrue(sim.hasExternalContact(105L));
         assertFalse(sim.hasExternalContact(106L));
+    }
+
+    @Test
+    void externalContactRejectsNonFiniteInputAtSimulationBoundary() {
+        RopeSimulation sim = new RopeSimulation(A, B, 51L, RopeTuning.localDefaults());
+        sim.setExternalContact(100L, 0.5F, 0.2D, 0.0D, 0.0D);
+        assertTrue(sim.hasExternalContact(100L));
+
+        sim.setExternalContact(101L, Float.NaN, 0.2D, 0.0D, 0.0D);
+        assertFalse(sim.hasExternalContact(101L));
+
+        sim.setExternalContact(102L, 0.5F, Double.POSITIVE_INFINITY, 0.0D, 0.0D);
+        assertFalse(sim.hasExternalContact(102L));
     }
 
     @Test
@@ -334,5 +422,31 @@ class RopeSimulationTopologyTest {
 
         sim.prepareRender(0.5F);
         assertEquals(originY + 4.0D, sim.renderY(middle), 1.0e-9D);
+    }
+
+    @Test
+    void delayedAsyncPublicationStartsFreshVisualInterval() {
+        RopeSimulation live = new RopeSimulation(A, B, 11L, RopeTuning.localDefaults());
+        RopeSimulation worker = new RopeSimulation(A, B, 11L, RopeTuning.localDefaults());
+        int middle = live.nodeCount() / 2;
+        double originY = live.currentY(middle);
+
+        // The solve was submitted at tick 100 but only becomes available at tick 103.
+        // Its visual interval must not have elapsed while the worker was pending.
+        worker.y[middle] = originY + 4.0D;
+        live.setRenderFrameTick(103L);
+        live.prepareRender(0.0F);
+        live.copyMutableStateFrom(worker);
+        live.beginAsyncPublishedRenderStep(103L, 4);
+
+        live.setRenderFrameTick(103L);
+        live.prepareRender(0.0F);
+        assertEquals(originY, live.renderY(middle), 1.0e-9D,
+                "publication must begin at the shape visible before the worker arrived");
+
+        live.setRenderFrameTick(105L);
+        live.prepareRender(0.0F);
+        assertEquals(originY + 2.0D, live.renderY(middle), 1.0e-9D,
+                "the delayed result should animate over its full interval after publication");
     }
 }

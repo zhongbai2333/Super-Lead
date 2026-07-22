@@ -90,16 +90,46 @@ class SuperLeadSavedDataTest {
         assertEquals(1, LeadClientConnectionCache.connections(key).size());
     }
 
-        @Test
-        void clientFullSnapshotDeduplicatesMultiChunkRope() {
-                NetworkKey key = new NetworkKey(null, true);
-                LeadConnection connection = connection("00000000-0000-0000-0000-000000000006",
-                                new BlockPos(0, 64, 0), new BlockPos(32, 64, 0), LeadKind.NORMAL);
+    @Test
+    void clientFullSnapshotDeduplicatesMultiChunkRope() {
+        NetworkKey key = new NetworkKey(null, true);
+        LeadConnection connection = connection("00000000-0000-0000-0000-000000000006",
+                new BlockPos(0, 64, 0), new BlockPos(32, 64, 0), LeadKind.NORMAL);
 
-                LeadClientConnectionCache.replaceAll(key, List.of(connection, connection));
+        LeadClientConnectionCache.replaceAll(key, List.of(connection, connection));
 
-                assertEquals(List.of(connection), LeadClientConnectionCache.connections(key));
-        }
+        assertEquals(List.of(connection), LeadClientConnectionCache.connections(key));
+    }
+
+    @Test
+    void clientRevisionChangesOnlyWhenCanonicalConnectionsChange() {
+        NetworkKey key = new NetworkKey(null, true);
+        LeadConnection connection = connection("00000000-0000-0000-0000-000000000007",
+                new BlockPos(0, 64, 0), new BlockPos(8, 64, 0), LeadKind.NORMAL);
+        LeadClientConnectionCache.replaceAll(key, List.of());
+        long emptyRevision = LeadClientConnectionCache.revision(key);
+
+        LeadClientConnectionCache.replaceAll(key, List.of(connection));
+        long populatedRevision = LeadClientConnectionCache.revision(key);
+        LeadClientConnectionCache.replaceAll(key, List.of(connection, connection));
+
+        assertTrue(populatedRevision > emptyRevision);
+        assertEquals(populatedRevision, LeadClientConnectionCache.revision(key));
+    }
+
+    @Test
+    void clearingClientMirrorReleasesConnectionsAndRevision() {
+        NetworkKey key = new NetworkKey(null, true);
+        LeadConnection connection = connection("00000000-0000-0000-0000-000000000008",
+                new BlockPos(0, 64, 0), new BlockPos(8, 64, 0), LeadKind.NORMAL);
+        LeadClientConnectionCache.replaceAll(key, List.of(connection));
+
+        LeadClientConnectionCache.clearAll();
+
+        assertTrue(LeadClientConnectionCache.connections(key).isEmpty());
+        assertEquals(0L, LeadClientConnectionCache.revision(key));
+        assertEquals(0L, LeadClientConnectionCache.endpointLayoutRevision(key));
+    }
 
     private static LeadConnection connection(String id, BlockPos from, BlockPos to, LeadKind kind) {
         return new LeadConnection(UUID.fromString(id), new LeadAnchor(from, Direction.UP),

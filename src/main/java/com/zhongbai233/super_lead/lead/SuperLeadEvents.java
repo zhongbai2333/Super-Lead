@@ -630,9 +630,9 @@ public final class SuperLeadEvents {
 
     @SubscribeEvent
     public static void onBlockPlaced(BlockEvent.EntityPlaceEvent event) {
-        if (event.getLevel().isClientSide() || !(event.getLevel() instanceof Level level))
+        if (!(event.getLevel() instanceof net.minecraft.server.level.ServerLevel level))
             return;
-        ServerRopeCurve.invalidateTerrain();
+        ServerRopeCurve.invalidateTerrain(level);
         SuperLeadNetwork.pruneInvalid(level);
     }
 

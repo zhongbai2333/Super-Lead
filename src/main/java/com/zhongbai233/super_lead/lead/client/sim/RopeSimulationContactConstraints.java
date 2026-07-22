@@ -42,6 +42,18 @@ abstract class RopeSimulationContactConstraints extends RopeSimulationTerrainCon
         return maxAbsError;
     }
 
+    /**
+     * Finishes an unconstrained-air solve with a symmetric rigid projection.
+     *
+     * <p>This is part of the distance solver rather than a caller-side patch: the
+     * compliant XPBD passes determine the motion, then the forward/reverse rigid
+     * sweeps remove the small residual stretch without biasing either anchor.
+     */
+    protected void finalizeFreeDistanceConstraints(double targetLen) {
+        solveDistanceConstraints(targetLen, 0.0D, true);
+        solveDistanceConstraints(targetLen, 0.0D, false);
+    }
+
     private double solveDistance(int seg, double targetLen, double alphaTilde) {
         int i = seg;
         int j = seg + 1;
@@ -215,28 +227,20 @@ abstract class RopeSimulationContactConstraints extends RopeSimulationTerrainCon
             return;
         }
 
-        double wa = pinned[a] ? 0.0D : 1.0D;
-        double wb = pinned[b] ? 0.0D : 1.0D;
-        double oneMinusS = 1.0D - contact.s;
-        double denom = wa * oneMinusS * oneMinusS + wb * contact.s * contact.s;
-        if (denom < 1.0e-9D)
+        if (!SegmentEndpointCorrection.compute(
+                contact.s, pinned[a], pinned[b], entityPush.length, segmentEndpointCorrectionScratch)) {
             return;
-        double horizontalPushScale = entityHorizontalPushScale(entityVelocity, entityPush.nx, entityPush.nz);
-        double k = entityPush.length / denom;
-        double maxStep = 2.0D * entityPush.length;
-        if (wa > 0.0D) {
-            double ka = k * wa * oneMinusS;
-            if (ka > maxStep)
-                ka = maxStep;
-            applyTerrainCorrection(a, entityPush.nx * ka * horizontalPushScale, entityPush.ny * ka,
-                    entityPush.nz * ka * horizontalPushScale);
         }
-        if (wb > 0.0D) {
-            double kb = k * wb * contact.s;
-            if (kb > maxStep)
-                kb = maxStep;
-            applyTerrainCorrection(b, entityPush.nx * kb * horizontalPushScale, entityPush.ny * kb,
-                    entityPush.nz * kb * horizontalPushScale);
+        double horizontalPushScale = entityHorizontalPushScale(entityVelocity, entityPush.nx, entityPush.nz);
+        if (segmentEndpointCorrectionScratch[0] > 0.0D) {
+            applyTerrainCorrection(a, entityPush.nx * segmentEndpointCorrectionScratch[0] * horizontalPushScale,
+                    entityPush.ny * segmentEndpointCorrectionScratch[0],
+                    entityPush.nz * segmentEndpointCorrectionScratch[0] * horizontalPushScale);
+        }
+        if (segmentEndpointCorrectionScratch[1] > 0.0D) {
+            applyTerrainCorrection(b, entityPush.nx * segmentEndpointCorrectionScratch[1] * horizontalPushScale,
+                    entityPush.ny * segmentEndpointCorrectionScratch[1],
+                    entityPush.nz * segmentEndpointCorrectionScratch[1] * horizontalPushScale);
         }
     }
 
@@ -466,9 +470,10 @@ abstract class RopeSimulationContactConstraints extends RopeSimulationTerrainCon
         double dist = Math.sqrt(pairScratch.distSqr);
         double nx, ny, nz;
         if (dist < 1.0e-6D) {
-            nx = stableSeparation.x;
-            ny = stableSeparation.y;
-            nz = stableSeparation.z;
+            Vec3 separation = pairStableSeparation(simulationSeed, other.simulationSeed);
+            nx = separation.x;
+            ny = separation.y;
+            nz = separation.z;
         } else {
             nx = pairScratch.dx / dist;
             ny = pairScratch.dy / dist;
@@ -528,7 +533,25 @@ abstract class RopeSimulationContactConstraints extends RopeSimulationTerrainCon
         x[i] += dx;
         y[i] += dy;
         z[i] += dz;
+        // Rope-rope contact is an inelastic positional constraint. If this correction
+        // exists only in x/y/z, the velocity reconstruction at substep end interprets
+        // penetration removal as a real separating impulse. Wind then pushes the ropes
+        // together again and creates a small perpetual bounce. Move the pre-constraint
+        // origin by the same amount so tangential/wind velocity is preserved while the
+        // artificial normal velocity is removed.
+        xPrev[i] += dx;
+        yPrev[i] += dy;
+        zPrev[i] += dz;
         contactNode[i] = true;
         markBoundsDirty();
+    }
+
+    static Vec3 pairStableSeparation(long selfSeed, long otherSeed) {
+        long low = Long.compareUnsigned(selfSeed, otherSeed) <= 0 ? selfSeed : otherSeed;
+        long high = low == selfSeed ? otherSeed : selfSeed;
+        long mixed = low * 0x9E3779B97F4A7C15L
+                ^ Long.rotateLeft(high * 0xC2B2AE3D27D4EB4FL, 23);
+        Vec3 axis = com.zhongbai233.super_lead.lead.physics.RopeSagModel.stableUnitVector(mixed);
+        return selfSeed == low ? axis : axis.scale(-1.0D);
     }
 }

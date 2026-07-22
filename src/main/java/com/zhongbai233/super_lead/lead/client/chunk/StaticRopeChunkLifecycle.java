@@ -2,6 +2,7 @@ package com.zhongbai233.super_lead.lead.client.chunk;
 
 import com.zhongbai233.super_lead.Super_lead;
 import com.zhongbai233.super_lead.lead.LeadConnection;
+import com.zhongbai233.super_lead.lead.LeadEndpointLayout;
 import com.zhongbai233.super_lead.lead.SuperLeadNetwork;
 import com.zhongbai233.super_lead.lead.client.SuperLeadClientEvents;
 import com.zhongbai233.super_lead.tuning.ClientTuning;
@@ -57,12 +58,14 @@ public final class StaticRopeChunkLifecycle {
 
     @SubscribeEvent
     public static void onLoggingOut(ClientPlayerNetworkEvent.LoggingOut event) {
+        LeadEndpointLayout.clearClientCache();
         StaticRopeChunkRegistry.get().clear();
     }
 
     @SubscribeEvent
     public static void onLevelUnload(LevelEvent.Unload event) {
         if (event.getLevel().isClientSide()) {
+            LeadEndpointLayout.clearClientCache();
             StaticRopeChunkRegistry.get().clear();
         }
     }
@@ -89,6 +92,7 @@ public final class StaticRopeChunkLifecycle {
     public static void onClientBlockChanged(ClientLevel level, BlockPos pos) {
         if (level == null || pos == null)
             return;
+        LeadEndpointLayout.invalidateClientNear(level, pos);
         StaticRopeChunkRegistry registry = StaticRopeChunkRegistry.get();
         // Nearby geometry must return to dynamic simulation. Explicitly wake the
         // matching sims as well: the mesh hold is shorter than the settled block-hash

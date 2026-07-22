@@ -1,6 +1,5 @@
 package com.zhongbai233.super_lead.lead;
 
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -31,6 +30,9 @@ final class LeadClientConnectionCache {
     private static final Map<NetworkKey, Map<UUID, LeadConnection>> CONNECTIONS_BY_ID = new HashMap<>();
     private static final Map<NetworkKey, Map<Long, Set<UUID>>> CHUNK_CONNECTIONS = new HashMap<>();
     private static final Map<NetworkKey, Map<UUID, Integer>> CONNECTION_REFCOUNTS = new HashMap<>();
+    private static final Map<NetworkKey, Long> REVISIONS = new HashMap<>();
+    private static final Map<NetworkKey, Long> ENDPOINT_LAYOUT_REVISIONS = new HashMap<>();
+    private static final Map<NetworkKey, Map<UUID, EndpointLayoutIdentity>> ENDPOINT_LAYOUT_IDENTITIES = new HashMap<>();
 
     private LeadClientConnectionCache() {
     }
@@ -41,6 +43,32 @@ final class LeadClientConnectionCache {
 
     static List<LeadConnection> connections(NetworkKey key) {
         return CONNECTIONS.getOrDefault(key, List.of());
+    }
+
+    static long revision(Level level) {
+        return revision(NetworkKey.of(level));
+    }
+
+    static long revision(NetworkKey key) {
+        return REVISIONS.getOrDefault(key, 0L);
+    }
+
+    static long endpointLayoutRevision(Level level) {
+        return endpointLayoutRevision(NetworkKey.of(level));
+    }
+
+    static long endpointLayoutRevision(NetworkKey key) {
+        return ENDPOINT_LAYOUT_REVISIONS.getOrDefault(key, 0L);
+    }
+
+    static void clearAll() {
+        CONNECTIONS.clear();
+        CONNECTIONS_BY_ID.clear();
+        CHUNK_CONNECTIONS.clear();
+        CONNECTION_REFCOUNTS.clear();
+        REVISIONS.clear();
+        ENDPOINT_LAYOUT_REVISIONS.clear();
+        ENDPOINT_LAYOUT_IDENTITIES.clear();
     }
 
     static Optional<LeadConnection> find(Level level, UUID id) {
@@ -164,6 +192,34 @@ final class LeadClientConnectionCache {
 
     private static void rebuildConnectionList(NetworkKey key) {
         Map<UUID, LeadConnection> byId = CONNECTIONS_BY_ID.get(key);
-        CONNECTIONS.put(key, byId == null ? new ArrayList<>() : new ArrayList<>(byId.values()));
+        List<LeadConnection> previous = CONNECTIONS.getOrDefault(key, List.of());
+        List<LeadConnection> next = byId == null ? List.of() : List.copyOf(byId.values());
+        CONNECTIONS.put(key, next);
+        if (!previous.equals(next)) {
+            REVISIONS.put(key, REVISIONS.getOrDefault(key, 0L) + 1L);
+        }
+        Map<UUID, EndpointLayoutIdentity> previousLayout = ENDPOINT_LAYOUT_IDENTITIES.getOrDefault(key, Map.of());
+        Map<UUID, EndpointLayoutIdentity> nextLayout = endpointLayoutIdentities(next);
+        ENDPOINT_LAYOUT_IDENTITIES.put(key, nextLayout);
+        if (!previousLayout.equals(nextLayout)) {
+            ENDPOINT_LAYOUT_REVISIONS.put(key, ENDPOINT_LAYOUT_REVISIONS.getOrDefault(key, 0L) + 1L);
+        }
+    }
+
+    private static Map<UUID, EndpointLayoutIdentity> endpointLayoutIdentities(List<LeadConnection> connections) {
+        if (connections.isEmpty()) {
+            return Map.of();
+        }
+        Map<UUID, EndpointLayoutIdentity> identities = new HashMap<>(connections.size());
+        for (LeadConnection connection : connections) {
+            identities.put(connection.id(), EndpointLayoutIdentity.of(connection));
+        }
+        return Map.copyOf(identities);
+    }
+
+    private record EndpointLayoutIdentity(UUID id, LeadAnchor from, LeadAnchor to) {
+        private static EndpointLayoutIdentity of(LeadConnection connection) {
+            return new EndpointLayoutIdentity(connection.id(), connection.from(), connection.to());
+        }
     }
 }

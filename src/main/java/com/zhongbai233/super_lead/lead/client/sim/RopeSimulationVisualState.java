@@ -57,17 +57,11 @@ abstract class RopeSimulationVisualState extends RopeSimulationRenderCache {
     }
 
     /**
-     * Drops accumulated simulation-time debt before a sparse terrain-only LOD step.
-     * The following {@code step} therefore advances exactly one physics tick while
-     * still running normal terrain broad/narrow phase collision.
+     * Drops intentionally skipped simulation-time debt so the following solve
+     * advances exactly one fixed physics tick. Used by adaptive scheduling and
+     * sparse terrain maintenance; neither path should repay skipped LOD time later.
      */
-    public void prepareSparseTerrainStep(long currentTick) {
-        lastTouchTick = currentTick;
-        lastSteppedTick = currentTick - 1L;
-    }
-
-    /** Drops time intentionally skipped by adaptive scheduling. */
-    public void prepareThrottledStep(long currentTick) {
+    public void prepareSingleScheduledStep(long currentTick) {
         lastTouchTick = currentTick;
         lastSteppedTick = currentTick - 1L;
     }
@@ -97,6 +91,27 @@ abstract class RopeSimulationVisualState extends RopeSimulationRenderCache {
         renderCacheValid = false;
     }
 
+    /**
+     * Starts interpolation after an asynchronous solve is actually published.
+     *
+     * <p>The worker may finish several client ticks after submission. Its render
+     * schedule is therefore stale by publication time. The caller prepares the old
+     * on-screen shape before copying worker state; the cached render nodes remain
+     * available here as the visual origin for the newly published target.
+     */
+    public void beginAsyncPublishedRenderStep(long currentTick, int interval) {
+        for (int i = 0; i < nodes; i++) {
+            scheduledRenderX[i] = renderX[i];
+            scheduledRenderY[i] = renderY[i];
+            scheduledRenderZ[i] = renderZ[i];
+        }
+        scheduledRenderStartTick = currentTick;
+        scheduledRenderDurationTicks = Math.max(1, interval);
+        scheduledRenderActive = true;
+        renderStable = false;
+        renderCacheValid = false;
+    }
+
     public void setRenderFrameTick(long currentTick) {
         if (renderFrameTick != currentTick && scheduledRenderActive) {
             renderCacheValid = false;
@@ -104,18 +119,11 @@ abstract class RopeSimulationVisualState extends RopeSimulationRenderCache {
         renderFrameTick = currentTick;
     }
 
-    /** Forces the next full-detail step to re-evaluate terrain and settle state. */
-    public void wakeForRefinement() {
-        invalidatePhysicsHistoryForRefinement();
-    }
-
-    /** Forces the next step to rebuild every conclusion derived from terrain. */
-    public void wakeForTerrainChange() {
-        invalidatePhysicsHistoryForRefinement();
-    }
-
-    /** Wakes a settled simulation after tuning, contact, or another external change. */
-    public void wakeForExternalChange() {
+    /**
+     * Invalidates settled, terrain, topology and interpolation conclusions after an
+     * external lifecycle change. The next step rebuilds them from the current shape.
+     */
+    public void wakeForPhysicsChange() {
         invalidatePhysicsHistoryForRefinement();
     }
 
@@ -212,8 +220,9 @@ abstract class RopeSimulationVisualState extends RopeSimulationRenderCache {
     // ============================================================================================
     /** Set or refresh the contact for this rope. Pass {@code t < 0} to clear. */
     public void setExternalContact(long currentTick, float t, double dx, double dy, double dz) {
-        if (t < 0.0F || !visualPushEnabled() || contactPushGain <= 0.0D) {
-            contactT = -1.0F;
+        if (!Float.isFinite(t) || !Double.isFinite(dx) || !Double.isFinite(dy) || !Double.isFinite(dz)
+                || t < 0.0F || !visualPushEnabled() || contactPushGain <= 0.0D) {
+            clearExternalContact();
             return;
         }
         contactT = t;
