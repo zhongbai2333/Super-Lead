@@ -44,14 +44,19 @@ public record LeadAnchor(BlockPos pos, Direction face, Vec3 hitPoint) {
         return hitPoint == null ? this : new LeadAnchor(pos, face);
     }
 
-    static boolean shouldPreserveHitPoint(VoxelShape shape) {
-        return shape != null && !shape.isEmpty()
-                && (shape.min(Direction.Axis.X) < 0.0D
-                        || shape.min(Direction.Axis.Y) < 0.0D
-                        || shape.min(Direction.Axis.Z) < 0.0D
-                        || shape.max(Direction.Axis.X) > 1.0D
-                        || shape.max(Direction.Axis.Y) > 1.0D
-                        || shape.max(Direction.Axis.Z) > 1.0D);
+    static boolean shouldPreserveHitPoint(BlockState state) {
+        return state != null && !isKnotBlock(state);
+    }
+
+    /** World block immediately outside the clicked surface. */
+    public BlockPos outsideSurfacePos() {
+        if (hitPoint == null) {
+            return pos.relative(face);
+        }
+        return BlockPos.containing(hitPoint.add(
+                face.getStepX() * EXTRUDE,
+                face.getStepY() * EXTRUDE,
+                face.getStepZ() * EXTRUDE));
     }
 
     public static boolean isKnotBlock(BlockState state) {

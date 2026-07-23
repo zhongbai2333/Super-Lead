@@ -632,8 +632,16 @@ public final class SuperLeadEvents {
     public static void onBlockPlaced(BlockEvent.EntityPlaceEvent event) {
         if (!(event.getLevel() instanceof net.minecraft.server.level.ServerLevel level))
             return;
+        LeadSignalService.markRedstoneDirty(level);
         ServerRopeCurve.invalidateTerrain(level);
         SuperLeadNetwork.pruneInvalid(level);
+    }
+
+    @SubscribeEvent
+    public static void onNeighborNotified(BlockEvent.NeighborNotifyEvent event) {
+        if (event.getLevel() instanceof net.minecraft.server.level.ServerLevel level) {
+            LeadSignalService.markRedstoneDirty(level);
+        }
     }
 
     @SubscribeEvent
@@ -756,12 +764,11 @@ public final class SuperLeadEvents {
         var state = event.getLevel().getBlockState(event.getPos());
         Direction face = LeadAnchor.knotFace(state,
                 event.getHitVec().getDirection());
-        // Mekanism MoreMachine and similar blocks use one logical controller with a
-        // selection shape spanning several world blocks. Preserve the actual surface
-        // hit for rope geometry while keeping event.getPos() for capability lookup.
-        var shape = state.getShape(event.getLevel(), event.getPos());
-        boolean oversized = LeadAnchor.shouldPreserveHitPoint(shape);
-        return new LeadAnchor(event.getPos(), face, oversized ? event.getHitVec().getLocation() : null);
+        // Preserve the exact clicked surface point for every ordinary block. The
+        // logical BlockPos + face still drives capability lookup; fences and iron bars
+        // deliberately keep their canonical knot position.
+        var hitPoint = LeadAnchor.shouldPreserveHitPoint(state) ? event.getHitVec().getLocation() : null;
+        return new LeadAnchor(event.getPos(), face, hitPoint);
     }
 
     private static boolean isSeedItem(ItemStack stack) {

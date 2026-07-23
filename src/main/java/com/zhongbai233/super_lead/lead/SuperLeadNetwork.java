@@ -315,7 +315,7 @@ public final class SuperLeadNetwork {
             return false;
 
         // Face-mounted anchors: check the block adjacent in the anchor's face direction
-        BlockPos adjacent = anchor.pos().relative(anchor.face());
+        BlockPos adjacent = anchor.outsideSurfacePos();
         return level.getBlockState(adjacent).isCollisionShapeFullBlock(level, adjacent);
     }
 

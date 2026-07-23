@@ -38,17 +38,35 @@ final class LeadSignalService {
     private static final Map<ServerLevel, Map<LeadAnchor, Long>> ENERGY_BREAKER_LAST_LOG = new HashMap<>();
     private static final ThreadLocal<Boolean> ENERGY_TICK_ACTIVE = ThreadLocal.withInitial(() -> false);
     private static final ThreadLocal<Boolean> SUPPRESS_LEAD_SIGNALS = ThreadLocal.withInitial(() -> false);
+    private static final ThreadLocal<Boolean> REDSTONE_UPDATE_ACTIVE = ThreadLocal.withInitial(() -> false);
+    private static final Set<ServerLevel> REDSTONE_DIRTY_LEVELS = new HashSet<>();
+    private static final Set<ServerLevel> REDSTONE_INITIALIZED_LEVELS = new HashSet<>();
 
     private LeadSignalService() {
     }
 
     static void tickRedstone(ServerLevel level) {
+        boolean firstUpdate = REDSTONE_INITIALIZED_LEVELS.add(level);
+        boolean dirty = REDSTONE_DIRTY_LEVELS.remove(level);
+        if (!shouldProcessRedstoneUpdate(firstUpdate, dirty)) {
+            return;
+        }
         SuperLeadSavedData data = SuperLeadSavedData.get(level);
         List<LeadConnection> redstoneConnections = data.connectionsOfKindFast(LeadKind.REDSTONE);
         if (redstoneConnections.isEmpty()) {
             return;
         }
 
+        REDSTONE_UPDATE_ACTIVE.set(true);
+        try {
+            updateRedstoneNetworks(level, data, redstoneConnections);
+        } finally {
+            REDSTONE_UPDATE_ACTIVE.set(false);
+        }
+    }
+
+    private static void updateRedstoneNetworks(ServerLevel level, SuperLeadSavedData data,
+            List<LeadConnection> redstoneConnections) {
         int size = redstoneConnections.size();
         boolean changed = false;
         boolean[] visited = new boolean[size];
@@ -90,6 +108,16 @@ final class LeadSignalService {
         if (changed) {
             SuperLeadPayloads.sendDirtyToDimension(level);
         }
+    }
+
+    static void markRedstoneDirty(ServerLevel level) {
+        if (level != null && !REDSTONE_UPDATE_ACTIVE.get()) {
+            REDSTONE_DIRTY_LEVELS.add(level);
+        }
+    }
+
+    static boolean shouldProcessRedstoneUpdate(boolean firstUpdate, boolean dirty) {
+        return firstUpdate || dirty;
     }
 
     static void tickEnergy(ServerLevel level) {
@@ -167,6 +195,8 @@ final class LeadSignalService {
         ENERGY_BREAKER_UNTIL.remove(level);
         ENERGY_BREAKER_LAST_LOG.remove(level);
         ENERGY_ACTIVE_UNTIL.remove(level);
+        REDSTONE_DIRTY_LEVELS.remove(level);
+        REDSTONE_INITIALIZED_LEVELS.remove(level);
     }
 
     static int leadSignal(SignalGetter getter, BlockPos pos, Direction direction) {
@@ -238,6 +268,7 @@ final class LeadSignalService {
         if (connection.kind() != LeadKind.REDSTONE) {
             return;
         }
+        markRedstoneDirty(level);
         notifyRedstoneAnchor(level, connection.from());
         notifyRedstoneAnchor(level, connection.to());
     }

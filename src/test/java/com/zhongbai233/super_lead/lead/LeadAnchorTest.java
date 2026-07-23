@@ -9,18 +9,19 @@ import com.google.gson.JsonParser;
 import com.mojang.serialization.JsonOps;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
-import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
-import net.minecraft.world.phys.shapes.Shapes;
 import org.junit.jupiter.api.Test;
 
 class LeadAnchorTest {
     @Test
-    void oversizedSelectionShapePreservesExactHitPoint() {
-        assertTrue(LeadAnchor.shouldPreserveHitPoint(Shapes.create(new AABB(-1.0D, 0.0D, -1.0D,
-                2.0D, 3.0D, 2.0D))));
-        assertFalse(LeadAnchor.shouldPreserveHitPoint(Shapes.block()));
-        assertFalse(LeadAnchor.shouldPreserveHitPoint(Shapes.empty()));
+    void outsideSurfacePositionFollowsExactHitRatherThanController() {
+        LeadAnchor north = new LeadAnchor(new BlockPos(10, 64, 20), Direction.NORTH,
+                new Vec3(8.75D, 65.25D, 19.0D));
+        LeadAnchor east = new LeadAnchor(new BlockPos(10, 64, 20), Direction.EAST,
+                new Vec3(12.0D, 65.25D, 20.5D));
+
+        assertEquals(new BlockPos(8, 65, 18), north.outsideSurfacePos());
+        assertEquals(new BlockPos(12, 65, 20), east.outsideSurfacePos());
     }
 
     @Test

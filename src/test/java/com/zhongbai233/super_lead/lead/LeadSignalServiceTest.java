@@ -9,6 +9,14 @@ import org.junit.jupiter.api.Test;
 
 class LeadSignalServiceTest {
     @Test
+    void redstoneUpdateRunsOnlyForInitializationOrDirtyState() {
+        assertTrue(LeadSignalService.shouldProcessRedstoneUpdate(true, false));
+        assertTrue(LeadSignalService.shouldProcessRedstoneUpdate(false, true));
+        assertTrue(LeadSignalService.shouldProcessRedstoneUpdate(true, true));
+        assertFalse(LeadSignalService.shouldProcessRedstoneUpdate(false, false));
+    }
+
+    @Test
     void energyRequestNeverExceedsConfiguredPerCallLimit() {
         assertEquals(Config.energyMaxRequestPerCall(), LeadSignalService.boundedEnergyRequest(Long.MAX_VALUE));
         assertEquals(1234, LeadSignalService.boundedEnergyRequest(1234));

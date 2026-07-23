@@ -143,7 +143,7 @@ public final class LeadEndpointLayout {
 
     private static Vec3 attachmentPoint(Level level, LeadAnchor anchor, Placement placement) {
         Vec3 base = anchor.attachmentPoint(level);
-        if (level == null || anchor == null || placement.count() <= 1) {
+        if (level == null || anchor == null || anchor.hitPoint() != null || placement.count() <= 1) {
             return base;
         }
 
