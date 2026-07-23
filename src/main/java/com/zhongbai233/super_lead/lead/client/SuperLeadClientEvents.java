@@ -548,6 +548,7 @@ public final class SuperLeadClientEvents {
         RopeContactsClient.clear();
         ZiplineClientState.clear();
         AttachmentSwingClient.clear();
+        RopeAttachmentRenderer.clearCaches();
         RopeTuning.clearCache();
         LeadEndpointLayout.clearClientCache();
         SuperLeadNetwork.clearClientConnections();
@@ -578,7 +579,7 @@ public final class SuperLeadClientEvents {
                     physicsNanosByConnection, physicsStateByConnection, entry, tick, partialTick, physicsBudget);
         }
         if (entryCount > 0) {
-            physicsRoundRobinCursor = (start + 1) % entryCount;
+            physicsRoundRobinCursor = nextRoundRobinStart(start, entryCount, physicsBudget.used());
         }
     }
 
@@ -587,6 +588,18 @@ public final class SuperLeadClientEvents {
             return 0;
         }
         return Math.floorMod(start + offset, size);
+    }
+
+    static int nextRoundRobinStart(int start, int size, int consumedBudget) {
+        if (size <= 0) {
+            return 0;
+        }
+        // Move past the work that actually fit this tick. Advancing by only one
+        // creates heavily overlapping windows (0..7, 1..8, 2..9) and can starve the
+        // tail of a dense scene for dozens of ticks when the time circuit breaker is
+        // active. A minimum step still rotates scenes where every rope was paced.
+        int advance = Math.max(1, Math.min(size, consumedBudget));
+        return Math.floorMod(start + advance, size);
     }
 
     private static void addConnectionEntry(ClientLevel level, Minecraft minecraft,
@@ -815,10 +828,10 @@ public final class SuperLeadClientEvents {
         double collisionRisk = predictedPlayerCollisionRisk(player, entry);
         StepDecision decision = stepDecision(entry, tick, physicsBudget, !forceFields.isEmpty(), collisionRisk);
         if (!decision.shouldStep()) {
-            if (decision.windActive()) {
-                // Wind is a continuous force. If the hard circuit breaker drops this
-                // solve, discard the missed time instead of repaying it as a multi-tick
-                // gust burst on the next frame.
+            if (isOverloadSkipState(decision.state())) {
+                // A hard budget miss is not intentional LOD pacing. Discard its time
+                // debt so the next available solve advances one fixed tick instead of
+                // catching up several ticks and defeating render interpolation.
                 entry.sim().prepareSingleScheduledStep(tick + 1L);
             }
             recordPhysicsState(physicsNanosByConnection, physicsStateByConnection, id,
@@ -840,16 +853,29 @@ public final class SuperLeadClientEvents {
             entry.sim().prepareSingleScheduledStep(tick);
         }
         if (canStepAsync(entry, neighbors, entityContacts, decision.windActive())) {
-            if (submitAsyncPhysics(level, entry, forceFields, entityContacts,
-                    tick, decision.interval(), active)) {
+            AsyncSubmission submission = submitAsyncPhysics(level, entry, forceFields, entityContacts,
+                    tick, decision.interval(), active);
+            if (submission == AsyncSubmission.SUBMITTED) {
                 LAST_DYNAMIC_STEP_TICK.put(id, tick);
                 recordPhysicsState(physicsNanosByConnection, physicsStateByConnection, id, 0L, "async");
                 maybeReportPlayerContact(player, entry.connection(), entry.sim(), entry.a(), entry.b(), tick);
                 return;
             }
-            recordPhysicsState(physicsNanosByConnection, physicsStateByConnection, id, 0L, "pending");
-            maybeReportPlayerContact(player, entry.connection(), entry.sim(), entry.a(), entry.b(), tick);
-            return;
+            if (submission == AsyncSubmission.ALREADY_IN_FLIGHT || physicsBudget.timeExhausted()) {
+                // Do not repay a deliberately missed frame as a multi-tick jump on the
+                // next solve. An existing worker will publish its own interpolation;
+                // a capacity rejection after the deadline simply drops this debt.
+                if (submission == AsyncSubmission.CAPACITY_FULL) {
+                    entry.sim().prepareSingleScheduledStep(tick + 1L);
+                }
+                recordPhysicsState(physicsNanosByConnection, physicsStateByConnection, id, 0L,
+                        submission == AsyncSubmission.ALREADY_IN_FLIGHT ? "pending" : "capacity-skip");
+                maybeReportPlayerContact(player, entry.connection(), entry.sim(), entry.a(), entry.b(), tick);
+                return;
+            }
+            // The shared async queue is full, but this rope has no worker of its own
+            // and the main-thread deadline still has room. Solve it synchronously
+            // instead of starving it until a later round-robin pass.
         }
 
         cancelAsyncPhysics(id);
@@ -880,19 +906,19 @@ public final class SuperLeadClientEvents {
                 && (hovered == null || !entry.connection().id().equals(hovered.id()));
     }
 
-    private static boolean submitAsyncPhysics(ClientLevel level, RenderEntry entry,
+    private static AsyncSubmission submitAsyncPhysics(ClientLevel level, RenderEntry entry,
             List<RopeForceField> forceFields, List<RopeEntityContact> entityContacts,
             long tick, int renderInterval, Set<UUID> active) {
         UUID id = entry.connection().id();
         AsyncPhysicsJob existing = ASYNC_PHYSICS_JOBS.get(id);
         if (existing != null && existing.running() && !existing.done()) {
-            return false;
+            return AsyncSubmission.ALREADY_IN_FLIGHT;
         }
         // Executors.newFixedThreadPool uses an unbounded queue. Refuse excess work
         // before allocating/copying another simulation so a dense scene cannot build
         // an arbitrarily large delayed-work and memory backlog.
         if ((existing == null || !existing.running()) && runningAsyncPhysicsJobs() >= MAX_ASYNC_PHYSICS_JOBS) {
-            return false;
+            return AsyncSubmission.CAPACITY_FULL;
         }
         RopeSimulation worker;
         if (existing != null && canReuseAsyncWorker(existing, entry.a(), entry.b(), entry.sim().tuning())) {
@@ -917,7 +943,13 @@ public final class SuperLeadClientEvents {
         ASYNC_PHYSICS_JOBS.put(id,
             new AsyncPhysicsJob(entry.sim(), worker, future, renderInterval));
         active.add(id);
-        return true;
+        return AsyncSubmission.SUBMITTED;
+    }
+
+    enum AsyncSubmission {
+        SUBMITTED,
+        ALREADY_IN_FLIGHT,
+        CAPACITY_FULL
     }
 
     private static int runningAsyncPhysicsJobs() {
@@ -1096,6 +1128,13 @@ public final class SuperLeadClientEvents {
             interval = Math.max(interval, 2);
         }
         return Math.max(1, interval);
+    }
+
+    static boolean isOverloadSkipState(String state) {
+        return state != null && (state.equals("budget")
+                || state.endsWith("-budget")
+                || state.equals("circuit-breaker")
+                || state.endsWith("-circuit-breaker"));
     }
 
     private static double predictedPlayerCollisionRisk(Player player, RenderEntry entry) {
@@ -1460,7 +1499,34 @@ public final class SuperLeadClientEvents {
             double px = ax + (bx - ax) * frac;
             double py = ay + (by - ay) * frac;
             double pz = az + (bz - az) * frac;
-            double tx = bx - ax, ty = by - ay, tz = bz - az;
+                double frameTargetStart = RopeAttachmentRenderer.attachmentFrameSampleStart(target, total, 0.60D);
+                double frameTargetEnd = RopeAttachmentRenderer.attachmentFrameSampleEnd(target, total, 0.60D);
+                int frameStart = locateRenderSegment(sim, nodeCount, frameTargetStart);
+                int frameEnd = locateRenderSegment(sim, nodeCount, frameTargetEnd);
+                double startSpan = sim.renderLength(frameStart + 1) - sim.renderLength(frameStart);
+                double endSpan = sim.renderLength(frameEnd + 1) - sim.renderLength(frameEnd);
+                double startFrac = startSpan > 1.0e-6D
+                        ? (frameTargetStart - sim.renderLength(frameStart)) / startSpan : 0.0D;
+                double endFrac = endSpan > 1.0e-6D
+                        ? (frameTargetEnd - sim.renderLength(frameEnd)) / endSpan : 0.0D;
+                double frameAx = sim.renderX(frameStart)
+                    + (sim.renderX(frameStart + 1) - sim.renderX(frameStart)) * startFrac;
+                double frameAy = sim.renderY(frameStart)
+                    + (sim.renderY(frameStart + 1) - sim.renderY(frameStart)) * startFrac;
+                double frameAz = sim.renderZ(frameStart)
+                    + (sim.renderZ(frameStart + 1) - sim.renderZ(frameStart)) * startFrac;
+                double frameBx = sim.renderX(frameEnd)
+                    + (sim.renderX(frameEnd + 1) - sim.renderX(frameEnd)) * endFrac;
+                double frameBy = sim.renderY(frameEnd)
+                    + (sim.renderY(frameEnd + 1) - sim.renderY(frameEnd)) * endFrac;
+                double frameBz = sim.renderZ(frameEnd)
+                    + (sim.renderZ(frameEnd + 1) - sim.renderZ(frameEnd)) * endFrac;
+                double tx = frameBx - frameAx, ty = frameBy - frameAy, tz = frameBz - frameAz;
+                if (tx * tx + ty * ty + tz * tz <= 1.0e-10D) {
+                tx = bx - ax;
+                ty = by - ay;
+                tz = bz - az;
+                }
             double tLen = Math.sqrt(tx * tx + ty * ty + tz * tz);
             if (tLen <= 1.0e-6D) {
                 AttachmentSwingClient.tickPassive(attachment.id(), tick);
@@ -1611,6 +1677,10 @@ public final class SuperLeadClientEvents {
 
         private boolean timeExhausted() {
             return System.nanoTime() >= deadlineNanos;
+        }
+
+        int used() {
+            return used;
         }
     }
 

@@ -462,7 +462,7 @@ final class LeadTransferService {
 
     private static void addThermalEndpoint(ServerLevel level, LeadAnchor anchor, List<LeadAnchor> endpoints,
             Set<LeadAnchor> seenAnchors, MekanismHeatBridge.HandlerCache heatHandlers) {
-        if (seenAnchors.add(anchor) && heatHandlers.has(level, anchor)) {
+        if (seenAnchors.add(anchor.logicalPort()) && heatHandlers.has(level, anchor)) {
             endpoints.add(anchor);
         }
     }
@@ -880,7 +880,7 @@ final class LeadTransferService {
     }
 
     private static LeadAnchor cacheKey(LeadAnchor anchor) {
-        return new LeadAnchor(anchor.pos().immutable(), anchor.face());
+        return anchor.logicalPort();
     }
 
     private static List<LeadConnection> pathConnections(List<PathStep> path) {

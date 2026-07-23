@@ -12,15 +12,47 @@ import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import net.minecraft.world.phys.shapes.VoxelShape;
 
-public record LeadAnchor(BlockPos pos, Direction face) {
+public record LeadAnchor(BlockPos pos, Direction face, Vec3 hitPoint) {
     public static final Codec<LeadAnchor> CODEC = RecordCodecBuilder.create(instance -> instance.group(
             BlockPos.CODEC.fieldOf("pos").forGetter(anchor -> anchor.pos()),
-            Direction.CODEC.fieldOf("face").forGetter(anchor -> anchor.face()))
-            .apply(instance, LeadAnchor::new));
+            Direction.CODEC.fieldOf("face").forGetter(anchor -> anchor.face()),
+            Vec3.CODEC.optionalFieldOf("hitPoint").forGetter(anchor -> java.util.Optional.ofNullable(anchor.hitPoint())))
+            .apply(instance, (pos, face, hitPoint) -> new LeadAnchor(pos, face, hitPoint.orElse(null))));
 
     private static final double EXTRUDE = 0.06D;
     private static final double FENCE_KNOT_Y = 0.75D;
     private static final double IRON_BARS_KNOT_Y = 0.08D;
+
+    public LeadAnchor(BlockPos pos, Direction face) {
+        this(pos, face, null);
+    }
+
+    public LeadAnchor {
+        pos = pos.immutable();
+        if (hitPoint != null && (!Double.isFinite(hitPoint.x)
+                || !Double.isFinite(hitPoint.y) || !Double.isFinite(hitPoint.z))) {
+            hitPoint = null;
+        }
+    }
+
+    /** Logical capability identity; the precise hit point is visual geometry only. */
+    public boolean samePort(LeadAnchor other) {
+        return other != null && pos.equals(other.pos) && face == other.face;
+    }
+
+    public LeadAnchor logicalPort() {
+        return hitPoint == null ? this : new LeadAnchor(pos, face);
+    }
+
+    static boolean shouldPreserveHitPoint(VoxelShape shape) {
+        return shape != null && !shape.isEmpty()
+                && (shape.min(Direction.Axis.X) < 0.0D
+                        || shape.min(Direction.Axis.Y) < 0.0D
+                        || shape.min(Direction.Axis.Z) < 0.0D
+                        || shape.max(Direction.Axis.X) > 1.0D
+                        || shape.max(Direction.Axis.Y) > 1.0D
+                        || shape.max(Direction.Axis.Z) > 1.0D);
+    }
 
     public static boolean isKnotBlock(BlockState state) {
         return state != null && (state.getBlock() instanceof FenceBlock || state.getBlock() instanceof IronBarsBlock);
@@ -41,6 +73,13 @@ public record LeadAnchor(BlockPos pos, Direction face) {
         }
         if (state.getBlock() instanceof IronBarsBlock) {
             return Vec3.atLowerCornerOf(pos).add(0.5D, IRON_BARS_KNOT_Y, 0.5D);
+        }
+
+        if (hitPoint != null) {
+            return hitPoint.add(
+                    face.getStepX() * EXTRUDE,
+                    face.getStepY() * EXTRUDE,
+                    face.getStepZ() * EXTRUDE);
         }
 
         VoxelShape shape = state.getShape(level, pos);

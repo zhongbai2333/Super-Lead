@@ -1,6 +1,7 @@
 package com.zhongbai233.super_lead.lead.client.render;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.Map;
@@ -8,6 +9,14 @@ import net.minecraft.core.BlockPos;
 import org.junit.jupiter.api.Test;
 
 class RopeDynamicLightsTest {
+    @Test
+    void expensiveLightRefreshRunsAtMostOncePerGameTick() {
+        assertTrue(RopeDynamicLights.shouldUpdateForTick(Long.MIN_VALUE, 100L));
+        assertFalse(RopeDynamicLights.shouldUpdateForTick(100L, 100L));
+        assertTrue(RopeDynamicLights.shouldUpdateForTick(100L, 101L));
+        assertTrue(RopeDynamicLights.shouldUpdateForTick(100L, 50L));
+    }
+
     @Test
     void queryRangeIncludesEveryCellTouchedByEffectSphere() {
         RopeDynamicLights.LightCellRange range = RopeDynamicLights.queryCellRange(

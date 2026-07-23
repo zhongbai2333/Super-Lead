@@ -22,7 +22,6 @@ public final class AttachmentSwingClient {
     private static final double COLLISION_RADIUS_SQR = COLLISION_RADIUS * COLLISION_RADIUS;
     private static final double IMPULSE_SCALE = 0.070D;
     private static final double OVERLAP_IMPULSE_SCALE = 0.035D;
-    private static final double SUPPORT_MOTION_SCALE = 0.62D;
     private static final double SUPPORT_ACCEL_SCALE = 0.24D;
     private static final double SUPPORT_MIN_MOTION_SQR = 0.0015D * 0.0015D;
     private static final double SUPPORT_FILTER_ALPHA = 0.42D;
@@ -205,14 +204,14 @@ public final class AttachmentSwingClient {
                 || ax * ax + ay * ay + az * az > SUPPORT_MIN_MOTION_SQR) {
             // Pendulum inertia: when the rope support point is shoved one way, the
             // attachment body visually lags behind in the opposite projected direction.
-            double alongImpulse = -(clamp(filteredVelX * tangentX + filteredVelY * tangentY + filteredVelZ * tangentZ,
-                    -0.75D, 0.75D) * SUPPORT_MOTION_SCALE
-                    + clamp(ax * tangentX + ay * tangentY + az * tangentZ,
-                            -0.75D, 0.75D) * SUPPORT_ACCEL_SCALE) * reversal;
-            double sideImpulse = -(clamp(filteredVelX * sideX + filteredVelY * sideY + filteredVelZ * sideZ,
-                    -0.75D, 0.75D) * SUPPORT_MOTION_SCALE
-                    + clamp(ax * sideX + ay * sideY + az * sideZ,
-                            -0.75D, 0.75D) * SUPPORT_ACCEL_SCALE) * reversal;
+            // A pendulum reacts to acceleration of its support, not to constant
+            // support velocity. Feeding velocity into this impulse made tiny
+            // arc-length reparameterization drift continuously drive velAlong, which
+            // showed up as a one-pixel along-rope shimmer on enlarged attachments.
+            double alongImpulse = supportAccelerationImpulse(
+                    ax * tangentX + ay * tangentY + az * tangentZ, reversal);
+            double sideImpulse = supportAccelerationImpulse(
+                    ax * sideX + ay * sideY + az * sideZ, reversal);
             state.velAlong = clamp(state.velAlong + clamp(alongImpulse, -SUPPORT_MAX_IMPULSE, SUPPORT_MAX_IMPULSE),
                     -MAX_ANGULAR_VELOCITY, MAX_ANGULAR_VELOCITY);
             state.velSide = clamp(state.velSide + clamp(sideImpulse, -SUPPORT_MAX_IMPULSE, SUPPORT_MAX_IMPULSE),
@@ -232,6 +231,11 @@ public final class AttachmentSwingClient {
         state.supportFilteredVelY = filteredVelY;
         state.supportFilteredVelZ = filteredVelZ;
         return state;
+    }
+
+    static double supportAccelerationImpulse(double accelerationProjection, double reversal) {
+        return -clamp(accelerationProjection, -0.75D, 0.75D)
+                * SUPPORT_ACCEL_SCALE * clamp(reversal, 0.0D, 1.0D);
     }
 
     private static double clamp(double value, double min, double max) {

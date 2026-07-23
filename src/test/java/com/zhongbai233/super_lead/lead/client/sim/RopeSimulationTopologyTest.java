@@ -405,6 +405,59 @@ class RopeSimulationTopologyTest {
     }
 
     @Test
+    void delayedPhysicsUsesBoundedVisualFrameGeneration() {
+        RopeSimulation sim = new RopeSimulation(A, B, 91L, RopeTuning.localDefaults());
+        int middle = sim.nodeCount() / 2;
+        double originY = sim.currentY(middle);
+
+        sim.prepareScheduledRenderStep(100L, 1);
+        sim.y[middle] = originY + 0.10D;
+
+        sim.setRenderFrameTick(101L);
+        sim.prepareRender(0.5F);
+        assertTrue(sim.renderY(middle) > originY + 0.10D,
+                "a missed physics result should not freeze immediately at the old target");
+        assertTrue(sim.renderY(middle) <= originY + 0.18D + 1.0e-9D,
+                "frame generation must remain within the per-node safety cap");
+
+        sim.setRenderFrameTick(104L);
+        sim.prepareRender(0.0F);
+        assertEquals(originY + 0.18D, sim.renderY(middle), 1.0e-9D,
+                "extended stalls must stop at the bounded extrapolation limit");
+    }
+
+    @Test
+    void generatedFrameBecomesOriginWhenPhysicsResumes() {
+        RopeSimulation sim = new RopeSimulation(A, B, 92L, RopeTuning.localDefaults());
+        int middle = sim.nodeCount() / 2;
+        double originY = sim.currentY(middle);
+
+        sim.prepareScheduledRenderStep(100L, 1);
+        sim.y[middle] = originY + 0.10D;
+        sim.prepareScheduledRenderStep(102L, 1);
+        sim.y[middle] = originY + 0.30D;
+
+        sim.setRenderFrameTick(102L);
+        sim.prepareRender(0.0F);
+        assertEquals(originY + 0.18D, sim.renderY(middle), 1.0e-9D,
+                "the resumed solve must continue from the last generated frame without snapping back");
+    }
+
+    @Test
+    void generatedFramesNeverMovePinnedEndpointsPastPhysicsTargets() {
+        RopeSimulation sim = new RopeSimulation(A, B, 93L, RopeTuning.localDefaults());
+
+        sim.prepareScheduledRenderStep(100L, 1);
+        sim.x[0] += 1.0D;
+        sim.x[sim.nodeCount() - 1] += 1.0D;
+        sim.setRenderFrameTick(103L);
+        sim.prepareRender(0.0F);
+
+        assertEquals(sim.currentX(0), sim.renderX(0), 1.0e-9D);
+        assertEquals(sim.currentX(sim.nodeCount() - 1), sim.renderX(sim.nodeCount() - 1), 1.0e-9D);
+    }
+
+    @Test
     void earlyHotUpshiftContinuesFromCurrentlyVisibleShape() {
         RopeSimulation sim = new RopeSimulation(A, B, 10L, RopeTuning.localDefaults());
         int middle = sim.nodeCount() / 2;

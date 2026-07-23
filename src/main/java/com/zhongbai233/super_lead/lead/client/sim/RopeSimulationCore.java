@@ -1057,7 +1057,7 @@ abstract class RopeSimulationCore {
                 proxyWorkX, proxyWorkY, proxyWorkZ);
     }
 
-    private double desiredProxyLength(double ax, double ay, double az, double bx, double by, double bz) {
+    protected double desiredProxyLength(double ax, double ay, double az, double bx, double by, double bz) {
         double dx = bx - ax;
         double dy = by - ay;
         double dz = bz - az;

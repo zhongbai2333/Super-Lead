@@ -48,6 +48,7 @@ public final class RopeDynamicLights {
     private static final Map<BlockPos, Source> ACTIVE = new ConcurrentHashMap<>();
     private static volatile Map<LightCell, List<Source>> SPATIAL_INDEX = Map.of();
     private static ClientLevel activeLevel;
+    private static long lastUpdateTick = Long.MIN_VALUE;
 
     private RopeDynamicLights() {
     }
@@ -64,6 +65,11 @@ public final class RopeDynamicLights {
             clear();
             activeLevel = level;
         }
+        long currentTick = level.getGameTime();
+        if (!shouldUpdateForTick(lastUpdateTick, currentTick)) {
+            return;
+        }
+        lastUpdateTick = currentTick;
 
         Map<BlockPos, Source> desired = new HashMap<>();
         Set<UUID> staticConnectionIds = addStaticLights(level, cameraPos, staticAttachments, desired);
@@ -85,9 +91,14 @@ public final class RopeDynamicLights {
         ACTIVE.clear();
         SPATIAL_INDEX = Map.of();
         activeLevel = null;
+        lastUpdateTick = Long.MIN_VALUE;
         if (level != null) {
             markDirty(level, oldPositions);
         }
+    }
+
+    static boolean shouldUpdateForTick(long previousTick, long currentTick) {
+        return previousTick == Long.MIN_VALUE || currentTick != previousTick;
     }
 
     public static int boostPackedLight(BlockPos pos, int packedLight) {
@@ -181,6 +192,9 @@ public final class RopeDynamicLights {
         for (RopeAttachment attachment : connection.attachments()) {
             double t = attachment.t();
             Vec3 p = RopeSagModel.point(a, b, t, tuning.slack(), tuning.gravity(), fallback);
+            if (!mayEmitLight(level, BlockPos.containing(p), attachment.stack(), redstonePowered)) {
+                continue;
+            }
             double dt = 1.0D / (FALLBACK_NODE_COUNT - 1);
             double ta = Math.max(0.0D, t - dt);
             double tb = Math.min(1.0D, t + dt);
@@ -199,6 +213,9 @@ public final class RopeDynamicLights {
 
     private static void addSimAttachmentLight(ClientLevel level, Vec3 cameraPos, RopeSimulation sim, double total,
             RopeAttachment attachment, boolean redstonePowered, Map<BlockPos, Source> desired) {
+        if (!(attachment.stack().getItem() instanceof BlockItem)) {
+            return;
+        }
         double target = attachment.t() * total;
         int nodeCount = sim.nodeCount();
         int seg = locateSegment(sim, nodeCount, target);
@@ -213,6 +230,9 @@ public final class RopeDynamicLights {
         double px = ax + (bx - ax) * frac;
         double py = ay + (by - ay) * frac;
         double pz = az + (bz - az) * frac;
+        if (!mayEmitLight(level, BlockPos.containing(px, py, pz), attachment.stack(), redstonePowered)) {
+            return;
+        }
         Vec3 light = attachmentLightPosition(level, attachment.stack(), attachment.displayAsBlock(),
             attachment.frontSide(), px, py, pz, ax, ay, az, bx, by, bz,
             attachment.mountOverride(), attachment.displayModeOverride(), attachment.hangerOverride(),
@@ -259,6 +279,13 @@ public final class RopeDynamicLights {
             }
         }
         return Math.max(0, Math.min(MAX_LIGHT, state.getLightEmission(level, pos)));
+    }
+
+    static boolean mayEmitLight(ClientLevel level, BlockPos approximatePos, ItemStack stack,
+            boolean redstonePowered) {
+        return stack != null && !stack.isEmpty()
+                && stack.getItem() instanceof BlockItem
+                && lightEmission(level, approximatePos, stack, redstonePowered) > 0;
     }
 
     public static Vec3 attachmentLightPosition(ClientLevel level, ItemStack stack, boolean displayAsBlock,

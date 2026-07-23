@@ -20,6 +20,44 @@ import org.junit.jupiter.api.Test;
 
 class StaticRopeChunkRegistryTest {
     @Test
+    void pureClaimExpansionCanBeDebouncedIntoOneRebuild() {
+        UUID existing = UUID.randomUUID();
+        UUID added = UUID.randomUUID();
+
+        assertTrue(StaticRopeChunkRegistry.shouldDeferClaimExpansion(
+                Set.of(existing), Set.of(existing),
+                Set.of(existing, added), Set.of(existing, added)));
+    }
+
+    @Test
+    void claimRemovalIsNeverDeferred() {
+        UUID removed = UUID.randomUUID();
+
+        assertFalse(StaticRopeChunkRegistry.shouldDeferClaimExpansion(
+                Set.of(removed), Set.of(removed), Set.of(), Set.of()));
+    }
+
+    @Test
+    void sourceDowngradeIsNeverDeferred() {
+        UUID existing = UUID.randomUUID();
+
+        assertFalse(StaticRopeChunkRegistry.shouldDeferClaimExpansion(
+                Set.of(existing), Set.of(existing), Set.of(existing), Set.of()));
+    }
+
+    @Test
+    void claimExpansionDebounceEndsAfterQuietWindow() {
+        assertTrue(StaticRopeChunkRegistry.continueClaimExpansionDebounce(100L, 102L, 104L, 3, 8));
+        assertFalse(StaticRopeChunkRegistry.continueClaimExpansionDebounce(100L, 102L, 105L, 3, 8));
+    }
+
+    @Test
+    void claimExpansionDebounceHasAbsoluteDeadline() {
+        assertFalse(StaticRopeChunkRegistry.continueClaimExpansionDebounce(100L, 107L, 108L, 3, 8));
+        assertFalse(StaticRopeChunkRegistry.continueClaimExpansionDebounce(110L, 110L, 100L, 3, 8));
+    }
+
+    @Test
     void unobservedMeshBuildWaitsBeforeRetrying() {
         assertFalse(StaticRopeChunkRegistry.buildRetryDue(100L, 119L, 20));
         assertTrue(StaticRopeChunkRegistry.buildRetryDue(100L, 120L, 20));

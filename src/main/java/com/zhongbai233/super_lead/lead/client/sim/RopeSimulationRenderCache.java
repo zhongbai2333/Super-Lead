@@ -14,6 +14,8 @@ import net.minecraft.world.phys.Vec3;
 abstract class RopeSimulationRenderCache extends RopeSimulationCore {
     private static final double MESH_COLLISION_TRANSITION_TICKS = 3.0D;
     private static final double MESH_COLLISION_INITIAL_PROGRESS = 0.18D;
+    private static final double SCHEDULED_MAX_EXTRAPOLATION_TICKS = 1.5D;
+    private static final double SCHEDULED_MAX_NODE_EXTRAPOLATION = 0.08D;
 
     protected RopeSimulationRenderCache(Vec3 a, Vec3 b, long seed, RopeTuning tuning) {
         super(a, b, seed, tuning);
@@ -32,26 +34,28 @@ abstract class RopeSimulationRenderCache extends RopeSimulationCore {
         // would multiply the initial 18% response by (for example) 0.05 and still
         // look frozen on a collision observed near the tick boundary.
         double scheduledProgress = scheduledRenderActive
-            ? scheduledRenderProgress(
+            ? scheduledVisualProgress(
                 renderFrameTick + Math.max(0.0F, Math.min(1.0F, partialTick)),
                 scheduledRenderStartTick, scheduledRenderDurationTicks)
             : partialTick;
         float physicsPartialTick = renderTransitionActive ? 1.0F : partialTick;
         if (useCollisionProxy) {
             renderTotalLength = scheduledRenderActive && !renderTransitionActive
-                ? prepareRenderProxy(scheduledRenderX, scheduledRenderY, scheduledRenderZ, scheduledProgress)
+                ? prepareScheduledRenderProxy(scheduledProgress)
                 : prepareRenderProxy(physicsPartialTick);
         } else {
             double[] originX = scheduledRenderActive && !renderTransitionActive ? scheduledRenderX : xLastTick;
             double[] originY = scheduledRenderActive && !renderTransitionActive ? scheduledRenderY : yLastTick;
             double[] originZ = scheduledRenderActive && !renderTransitionActive ? scheduledRenderZ : zLastTick;
             double progress = scheduledRenderActive && !renderTransitionActive
-                ? scheduledProgress : physicsPartialTick;
+                ? nodeVisualProgress(0, scheduledProgress) : physicsPartialTick;
             renderX[0] = originX[0] + (x[0] - originX[0]) * progress;
             renderY[0] = originY[0] + (y[0] - originY[0]) * progress;
             renderZ[0] = originZ[0] + (z[0] - originZ[0]) * progress;
             renderLengths[0] = 0.0D;
             for (int i = 1; i < nodes; i++) {
+                progress = scheduledRenderActive && !renderTransitionActive
+                        ? nodeVisualProgress(i, scheduledProgress) : physicsPartialTick;
                 double rx = originX[i] + (x[i] - originX[i]) * progress;
                 double ry = originY[i] + (y[i] - originY[i]) * progress;
                 double rz = originZ[i] + (z[i] - originZ[i]) * progress;
@@ -85,6 +89,36 @@ abstract class RopeSimulationRenderCache extends RopeSimulationCore {
         return renderTotalLength;
     }
 
+    private double prepareScheduledRenderProxy(double scheduledProgress) {
+        for (int i = 0; i < nodes; i++) {
+            double progress = nodeVisualProgress(i, scheduledProgress);
+            proxySourceX[i] = scheduledRenderX[i] + (x[i] - scheduledRenderX[i]) * progress;
+            proxySourceY[i] = scheduledRenderY[i] + (y[i] - scheduledRenderY[i]) * progress;
+            proxySourceZ[i] = scheduledRenderZ[i] + (z[i] - scheduledRenderZ[i]) * progress;
+        }
+        return RopeCollisionProxy.rebuild(nodes,
+                proxySourceX, proxySourceY, proxySourceZ,
+                desiredProxyLength(proxySourceX[0], proxySourceY[0], proxySourceZ[0],
+                        proxySourceX[nodes - 1], proxySourceY[nodes - 1], proxySourceZ[nodes - 1]),
+                renderX, renderY, renderZ, renderLengths,
+                proxyWorkX, proxyWorkY, proxyWorkZ);
+    }
+
+    private double nodeVisualProgress(int node, double scheduledProgress) {
+        if (scheduledProgress <= 1.0D || node <= 0 || node >= nodes - 1) {
+            return Math.min(1.0D, scheduledProgress);
+        }
+        double dx = x[node] - scheduledRenderX[node];
+        double dy = y[node] - scheduledRenderY[node];
+        double dz = z[node] - scheduledRenderZ[node];
+        double displacement = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        if (displacement <= 1.0e-9D) {
+            return 1.0D;
+        }
+        double maxExtraProgress = SCHEDULED_MAX_NODE_EXTRAPOLATION / displacement;
+        return 1.0D + Math.min(scheduledProgress - 1.0D, maxExtraProgress);
+    }
+
     static double meshCollisionTransitionProgress(
             double renderTime, double startTime, double durationTicks, double initialProgress) {
         double duration = Math.max(1.0e-6D, durationTicks);
@@ -100,6 +134,19 @@ abstract class RopeSimulationRenderCache extends RopeSimulationCore {
         }
         return Math.max(0.0D, Math.min(1.0D,
                 (renderTime - startTick) / Math.max(1, durationTicks)));
+    }
+
+    static double scheduledVisualProgress(double renderTime, long startTick, int durationTicks) {
+        if (startTick == UNINIT) {
+            return 1.0D;
+        }
+        double duration = Math.max(1, durationTicks);
+        double elapsed = Math.max(0.0D, renderTime - startTick);
+        if (elapsed <= duration) {
+            return elapsed / duration;
+        }
+        double extraTicks = Math.min(SCHEDULED_MAX_EXTRAPOLATION_TICKS, elapsed - duration);
+        return 1.0D + extraTicks / duration;
     }
 
     private void blendRenderTransition(double progress) {

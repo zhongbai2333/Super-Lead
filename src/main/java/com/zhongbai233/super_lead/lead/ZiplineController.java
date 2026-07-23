@@ -416,9 +416,9 @@ public final class ZiplineController {
                 continue;
             }
             int direction;
-            if (candidate.from().equals(anchor)) {
+            if (candidate.from().samePort(anchor)) {
                 direction = 1;
-            } else if (candidate.to().equals(anchor)) {
+            } else if (candidate.to().samePort(anchor)) {
                 direction = -1;
             } else {
                 continue;

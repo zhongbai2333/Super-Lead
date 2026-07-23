@@ -8,6 +8,7 @@ import com.zhongbai233.super_lead.lead.RopeAttachment;
 import com.zhongbai233.super_lead.lead.client.chunk.RopeSectionLine;
 import com.zhongbai233.super_lead.lead.client.sim.RopeSimulation;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -58,11 +59,14 @@ public final class RopeAttachmentRenderer {
     private static final double MIN_HANGER_HALF_SPACING = 0.035D;
     private static final double PIERCE_MIN_HEIGHT = 0.35D;
     private static final double PIERCE_MAX_FOOTPRINT = 0.18D;
+    private static final double ATTACHMENT_FRAME_SAMPLE_RADIUS = 0.60D;
+    private static final int MAX_LAYOUT_CACHE_ENTRIES = 1024;
+    private static final Map<UUID, CachedAttachmentLayout> LAYOUT_CACHE = new HashMap<>();
 
     private RopeAttachmentRenderer() {
     }
 
-        public record BakedAttachment(UUID connectionId,
+    public record BakedAttachment(UUID connectionId,
             UUID attachmentId,
             net.minecraft.world.item.ItemStack stack,
             boolean displayAsBlock,
@@ -120,7 +124,8 @@ public final class RopeAttachmentRenderer {
             double pz = az + (bz - az) * frac;
             BlockPos lightPos = BlockPos.containing(px, py, pz);
             int packedLight = packedLight(level, lightPos);
-            HangFrame frame = computeFrame(ax, ay, az, bx, by, bz);
+            HangFrame frame = stableAttachmentFrame(sim, nodeCount, target, total,
+                    ax, ay, az, bx, by, bz);
 
             renderOne(collector, cameraPos, level, mc, player, attachment.stack(),
                     attachment.displayAsBlock(), redstonePowered,
@@ -135,8 +140,8 @@ public final class RopeAttachmentRenderer {
     public static void submitBakedAll(SubmitNodeCollector collector,
             Vec3 cameraPos,
             ClientLevel level,
-                List<BakedAttachment> attachments,
-                float partialTick) {
+            List<BakedAttachment> attachments,
+            float partialTick) {
         if (attachments == null || attachments.isEmpty())
             return;
         Minecraft mc = Minecraft.getInstance();
@@ -157,7 +162,7 @@ public final class RopeAttachmentRenderer {
         }
     }
 
-        public static List<BakedAttachment> bakeStatic(BlockGetter level, LeadConnection connection, double[] x, double[] y,
+    public static List<BakedAttachment> bakeStatic(BlockGetter level, LeadConnection connection, double[] x, double[] y,
             double[] z) {
         if (connection.attachments().isEmpty() || x.length < 2 || x.length != y.length || x.length != z.length) {
             return List.of();
@@ -196,7 +201,7 @@ public final class RopeAttachmentRenderer {
                     attachment.piercedOverride(), attachment.hangOffsetOverride(), attachment.mountOffsetOverride(),
                     attachment.hangerLengthOverride(), attachment.hangerSpacingOverride(), attachment.scaleOverride(),
                     attachment.modelStateOverride());
-                out.add(new BakedAttachment(connection.id(), attachment.id(), attachment.stack(), attachment.displayAsBlock(),
+            out.add(new BakedAttachment(connection.id(), attachment.id(), attachment.stack(), attachment.displayAsBlock(),
                     redstonePowered, attachment.frontSide(), px, py, pz, ax, ay, az, bx, by, bz,
                     light.x, light.y, light.z, attachment.mountOverride(),
                     attachment.displayModeOverride(), attachment.hangerOverride(), attachment.piercedOverride(),
@@ -237,12 +242,12 @@ public final class RopeAttachmentRenderer {
             double py = ay + (by - ay) * frac;
             double pz = az + (bz - az) * frac;
             HangFrame frame = computeFrame(ax, ay, az, bx, by, bz);
-                BlockProperty property = displayPropertyFor(attachment);
+            BlockProperty property = displayPropertyFor(attachment);
             AttachmentLayout layout = attachmentLayout(level, BlockPos.containing(px, py, pz), attachment.stack(),
                     attachment.displayAsBlock(), attachment.frontSide(), property, RopeAttachment.OVERRIDE_DEFAULT,
                     attachment.displayModeOverride(), attachment.scaleOverride());
-                double hangerLength = layout.hangerLength();
-                if (hangerOn(property, RopeAttachment.OVERRIDE_DEFAULT) && !layout.pierced()
+            double hangerLength = layout.hangerLength();
+            if (hangerOn(property, RopeAttachment.OVERRIDE_DEFAULT) && !layout.pierced()
                     && hangerLength > 1.0e-6D) {
                 addStaticHangerLine(out, px - frame.rdx * layout.hangerHalfSpacing(),
                         py - frame.rdy * layout.hangerHalfSpacing(), pz - frame.rdz * layout.hangerHalfSpacing(),
@@ -309,7 +314,8 @@ public final class RopeAttachmentRenderer {
         double pz = az + (bz - az) * frac;
         BlockPos lightPos = BlockPos.containing(px, py, pz);
         int packedLight = packedLight(level, lightPos);
-        HangFrame frame = computeFrame(ax, ay, az, bx, by, bz);
+        HangFrame frame = stableAttachmentFrame(sim, nodeCount, target, total,
+            ax, ay, az, bx, by, bz);
         Minecraft mc = Minecraft.getInstance();
         boolean asBlock = com.zhongbai233.super_lead.lead.RopeAttachmentItems.isBlockItem(stack)
                 || com.zhongbai233.super_lead.lead.RopeAttachmentItems.isPanelLikeItem(stack);
@@ -367,8 +373,9 @@ public final class RopeAttachmentRenderer {
         // the full item display model.
         boolean useMovingBlock = asBlockItem && !asPanelItem && !needsItemFallback(stack);
 
-        AttachmentLayout layout = attachmentLayout(level, lightPos, stack, asBlockItem || asPanelItem, frontSide,
-            attachmentProperty, RopeAttachment.OVERRIDE_DEFAULT, displayModeOverride, scaleOverride);
+        AttachmentLayout layout = cachedAttachmentLayout(attachmentId, level, lightPos, stack,
+            asBlockItem || asPanelItem, frontSide, attachmentProperty,
+            displayModeOverride, scaleOverride);
         Quaternionf tilt = renderTilt(frame.tilt, attachmentId, partialTick);
 
         // Suspension strings
@@ -970,6 +977,40 @@ public final class RopeAttachmentRenderer {
         return AttachmentLayout.hanging(centerDropOffset, hl, halfSpacing, bodyScale);
     }
 
+    private static AttachmentLayout cachedAttachmentLayout(UUID attachmentId, BlockGetter level, BlockPos pos,
+            net.minecraft.world.item.ItemStack stack, boolean displayAsBlock, int frontSide,
+            BlockProperty property, int displayModeOverride, double scaleOverride) {
+        if (attachmentId == null) {
+            return attachmentLayout(level, pos, stack, displayAsBlock, frontSide, property,
+                    RopeAttachment.OVERRIDE_DEFAULT, displayModeOverride, scaleOverride);
+        }
+        long propertyEpoch = BlockPropertyRegistry.epoch();
+        CachedAttachmentLayout cached = LAYOUT_CACHE.get(attachmentId);
+        if (cached != null && cached.matches(pos, stack, displayAsBlock, frontSide, property,
+                displayModeOverride, scaleOverride, propertyEpoch)) {
+            return cached.layout;
+        }
+        AttachmentLayout layout = attachmentLayout(level, pos, stack, displayAsBlock, frontSide, property,
+                RopeAttachment.OVERRIDE_DEFAULT, displayModeOverride, scaleOverride);
+        if (LAYOUT_CACHE.size() >= MAX_LAYOUT_CACHE_ENTRIES && !LAYOUT_CACHE.containsKey(attachmentId)) {
+            var iterator = LAYOUT_CACHE.keySet().iterator();
+            if (iterator.hasNext()) {
+                iterator.next();
+                iterator.remove();
+            }
+        }
+        LAYOUT_CACHE.put(attachmentId, new CachedAttachmentLayout(
+                pos == null ? BlockPos.ZERO : pos.immutable(), stack.copy(), displayAsBlock,
+                RopeAttachment.normalizeFrontSide(frontSide), property,
+                RopeAttachment.normalizeDisplayModeOverride(displayModeOverride),
+                Double.doubleToLongBits(scaleOverride), propertyEpoch, layout));
+        return layout;
+    }
+
+    public static void clearCaches() {
+        LAYOUT_CACHE.clear();
+    }
+
     /**
      * Shape heuristic: a tall block with a small bottom footprint is likely
      * pierced by the rope instead of hanging below it.
@@ -1080,6 +1121,46 @@ public final class RopeAttachmentRenderer {
         }
     }
 
+    private static final class CachedAttachmentLayout {
+        private final BlockPos pos;
+        private final net.minecraft.world.item.ItemStack stack;
+        private final boolean displayAsBlock;
+        private final int frontSide;
+        private final BlockProperty property;
+        private final int displayModeOverride;
+        private final long scaleOverrideBits;
+        private final long propertyEpoch;
+        private final AttachmentLayout layout;
+
+        private CachedAttachmentLayout(BlockPos pos, net.minecraft.world.item.ItemStack stack,
+                boolean displayAsBlock, int frontSide, BlockProperty property,
+                int displayModeOverride, long scaleOverrideBits, long propertyEpoch,
+                AttachmentLayout layout) {
+            this.pos = pos;
+            this.stack = stack;
+            this.displayAsBlock = displayAsBlock;
+            this.frontSide = frontSide;
+            this.property = property;
+            this.displayModeOverride = displayModeOverride;
+            this.scaleOverrideBits = scaleOverrideBits;
+            this.propertyEpoch = propertyEpoch;
+            this.layout = layout;
+        }
+
+        private boolean matches(BlockPos pos, net.minecraft.world.item.ItemStack stack,
+                boolean displayAsBlock, int frontSide, BlockProperty property,
+                int displayModeOverride, double scaleOverride, long propertyEpoch) {
+            return this.pos.equals(pos == null ? BlockPos.ZERO : pos)
+                    && net.minecraft.world.item.ItemStack.isSameItemSameComponents(this.stack, stack)
+                    && this.displayAsBlock == displayAsBlock
+                    && this.frontSide == RopeAttachment.normalizeFrontSide(frontSide)
+                    && this.property.equals(property)
+                    && this.displayModeOverride == RopeAttachment.normalizeDisplayModeOverride(displayModeOverride)
+                    && this.scaleOverrideBits == Double.doubleToLongBits(scaleOverride)
+                    && this.propertyEpoch == propertyEpoch;
+        }
+    }
+
     private record ShapeProfile(boolean valid,
             double minX, double minY, double minZ,
             double maxX, double maxY, double maxZ,
@@ -1156,6 +1237,82 @@ public final class RopeAttachmentRenderer {
         // Drop direction = -localY (item centre hangs perpendicular below the rope
         // tangent).
         return new HangFrame(rdx, rdy, rdz, -up.x, -up.y, -up.z, q);
+    }
+
+    private static HangFrame stableAttachmentFrame(RopeSimulation sim, int nodeCount,
+            double target, double total,
+            double fallbackAx, double fallbackAy, double fallbackAz,
+            double fallbackBx, double fallbackBy, double fallbackBz) {
+        double sampleStart = attachmentFrameSampleStart(target, total, ATTACHMENT_FRAME_SAMPLE_RADIUS);
+        double sampleEnd = attachmentFrameSampleEnd(target, total, ATTACHMENT_FRAME_SAMPLE_RADIUS);
+        if (sampleEnd - sampleStart <= 1.0e-6D) {
+            return computeFrame(fallbackAx, fallbackAy, fallbackAz, fallbackBx, fallbackBy, fallbackBz);
+        }
+        int startSegment = locateSegment(sim, nodeCount, sampleStart);
+        int endSegment = locateSegment(sim, nodeCount, sampleEnd);
+        double startSpan = sim.renderLength(startSegment + 1) - sim.renderLength(startSegment);
+        double endSpan = sim.renderLength(endSegment + 1) - sim.renderLength(endSegment);
+        double startFraction = startSpan > 1.0e-6D
+            ? (sampleStart - sim.renderLength(startSegment)) / startSpan : 0.0D;
+        double endFraction = endSpan > 1.0e-6D
+            ? (sampleEnd - sim.renderLength(endSegment)) / endSpan : 0.0D;
+        double sax = sim.renderX(startSegment);
+        double say = sim.renderY(startSegment);
+        double saz = sim.renderZ(startSegment);
+        double sbx = sim.renderX(startSegment + 1);
+        double sby = sim.renderY(startSegment + 1);
+        double sbz = sim.renderZ(startSegment + 1);
+        double eax = sim.renderX(endSegment);
+        double eay = sim.renderY(endSegment);
+        double eaz = sim.renderZ(endSegment);
+        double ebx = sim.renderX(endSegment + 1);
+        double eby = sim.renderY(endSegment + 1);
+        double ebz = sim.renderZ(endSegment + 1);
+        double startX = sax + (sbx - sax) * startFraction;
+        double startY = say + (sby - say) * startFraction;
+        double startZ = saz + (sbz - saz) * startFraction;
+        double endX = eax + (ebx - eax) * endFraction;
+        double endY = eay + (eby - eay) * endFraction;
+        double endZ = eaz + (ebz - eaz) * endFraction;
+        double dx = endX - startX;
+        double dy = endY - startY;
+        double dz = endZ - startZ;
+        if (dx * dx + dy * dy + dz * dz <= 1.0e-10D) {
+            return computeFrame(fallbackAx, fallbackAy, fallbackAz, fallbackBx, fallbackBy, fallbackBz);
+        }
+        return computeFrame(startX, startY, startZ, endX, endY, endZ);
+    }
+
+    public static double attachmentFrameSampleStart(double target, double total, double radius) {
+        double safeTotal = Math.max(0.0D, total);
+        double center = Math.max(0.0D, Math.min(safeTotal, target));
+        double safeRadius = Math.max(0.0D, radius);
+        double start = Math.max(0.0D, center - safeRadius);
+        double end = Math.min(safeTotal, center + safeRadius);
+        double desiredSpan = Math.min(safeTotal, safeRadius * 2.0D);
+        if (end - start < desiredSpan && safeTotal > 1.0e-6D) {
+            if (start <= 1.0e-9D) {
+                end = desiredSpan;
+            } else if (end >= safeTotal - 1.0e-9D) {
+                start = safeTotal - desiredSpan;
+            }
+        }
+        return start;
+    }
+
+    public static double attachmentFrameSampleEnd(double target, double total, double radius) {
+        double safeTotal = Math.max(0.0D, total);
+        double center = Math.max(0.0D, Math.min(safeTotal, target));
+        double safeRadius = Math.max(0.0D, radius);
+        double start = Math.max(0.0D, center - safeRadius);
+        double end = Math.min(safeTotal, center + safeRadius);
+        double desiredSpan = Math.min(safeTotal, safeRadius * 2.0D);
+        if (end - start < desiredSpan && safeTotal > 1.0e-6D) {
+            if (start <= 1.0e-9D) {
+                end = desiredSpan;
+            }
+        }
+        return end;
     }
 
     /**

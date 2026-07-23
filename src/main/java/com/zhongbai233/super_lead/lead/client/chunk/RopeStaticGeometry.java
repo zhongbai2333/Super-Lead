@@ -344,6 +344,50 @@ public final class RopeStaticGeometry {
         return new RopeStaticGeometryResult(snapshotsBySection, sections);
     }
 
+    static RopeStaticGeometryResult relight(RopeStaticGeometryResult existing,
+            Level clientLevel, LeadConnection connection) {
+        if (existing == null || existing.snapshot == null || existing.sectionKeys.isEmpty()) {
+            return RopeStaticGeometryResult.EMPTY;
+        }
+        RopeSectionSnapshot source = existing.snapshot;
+        boolean glow = connection != null && connection.powered()
+                && (connection.kind() == LeadKind.REDSTONE || connection.kind() == LeadKind.ENERGY);
+        int[] nodeLight = new int[source.nodeCount];
+        for (int i = 0; i < source.nodeCount; i++) {
+            BlockPos nodePos = BlockPos.containing(source.x[i], source.y[i], source.z[i]);
+            int blockLight = glow ? 15
+                    : RopeDynamicLights.boostBlockLight(nodePos,
+                            clientLevel.getBrightness(LightLayer.BLOCK, nodePos));
+            int skyLight = clientLevel.getBrightness(LightLayer.SKY, nodePos);
+            nodeLight[i] = LightCoordsUtil.pack(blockLight, skyLight);
+        }
+        return withNodeLight(existing, nodeLight);
+    }
+
+    static RopeStaticGeometryResult withNodeLight(RopeStaticGeometryResult existing, int[] nodeLight) {
+        if (existing == null || existing.snapshot == null || nodeLight == null
+                || nodeLight.length != existing.snapshot.nodeCount) {
+            return RopeStaticGeometryResult.EMPTY;
+        }
+        Map<Long, List<RopeSectionSnapshot>> relit = new HashMap<>(existing.snapshotsBySection.size());
+        for (Map.Entry<Long, List<RopeSectionSnapshot>> entry : existing.snapshotsBySection.entrySet()) {
+            List<RopeSectionSnapshot> snapshots = new ArrayList<>(entry.getValue().size());
+            for (RopeSectionSnapshot source : entry.getValue()) {
+                snapshots.add(new RopeSectionSnapshot(
+                        source.connectionId,
+                        source.x, source.y, source.z,
+                        source.sx, source.sy, source.sz,
+                        source.ux, source.uy, source.uz,
+                        nodeLight, source.segmentColorARGB,
+                        source.nodeThicknessScale, source.extractEnd, source.attachmentLines,
+                        source.segmentStart, source.segmentEndExclusive,
+                        source.sourceX, source.sourceY, source.sourceZ));
+            }
+            relit.put(entry.getKey(), List.copyOf(snapshots));
+        }
+        return new RopeStaticGeometryResult(relit, existing.sectionKeys);
+    }
+
     /**
      * Maps every generated mesh segment back to the same world-length stripe used
      * by the dynamic renderer. Static geometry inserts nodes both at stripe

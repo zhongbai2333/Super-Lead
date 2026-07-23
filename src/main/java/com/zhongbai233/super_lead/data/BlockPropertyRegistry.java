@@ -34,6 +34,7 @@ public final class BlockPropertyRegistry {
 
     private static volatile Map<String, BlockProperty> properties = Map.of();
     private static volatile boolean loaded;
+    private static volatile long epoch;
 
     private BlockPropertyRegistry() {
     }
@@ -46,6 +47,7 @@ public final class BlockPropertyRegistry {
         loadBuiltin(map);
         loadUser(map);
         properties = Map.copyOf(map);
+        epoch++;
         LOG.info("[super_lead] Block property registry ready ({} entries).", map.size());
     }
 
@@ -177,6 +179,7 @@ public final class BlockPropertyRegistry {
                 new GsonBuilder().setPrettyPrinting().create().toJson(root, w);
             }
             properties = Map.copyOf(entries);
+            epoch++;
             LOG.info("[super_lead] Saved {} block property entries.", entries.size());
         } catch (Exception e) {
             LOG.warn("[super_lead] Failed to save block properties: {}", e.toString());
@@ -185,5 +188,10 @@ public final class BlockPropertyRegistry {
 
     private static Path userPath() {
         return Path.of("config").resolve(USER_FILE);
+    }
+
+    public static long epoch() {
+        ensureLoaded();
+        return epoch;
     }
 }

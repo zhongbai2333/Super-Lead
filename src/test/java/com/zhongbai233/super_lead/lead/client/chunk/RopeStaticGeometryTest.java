@@ -2,11 +2,38 @@ package com.zhongbai233.super_lead.lead.client.chunk;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
 
 import com.zhongbai233.super_lead.lead.client.sim.RopeTuning;
+import java.util.Set;
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
 
 class RopeStaticGeometryTest {
+    @Test
+    void relightReusesAllGeometryArraysAndOnlyReplacesLightData() {
+        UUID id = UUID.randomUUID();
+        double[] x = { 0.0D, 1.0D };
+        double[] y = { 2.0D, 2.0D };
+        double[] z = { 0.0D, 0.0D };
+        float[] side = { 0.1F, 0.1F };
+        float[] zero = { 0.0F, 0.0F };
+        int[] oldLight = { 1, 1 };
+        int[] colors = { 1, 2, 3, 4 };
+        RopeSectionSnapshot snapshot = new RopeSectionSnapshot(
+                id, x, y, z, side, zero, zero, zero, side, zero, oldLight, colors);
+        RopeStaticGeometryResult existing = new RopeStaticGeometryResult(snapshot, Set.of(1L));
+        int[] newLight = { 15, 14 };
+
+        RopeStaticGeometryResult relit = RopeStaticGeometry.withNodeLight(existing, newLight);
+
+        assertSame(x, relit.snapshot.x);
+        assertSame(y, relit.snapshot.y);
+        assertSame(snapshot.sx, relit.snapshot.sx);
+        assertSame(colors, relit.snapshot.segmentColorARGB);
+        assertSame(newLight, relit.snapshot.nodeLight);
+    }
+
     @Test
     void insertedPhysicsNodesDoNotCreateExtraColorStripes() {
         double[] x = { 0.0D, 0.2D, 0.5D, 0.7D, 1.0D };

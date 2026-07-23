@@ -62,10 +62,22 @@ final class LeadConnectionPayloadCodec {
     private static void writeAnchor(RegistryFriendlyByteBuf buffer, LeadAnchor anchor) {
         buffer.writeBlockPos(anchor.pos());
         buffer.writeEnum(anchor.face());
+        buffer.writeBoolean(anchor.hitPoint() != null);
+        if (anchor.hitPoint() != null) {
+            buffer.writeDouble(anchor.hitPoint().x);
+            buffer.writeDouble(anchor.hitPoint().y);
+            buffer.writeDouble(anchor.hitPoint().z);
+        }
     }
 
     private static LeadAnchor readAnchor(RegistryFriendlyByteBuf buffer) {
-        return new LeadAnchor(buffer.readBlockPos(), buffer.readEnum(Direction.class));
+        var pos = buffer.readBlockPos();
+        var face = buffer.readEnum(Direction.class);
+        if (!buffer.readBoolean()) {
+            return new LeadAnchor(pos, face);
+        }
+        return new LeadAnchor(pos, face,
+                new net.minecraft.world.phys.Vec3(buffer.readDouble(), buffer.readDouble(), buffer.readDouble()));
     }
 
     static void writeCount(RegistryFriendlyByteBuf buffer, int count, int max, String label) {

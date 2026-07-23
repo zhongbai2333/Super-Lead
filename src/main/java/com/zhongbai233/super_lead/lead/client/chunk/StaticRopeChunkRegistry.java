@@ -62,6 +62,8 @@ public final class StaticRopeChunkRegistry {
     private static final int NEW_MESH_SECTIONS_PER_TICK = 2;
     private static final int UNOBSERVED_BUILD_RETRY_TICKS = 20;
     private static final int WATCHDOG_INTERVAL_TICKS = 20;
+    private static final int CLAIM_EXPANSION_DEBOUNCE_TICKS = 3;
+    private static final int CLAIM_EXPANSION_MAX_DELAY_TICKS = 8;
 
     public static StaticRopeChunkRegistry get() {
         return INSTANCE;
@@ -99,6 +101,10 @@ public final class StaticRopeChunkRegistry {
     private long lastMaintenanceTick = Long.MIN_VALUE;
     private long lastWatchdogProbeTick = Long.MIN_VALUE;
     private boolean connectionSyncDirty;
+    private Set<UUID> pendingExpansionClaims = Set.of();
+    private Set<UUID> pendingExpansionFromSim = Set.of();
+    private long pendingExpansionFirstTick = Long.MIN_VALUE;
+    private long pendingExpansionSinceTick = Long.MIN_VALUE;
     /**
      * Static bakes made before anchor chunks load use default block shapes; retry
      * them once both anchor chunks arrive.
@@ -423,6 +429,7 @@ public final class StaticRopeChunkRegistry {
         retiringMeshes.clear();
         retiringAttachments.clear();
         connectionSyncDirty = false;
+        clearPendingExpansion();
         stressSources = List.of();
         realSources = List.of();
         clearDebugCounts();
@@ -816,9 +823,58 @@ public final class StaticRopeChunkRegistry {
         if (!connectionSyncDirty
                 && !forceRebakeForMissingAnchors
             && pendingLightRebakes.isEmpty()
-                && desired.equals(claimed) && desiredFromSim.equals(claimedFromSim))
+                && desired.equals(claimed) && desiredFromSim.equals(claimedFromSim)) {
+            clearPendingExpansion();
             return;
+        }
+        if (!connectionSyncDirty
+                && !forceRebakeForMissingAnchors
+                && pendingLightRebakes.isEmpty()
+                && shouldDeferClaimExpansion(claimed, claimedFromSim, desired, desiredFromSim)
+                && deferClaimExpansion(desired, desiredFromSim, now)) {
+            return;
+        }
+        clearPendingExpansion();
         rebuildInternal(level, simLookup);
+    }
+
+    static boolean shouldDeferClaimExpansion(Set<UUID> claimed, Set<UUID> claimedFromSim,
+            Set<UUID> desired, Set<UUID> desiredFromSim) {
+        if (claimed == null || claimedFromSim == null || desired == null || desiredFromSim == null) {
+            return false;
+        }
+        boolean changed = !desired.equals(claimed) || !desiredFromSim.equals(claimedFromSim);
+        return changed && desired.containsAll(claimed) && desiredFromSim.containsAll(claimedFromSim);
+    }
+
+    private boolean deferClaimExpansion(Set<UUID> desired, Set<UUID> desiredFromSim, long currentTick) {
+        if (pendingExpansionFirstTick == Long.MIN_VALUE || currentTick < pendingExpansionFirstTick) {
+            pendingExpansionFirstTick = currentTick;
+        }
+        if (!desired.equals(pendingExpansionClaims) || !desiredFromSim.equals(pendingExpansionFromSim)
+                || pendingExpansionSinceTick == Long.MIN_VALUE || currentTick < pendingExpansionSinceTick) {
+            pendingExpansionClaims = Set.copyOf(desired);
+            pendingExpansionFromSim = Set.copyOf(desiredFromSim);
+            pendingExpansionSinceTick = currentTick;
+        }
+        return continueClaimExpansionDebounce(
+                pendingExpansionFirstTick, pendingExpansionSinceTick, currentTick,
+                CLAIM_EXPANSION_DEBOUNCE_TICKS, CLAIM_EXPANSION_MAX_DELAY_TICKS);
+    }
+
+    static boolean continueClaimExpansionDebounce(long firstTick, long changedTick, long currentTick,
+            int quietTicks, int maxDelayTicks) {
+        return firstTick != Long.MIN_VALUE && changedTick != Long.MIN_VALUE
+                && currentTick >= firstTick && currentTick >= changedTick
+                && currentTick - firstTick < Math.max(1, maxDelayTicks)
+                && currentTick - changedTick < Math.max(1, quietTicks);
+    }
+
+    private void clearPendingExpansion() {
+        pendingExpansionClaims = Set.of();
+        pendingExpansionFromSim = Set.of();
+        pendingExpansionFirstTick = Long.MIN_VALUE;
+        pendingExpansionSinceTick = Long.MIN_VALUE;
     }
 
     private void refreshConnectionLights(Level level, Function<UUID, RopeSimulation> simLookup,
@@ -833,7 +889,6 @@ public final class StaticRopeChunkRegistry {
         }
 
         Map<UUID, RopeStaticGeometryResult> replacements = new HashMap<>();
-        Map<UUID, List<RopeAttachmentRenderer.BakedAttachment>> replacementAttachments = new HashMap<>();
         Set<UUID> completed = new HashSet<>();
         Set<Long> touchedSections = new HashSet<>();
         for (UUID id : requested) {
@@ -846,13 +901,12 @@ public final class StaticRopeChunkRegistry {
                 completed.add(id);
                 continue;
             }
-            RopeStaticGeometryResult result = buildRealSourceGeometry(level, connection, simLookup.apply(id));
+                RopeStaticGeometryResult result = RopeStaticGeometry.relight(
+                    currentPublishedGeometry(id), level, connection);
             if (!hasGeometry(result)) {
                 continue;
             }
             replacements.put(id, result);
-            replacementAttachments.put(id, RopeAttachmentRenderer.bakeStatic(
-                    level, connection, result.snapshot.x, result.snapshot.y, result.snapshot.z));
             touchedSections.addAll(connectionSections.getOrDefault(id, Set.of()));
             touchedSections.addAll(result.sectionKeys);
             completed.add(id);
@@ -905,18 +959,6 @@ public final class StaticRopeChunkRegistry {
             nextByConnection.put(replacement.getKey(), replacement.getValue().snapshot);
             connectionSections.put(replacement.getKey(), replacement.getValue().sectionKeys);
         }
-        ArrayList<RopeAttachmentRenderer.BakedAttachment> nextAttachments = new ArrayList<>();
-        for (RopeAttachmentRenderer.BakedAttachment attachment : bakedAttachments) {
-            if (!replacements.containsKey(attachment.connectionId())) {
-                nextAttachments.add(attachment);
-            }
-        }
-        for (LeadConnection connection : realSources) {
-            List<RopeAttachmentRenderer.BakedAttachment> replacement = replacementAttachments.get(connection.id());
-            if (replacement != null)
-                nextAttachments.addAll(replacement);
-        }
-
         HashSet<Long> nextMeshedSections = new HashSet<>(meshedSections);
         nextMeshedSections.retainAll(nextBySection.keySet());
         nextMeshedSections.removeAll(changedSections);
@@ -924,7 +966,6 @@ public final class StaticRopeChunkRegistry {
         publishedWatchdogSections.retainAll(nextBySection.keySet());
         publishedWatchdogSections.addAll(nextBySection.keySet());
         byConnection = Map.copyOf(nextByConnection);
-        bakedAttachments = nextAttachments.isEmpty() ? List.of() : List.copyOf(nextAttachments);
         meshedSections = nextMeshedSections.isEmpty() ? Set.of() : Set.copyOf(nextMeshedSections);
         HashSet<UUID> nextAccepted = acceptedConnectionsForSections(connectionSections, meshedSections);
         acceptedConnections = nextAccepted.isEmpty() ? Set.of() : Set.copyOf(nextAccepted);
@@ -932,6 +973,32 @@ public final class StaticRopeChunkRegistry {
         sectionsAwaitingMesh.addAll(changedSections);
         pendingLightRebakes.removeAll(completed);
         markSectionsDirty(changedSections, true);
+    }
+
+    private RopeStaticGeometryResult currentPublishedGeometry(UUID connectionId) {
+        Set<Long> sections = connectionSections.get(connectionId);
+        if (sections == null || sections.isEmpty()) {
+            return RopeStaticGeometryResult.EMPTY;
+        }
+        Map<Long, List<RopeSectionSnapshot>> snapshots = new HashMap<>();
+        for (long section : sections) {
+            List<RopeSectionSnapshot> sectionSnapshots = bySection.get(section);
+            if (sectionSnapshots == null) {
+                continue;
+            }
+            ArrayList<RopeSectionSnapshot> matching = new ArrayList<>();
+            for (RopeSectionSnapshot snapshot : sectionSnapshots) {
+                if (connectionId.equals(snapshot.connectionId)) {
+                    matching.add(snapshot);
+                }
+            }
+            if (!matching.isEmpty()) {
+                snapshots.put(section, List.copyOf(matching));
+            }
+        }
+        return snapshots.isEmpty()
+                ? RopeStaticGeometryResult.EMPTY
+                : new RopeStaticGeometryResult(snapshots, snapshots.keySet());
     }
 
     private void rebuild(Level level) {

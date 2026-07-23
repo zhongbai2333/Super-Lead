@@ -1321,7 +1321,7 @@ public final class SuperLeadNetwork {
 
         List<LeadConnection> removedConnections = new ArrayList<>();
         for (LeadConnection connection : SuperLeadSavedData.get(serverLevel).connectionsView()) {
-            if (connection.from().equals(anchor) || connection.to().equals(anchor)) {
+            if (connection.from().samePort(anchor) || connection.to().samePort(anchor)) {
                 removedConnections.add(connection);
             }
         }
@@ -1330,7 +1330,7 @@ public final class SuperLeadNetwork {
         }
 
         SuperLeadSavedData.get(serverLevel)
-                .removeIf(connection -> connection.from().equals(anchor) || connection.to().equals(anchor));
+                .removeIf(connection -> connection.from().samePort(anchor) || connection.to().samePort(anchor));
         Vec3 dropPoint = anchor.attachmentPoint(level);
         for (LeadConnection connection : removedConnections) {
             dropConnectionDrops(serverLevel, connection, dropPoint, player);
@@ -1392,7 +1392,7 @@ public final class SuperLeadNetwork {
             ? serverConnectionsView(serverLevel)
             : connections(level);
         for (LeadConnection connection : candidates) {
-            if (connection.from().equals(anchor) || connection.to().equals(anchor)) {
+            if (connection.from().samePort(anchor) || connection.to().samePort(anchor)) {
                 return true;
             }
         }
@@ -1405,9 +1405,9 @@ public final class SuperLeadNetwork {
             ? serverConnectionsView(serverLevel)
             : connections(level);
         for (LeadConnection connection : candidates) {
-            if (connection.from().equals(anchor))
+            if (connection.from().samePort(anchor))
                 count++;
-            if (connection.to().equals(anchor))
+            if (connection.to().samePort(anchor))
                 count++;
         }
         return count;
@@ -1462,7 +1462,7 @@ public final class SuperLeadNetwork {
             return;
         }
         for (LeadConnection connection : SuperLeadSavedData.get(level).connectionsView()) {
-            if (connection.from().equals(anchor) || connection.to().equals(anchor)) {
+            if (connection.from().samePort(anchor) || connection.to().samePort(anchor)) {
                 return;
             }
         }

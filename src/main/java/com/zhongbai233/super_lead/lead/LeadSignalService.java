@@ -658,7 +658,7 @@ final class LeadSignalService {
         for (int i = 0; i < size; i++) {
             LeadConnection connection = connections.get(i);
             addAnchorIndex(byAnchor, connection.from(), i);
-            if (!connection.to().equals(connection.from())) {
+            if (!connection.to().samePort(connection.from())) {
                 addAnchorIndex(byAnchor, connection.to(), i);
             }
         }
@@ -666,12 +666,12 @@ final class LeadSignalService {
     }
 
     private static void addAnchorIndex(Map<LeadAnchor, List<Integer>> byAnchor, LeadAnchor anchor, int index) {
-        byAnchor.computeIfAbsent(anchor, key -> new ArrayList<>()).add(index);
+        byAnchor.computeIfAbsent(anchor.logicalPort(), key -> new ArrayList<>()).add(index);
     }
 
     private static void addUnvisitedNeighbors(LeadAnchor anchor, Map<LeadAnchor, List<Integer>> byAnchor,
             boolean[] visited, List<Integer> component) {
-        List<Integer> neighbors = byAnchor.get(anchor);
+        List<Integer> neighbors = byAnchor.get(anchor.logicalPort());
         if (neighbors != null) {
             for (int index : neighbors) {
                 if (!visited[index]) {

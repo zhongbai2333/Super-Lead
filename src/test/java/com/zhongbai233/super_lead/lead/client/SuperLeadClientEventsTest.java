@@ -29,6 +29,19 @@ class SuperLeadClientEventsTest {
     }
 
     @Test
+    void overloadedRoundRobinAdvancesPastConsumedWindow() {
+        assertEquals(8, SuperLeadClientEvents.nextRoundRobinStart(0, 32, 8));
+        assertEquals(16, SuperLeadClientEvents.nextRoundRobinStart(8, 32, 8));
+        assertEquals(0, SuperLeadClientEvents.nextRoundRobinStart(24, 32, 8));
+    }
+
+    @Test
+    void pacedRoundRobinStillMovesWhenNoBudgetWasConsumed() {
+        assertEquals(6, SuperLeadClientEvents.nextRoundRobinStart(5, 32, 0));
+        assertEquals(0, SuperLeadClientEvents.nextRoundRobinStart(31, 32, 0));
+    }
+
+    @Test
     void constantParrotLoadDoesNotRepeatedlyWakeStaticMesh() {
         UUID rope = UUID.fromString("00000000-0000-0000-0000-000000000101");
 
@@ -259,5 +272,14 @@ class SuperLeadClientEventsTest {
 
         assertEquals(1, SuperLeadClientEvents.scheduledPhysicsInterval(active, 256.0D, true, true));
         assertEquals(2, SuperLeadClientEvents.scheduledPhysicsInterval(active, 256.0D, true, false));
+    }
+
+    @Test
+    void overloadSkipsDiscardPhysicsDebtButPlannedPacingDoesNot() {
+        assertTrue(SuperLeadClientEvents.isOverloadSkipState("budget"));
+        assertTrue(SuperLeadClientEvents.isOverloadSkipState("wind-budget"));
+        assertTrue(SuperLeadClientEvents.isOverloadSkipState("circuit-breaker"));
+        assertFalse(SuperLeadClientEvents.isOverloadSkipState("active-skip/2"));
+        assertFalse(SuperLeadClientEvents.isOverloadSkipState("idle-skip/8"));
     }
 }

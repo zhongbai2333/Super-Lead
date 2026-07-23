@@ -71,13 +71,14 @@ abstract class RopeSimulationVisualState extends RopeSimulationRenderCache {
      * before every scheduled solve also makes an early HOT upshift continuous.
      */
     public void prepareScheduledRenderStep(long currentTick, int interval) {
-        double progress = scheduledRenderProgress(
+        double progress = scheduledVisualProgress(
                 currentTick, scheduledRenderStartTick, scheduledRenderDurationTicks);
         for (int i = 0; i < nodes; i++) {
             if (scheduledRenderActive) {
-                scheduledRenderX[i] += (x[i] - scheduledRenderX[i]) * progress;
-                scheduledRenderY[i] += (y[i] - scheduledRenderY[i]) * progress;
-                scheduledRenderZ[i] += (z[i] - scheduledRenderZ[i]) * progress;
+            double nodeProgress = nodeVisualProgressForHandoff(i, progress);
+            scheduledRenderX[i] += (x[i] - scheduledRenderX[i]) * nodeProgress;
+            scheduledRenderY[i] += (y[i] - scheduledRenderY[i]) * nodeProgress;
+            scheduledRenderZ[i] += (z[i] - scheduledRenderZ[i]) * nodeProgress;
             } else {
                 scheduledRenderX[i] = x[i];
                 scheduledRenderY[i] = y[i];
@@ -89,6 +90,20 @@ abstract class RopeSimulationVisualState extends RopeSimulationRenderCache {
         scheduledRenderActive = true;
         renderStable = false;
         renderCacheValid = false;
+    }
+
+    private double nodeVisualProgressForHandoff(int node, double progress) {
+        if (progress <= 1.0D || node <= 0 || node >= nodes - 1) {
+            return Math.min(1.0D, progress);
+        }
+        double dx = x[node] - scheduledRenderX[node];
+        double dy = y[node] - scheduledRenderY[node];
+        double dz = z[node] - scheduledRenderZ[node];
+        double displacement = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        if (displacement <= 1.0e-9D) {
+            return 1.0D;
+        }
+        return 1.0D + Math.min(progress - 1.0D, 0.08D / displacement);
     }
 
     /**

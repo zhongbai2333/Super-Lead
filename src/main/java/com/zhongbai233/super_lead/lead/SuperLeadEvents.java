@@ -530,7 +530,7 @@ public final class SuperLeadEvents {
                 clearLeashingState(stack);
                 return InteractionResult.FAIL;
             }
-            if (first.equals(anchor)) {
+            if (first.samePort(anchor)) {
                 if (lengthUnits < SuperLeadNetwork.MAX_LENGTH_UNITS
                         && canSpendPendingLengthExtension(level, player, stack)
                         && SuperLeadNetwork.extendPendingLength(player)) {
@@ -753,9 +753,15 @@ public final class SuperLeadEvents {
     }
 
     private static LeadAnchor createAnchor(PlayerInteractEvent.RightClickBlock event) {
-        Direction face = LeadAnchor.knotFace(event.getLevel().getBlockState(event.getPos()),
+        var state = event.getLevel().getBlockState(event.getPos());
+        Direction face = LeadAnchor.knotFace(state,
                 event.getHitVec().getDirection());
-        return new LeadAnchor(event.getPos().immutable(), face);
+        // Mekanism MoreMachine and similar blocks use one logical controller with a
+        // selection shape spanning several world blocks. Preserve the actual surface
+        // hit for rope geometry while keeping event.getPos() for capability lookup.
+        var shape = state.getShape(event.getLevel(), event.getPos());
+        boolean oversized = LeadAnchor.shouldPreserveHitPoint(shape);
+        return new LeadAnchor(event.getPos(), face, oversized ? event.getHitVec().getLocation() : null);
     }
 
     private static boolean isSeedItem(ItemStack stack) {
