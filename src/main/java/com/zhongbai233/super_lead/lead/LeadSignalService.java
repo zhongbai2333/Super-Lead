@@ -4,12 +4,15 @@ import com.mojang.logging.LogUtils;
 import com.zhongbai233.super_lead.Config;
 import com.zhongbai233.super_lead.data.BlockPropertyRegistry;
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.IntSupplier;
 import java.util.function.LongSupplier;
 import net.minecraft.core.BlockPos;
@@ -41,6 +44,7 @@ final class LeadSignalService {
     private static final ThreadLocal<Boolean> REDSTONE_UPDATE_ACTIVE = ThreadLocal.withInitial(() -> false);
     private static final Set<ServerLevel> REDSTONE_DIRTY_LEVELS = new HashSet<>();
     private static final Set<ServerLevel> REDSTONE_INITIALIZED_LEVELS = new HashSet<>();
+    private static final Map<Level, CachedSignalIndex> SIGNAL_INDEXES = new ConcurrentHashMap<>();
 
     private LeadSignalService() {
     }
@@ -69,6 +73,7 @@ final class LeadSignalService {
             List<LeadConnection> redstoneConnections) {
         int size = redstoneConnections.size();
         boolean changed = false;
+        List<LeadConnection> changedConnections = new ArrayList<>();
         boolean[] visited = new boolean[size];
         Map<LeadAnchor, List<Integer>> connectionsByAnchor = indexConnectionsByAnchor(redstoneConnections, size);
         RedstoneTraversalCache redstoneCache = new RedstoneTraversalCache(level);
@@ -101,11 +106,17 @@ final class LeadSignalService {
                 LeadConnection updated = connection.withPower(componentPower);
                 changed |= data.update(connection.id(), oldConnection -> oldConnection.withPower(componentPower),
                         false);
-                notifyRedstoneChange(level, updated);
+                changedConnections.add(updated);
             }
         }
 
         if (changed) {
+            // Notify only after all power mutations are visible. The first signal query
+            // rebuilds one index for the final generation instead of rebuilding after
+            // every changed connection in the component.
+            for (LeadConnection connection : changedConnections) {
+                notifyRedstoneChange(level, connection);
+            }
             SuperLeadPayloads.sendDirtyToDimension(level);
         }
     }
@@ -197,6 +208,7 @@ final class LeadSignalService {
         ENERGY_ACTIVE_UNTIL.remove(level);
         REDSTONE_DIRTY_LEVELS.remove(level);
         REDSTONE_INITIALIZED_LEVELS.remove(level);
+        SIGNAL_INDEXES.remove(level);
     }
 
     static int leadSignal(SignalGetter getter, BlockPos pos, Direction direction) {
@@ -204,20 +216,7 @@ final class LeadSignalService {
             return 0;
         }
 
-        int signal = 0;
-        List<LeadConnection> redstoneConnections = redstoneConnections(level);
-        for (LeadConnection connection : redstoneConnections) {
-            if (connection.kind() != LeadKind.REDSTONE || connection.power() <= 0) {
-                continue;
-            }
-            if (isRedstoneOutputPosition(connection, pos)) {
-                signal = Math.max(signal, connection.power());
-                if (signal >= 15) {
-                    return 15;
-                }
-            }
-        }
-        return signal;
+        return signalIndex(level).signalAt(pos);
     }
 
     static int leadDirectSignal(SignalGetter getter, BlockPos pos, Direction direction) {
@@ -225,43 +224,43 @@ final class LeadSignalService {
             return 0;
         }
 
-        int signal = 0;
-        List<LeadConnection> redstoneConnections = redstoneConnections(level);
-        for (LeadConnection connection : redstoneConnections) {
-            if (connection.kind() != LeadKind.REDSTONE || connection.power() <= 0) {
-                continue;
-            }
-            if (isRedstoneDirectOutput(connection, pos, direction)) {
-                signal = Math.max(signal, connection.power());
-                if (signal >= 15) {
-                    return 15;
-                }
-            }
-        }
-        return signal;
+        return signalIndex(level).directSignalAt(pos, direction);
     }
 
     static boolean hasLeadNeighborSignal(SignalGetter getter, BlockPos pos) {
         if (SUPPRESS_LEAD_SIGNALS.get() || !(getter instanceof Level level)) {
             return false;
         }
-        List<LeadConnection> redstoneConnections = redstoneConnections(level);
-        for (LeadConnection connection : redstoneConnections) {
-            if (connection.kind() != LeadKind.REDSTONE || connection.power() <= 0) {
-                continue;
-            }
-            if (isRedstoneOutputPosition(connection, pos)) {
-                return true;
-            }
-        }
-        return false;
+        return signalIndex(level).hasSignalAt(pos);
     }
 
-    private static List<LeadConnection> redstoneConnections(Level level) {
+    private static SignalIndex signalIndex(Level level) {
+        long version = signalVersion(level);
+        CachedSignalIndex cached = SIGNAL_INDEXES.get(level);
+        if (cached != null && cached.version() == version) {
+            return cached.index();
+        }
+        SignalIndex index = SignalIndex.build(redstoneConnections(level));
+        SIGNAL_INDEXES.put(level, new CachedSignalIndex(version, index));
+        return index;
+    }
+
+    private static long signalVersion(Level level) {
         if (level instanceof ServerLevel serverLevel) {
-            return SuperLeadSavedData.get(serverLevel).connectionsOfKindFast(LeadKind.REDSTONE);
+            return SuperLeadSavedData.get(serverLevel).generation();
+        }
+        return LeadClientConnectionCache.revision(level);
+    }
+
+    private static Collection<LeadConnection> redstoneConnections(Level level) {
+        if (level instanceof ServerLevel serverLevel) {
+            return SuperLeadSavedData.get(serverLevel).connectionsOfKindView(LeadKind.REDSTONE);
         }
         return SuperLeadNetwork.connections(level);
+    }
+
+    static void clearSignalIndexes() {
+        SIGNAL_INDEXES.clear();
     }
 
     static void notifyRedstoneChange(ServerLevel level, LeadConnection connection) {
@@ -749,24 +748,6 @@ final class LeadSignalService {
         }
     }
 
-    private static boolean isRedstoneOutputPosition(LeadConnection connection, BlockPos pos) {
-        return isRedstoneOutputPosition(connection.from(), pos)
-                || isRedstoneOutputPosition(connection.to(), pos);
-    }
-
-    private static boolean isRedstoneOutputPosition(LeadAnchor anchor, BlockPos pos) {
-        return anchor.pos().equals(pos) || anchor.pos().relative(anchor.face()).equals(pos);
-    }
-
-    private static boolean isRedstoneDirectOutput(LeadConnection connection, BlockPos pos, Direction direction) {
-        return isRedstoneDirectOutput(connection.from(), pos, direction)
-                || isRedstoneDirectOutput(connection.to(), pos, direction);
-    }
-
-    private static boolean isRedstoneDirectOutput(LeadAnchor anchor, BlockPos pos, Direction direction) {
-        return direction == anchor.face() && anchor.pos().relative(anchor.face()).equals(pos);
-    }
-
     private static void notifyRedstoneAnchor(ServerLevel level, LeadAnchor anchor) {
         BlockPos attachedPos = anchor.pos();
         BlockPos outputPos = attachedPos.relative(anchor.face());
@@ -897,6 +878,63 @@ final class LeadSignalService {
                     && BlockPropertyRegistry.signalBridgeEnabled(level.getBlockState(key).getBlock());
             signalBridgeEnabled.put(key, enabled);
             return enabled;
+        }
+    }
+
+    private record CachedSignalIndex(long version, SignalIndex index) {
+    }
+
+    static final class SignalIndex {
+        private static final SignalIndex EMPTY = new SignalIndex(Map.of(), new EnumMap<>(Direction.class));
+
+        private final Map<BlockPos, Integer> signals;
+        private final EnumMap<Direction, Map<BlockPos, Integer>> directSignals;
+
+        private SignalIndex(Map<BlockPos, Integer> signals,
+                EnumMap<Direction, Map<BlockPos, Integer>> directSignals) {
+            this.signals = signals;
+            this.directSignals = directSignals;
+        }
+
+        static SignalIndex build(Iterable<LeadConnection> connections) {
+            Map<BlockPos, Integer> signals = new HashMap<>();
+            EnumMap<Direction, Map<BlockPos, Integer>> directSignals = new EnumMap<>(Direction.class);
+            for (LeadConnection connection : connections) {
+                if (connection.kind() != LeadKind.REDSTONE || connection.power() <= 0) {
+                    continue;
+                }
+                addAnchor(signals, directSignals, connection.from(), connection.power());
+                addAnchor(signals, directSignals, connection.to(), connection.power());
+            }
+            return signals.isEmpty() ? EMPTY : new SignalIndex(signals, directSignals);
+        }
+
+        private static void addAnchor(Map<BlockPos, Integer> signals,
+                EnumMap<Direction, Map<BlockPos, Integer>> directSignals, LeadAnchor anchor, int power) {
+            mergeMax(signals, anchor.pos(), power);
+            BlockPos outputPos = anchor.pos().relative(anchor.face());
+            mergeMax(signals, outputPos, power);
+            mergeMax(directSignals.computeIfAbsent(anchor.face(), ignored -> new HashMap<>()), outputPos, power);
+        }
+
+        private static void mergeMax(Map<BlockPos, Integer> values, BlockPos pos, int power) {
+            Integer previous = values.get(pos);
+            if (previous == null || power > previous.intValue()) {
+                values.put(pos.immutable(), Integer.valueOf(power));
+            }
+        }
+
+        int signalAt(BlockPos pos) {
+            return signals.getOrDefault(pos, Integer.valueOf(0)).intValue();
+        }
+
+        int directSignalAt(BlockPos pos, Direction direction) {
+            Map<BlockPos, Integer> byPosition = directSignals.get(direction);
+            return byPosition == null ? 0 : byPosition.getOrDefault(pos, Integer.valueOf(0)).intValue();
+        }
+
+        boolean hasSignalAt(BlockPos pos) {
+            return signals.containsKey(pos);
         }
     }
 

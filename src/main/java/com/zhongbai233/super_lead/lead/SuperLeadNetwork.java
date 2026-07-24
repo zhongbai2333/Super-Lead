@@ -242,6 +242,7 @@ public final class SuperLeadNetwork {
     /** Clears all client connection mirrors when leaving a server or client world. */
     public static void clearClientConnections() {
         LeadClientConnectionCache.clearAll();
+        LeadSignalService.clearSignalIndexes();
     }
 
     public static void pruneInvalid(Level level) {
