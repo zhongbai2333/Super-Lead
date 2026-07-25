@@ -1,7 +1,9 @@
 package com.zhongbai233.super_lead.lead.client;
 
 import com.zhongbai233.super_lead.lead.ClearRopeCache;
+import com.zhongbai233.super_lead.lead.ConnectionDelta;
 import com.zhongbai233.super_lead.lead.ItemPulse;
+import com.zhongbai233.super_lead.lead.LeadConnection;
 import com.zhongbai233.super_lead.lead.RopeContactPulse;
 import com.zhongbai233.super_lead.lead.SuperLeadNetwork;
 import com.zhongbai233.super_lead.lead.SyncRopeTripState;
@@ -25,6 +27,12 @@ import com.zhongbai233.super_lead.preset.client.PresetClientHandler;
 import com.zhongbai233.super_lead.preset.client.ZoneSelectionClient;
 import com.zhongbai233.super_lead.serverconfig.ServerConfigSnapshot;
 import com.zhongbai233.super_lead.serverconfig.client.ServerConfigClient;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
 import net.minecraft.client.Minecraft;
 import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
 import net.neoforged.neoforge.network.handling.IPayloadContext;
@@ -40,7 +48,7 @@ public final class SuperLeadClientPayloads {
     }
 
     public static void register(RegisterPayloadHandlersEvent event) {
-        event.registrar("1")
+        event.registrar("3")
                 .playToClient(SyncRopeChunk.TYPE, SyncRopeChunk.STREAM_CODEC,
                         SuperLeadClientPayloads::handleSyncRopeChunk)
                 .playToClient(UnloadRopeChunk.TYPE, UnloadRopeChunk.STREAM_CODEC,
@@ -77,35 +85,62 @@ public final class SuperLeadClientPayloads {
 
     private static void handleSyncRopeChunk(SyncRopeChunk payload, IPayloadContext context) {
         var level = context.player().level();
-        var previous = SuperLeadNetwork.connections(level);
-        SuperLeadNetwork.replaceChunkConnections(level, payload.chunk(), payload.connections());
+        ConnectionDelta delta = SuperLeadNetwork.replaceChunkConnections(
+                level, payload.chunk(), payload.epoch(), payload.revision(), payload.connections());
+        if (delta.isEmpty()) {
+            return;
+        }
         var current = SuperLeadNetwork.connections(level);
         StaticRopeChunkRegistry.get()
-                .onConnectionsReplaced(level, current);
-        if (!previous.equals(current)) {
-            SuperLeadClientEvents.disturbConnections(
-                    level, current.stream().map(connection -> connection.id()).toList(), level.getGameTime() + 8L);
-        }
+                .onConnectionsChanged(level, current, delta.changedIds());
+        SuperLeadClientEvents.disturbConnections(
+                level, delta.changedIds(), level.getGameTime() + 8L);
     }
 
     private static void handleUnloadRopeChunk(UnloadRopeChunk payload, IPayloadContext context) {
         var level = context.player().level();
-        var previous = SuperLeadNetwork.connections(level);
-        SuperLeadNetwork.unloadChunkConnections(level, payload.chunk());
+        ConnectionDelta delta = SuperLeadNetwork.unloadChunkConnections(
+                level, payload.chunk(), payload.epoch(), payload.revision());
+        if (delta.isEmpty()) {
+            return;
+        }
         var current = SuperLeadNetwork.connections(level);
         StaticRopeChunkRegistry.get()
-                .onConnectionsReplaced(level, current);
-        if (!previous.equals(current)) {
-            SuperLeadClientEvents.disturbConnections(
-                    level, current.stream().map(connection -> connection.id()).toList(), level.getGameTime() + 8L);
-        }
+                .onConnectionsChanged(level, current, delta.changedIds());
+        SuperLeadClientEvents.disturbConnections(
+                level, delta.changedIds(), level.getGameTime() + 8L);
     }
+
+        static Set<UUID> changedConnectionIds(List<LeadConnection> previous, List<LeadConnection> current) {
+                Map<UUID, LeadConnection> previousById = indexById(previous);
+                Map<UUID, LeadConnection> currentById = indexById(current);
+                LinkedHashSet<UUID> changed = new LinkedHashSet<>();
+                for (Map.Entry<UUID, LeadConnection> entry : previousById.entrySet()) {
+                        if (!entry.getValue().equals(currentById.get(entry.getKey()))) {
+                                changed.add(entry.getKey());
+                        }
+        }
+                for (Map.Entry<UUID, LeadConnection> entry : currentById.entrySet()) {
+                        if (!entry.getValue().equals(previousById.get(entry.getKey()))) {
+                                changed.add(entry.getKey());
+                        }
+        }
+                return Set.copyOf(changed);
+        }
+
+        private static Map<UUID, LeadConnection> indexById(List<LeadConnection> connections) {
+                Map<UUID, LeadConnection> byId = new LinkedHashMap<>();
+                for (LeadConnection connection : connections) {
+                        byId.put(connection.id(), connection);
+                }
+                return byId;
+        }
 
     private static void handleClearRopeCache(ClearRopeCache payload, IPayloadContext context) {
         var level = context.player().level();
         RopeContactsClient.clear();
         ZiplineClientState.clear();
-        SuperLeadNetwork.replaceConnections(level, java.util.List.of());
+        SuperLeadNetwork.beginConnectionSync(level, payload.epoch());
         StaticRopeChunkRegistry.get()
                 .onConnectionsReplaced(level, java.util.List.of());
     }

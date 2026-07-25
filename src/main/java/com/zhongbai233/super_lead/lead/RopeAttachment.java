@@ -34,6 +34,9 @@ public record RopeAttachment(UUID id, double t, ItemStack stack, boolean display
     public static final double MIN_SCALE = 0.20D;
     public static final double MAX_SCALE = 3.00D;
     public static final double SCALE_STEP = 0.10D;
+    public static final int MAX_MODEL_STATE_ENTRIES = 64;
+    public static final int MAX_MODEL_STATE_TOTAL_CHARS = 4096;
+    public static final int MAX_MODEL_STATE_COMPONENT_CHARS = 64;
 
     public static final Codec<RopeAttachment> CODEC = RecordCodecBuilder.create(instance -> instance.group(
             UUIDUtil.CODEC.fieldOf("id").forGetter(attachment -> attachment.id()),
@@ -226,27 +229,68 @@ public record RopeAttachment(UUID id, double t, ItemStack stack, boolean display
             String key = entry.getKey() == null ? "" : entry.getKey().trim().toLowerCase(java.util.Locale.ROOT);
             String value = entry.getValue() == null ? "" : entry.getValue().trim().toLowerCase(java.util.Locale.ROOT);
             if (!key.isEmpty() && !value.isEmpty()) {
-                out.put(key, value);
+                out.put(limitLength(key, MAX_MODEL_STATE_COMPONENT_CHARS),
+                        limitLength(value, MAX_MODEL_STATE_COMPONENT_CHARS));
             }
         }
-        return out.isEmpty() ? Map.of() : Map.copyOf(out);
+        if (out.isEmpty()) {
+            return Map.of();
+        }
+        TreeMap<String, String> bounded = new TreeMap<>();
+        int totalChars = 0;
+        for (Map.Entry<String, String> entry : out.entrySet()) {
+            if (bounded.size() >= MAX_MODEL_STATE_ENTRIES) {
+                break;
+            }
+            int nextTotal = totalChars + entry.getKey().length() + entry.getValue().length();
+            if (nextTotal > MAX_MODEL_STATE_TOTAL_CHARS) {
+                break;
+            }
+            bounded.put(entry.getKey(), entry.getValue());
+            totalChars = nextTotal;
+        }
+        return bounded.isEmpty() ? Map.of() : Map.copyOf(bounded);
+    }
+
+    private static String limitLength(String value, int maxChars) {
+        return value.length() <= maxChars ? value : value.substring(0, maxChars);
     }
 
     public static Map<String, String> readModelStateOverride(RegistryFriendlyByteBuf buffer) {
         int count = buffer.readVarInt();
+        validateModelStateCount(count);
         TreeMap<String, String> out = new TreeMap<>();
+        int totalChars = 0;
         for (int i = 0; i < count; i++) {
-            out.put(buffer.readUtf(64), buffer.readUtf(64));
+            String key = buffer.readUtf(MAX_MODEL_STATE_COMPONENT_CHARS);
+            String value = buffer.readUtf(MAX_MODEL_STATE_COMPONENT_CHARS);
+            totalChars += key.length() + value.length();
+            validateModelStateTotalChars(totalChars);
+            out.put(key, value);
         }
         return normalizeModelStateOverride(out);
+    }
+
+    static void validateModelStateCount(int count) {
+        if (count < 0 || count > MAX_MODEL_STATE_ENTRIES) {
+            throw new io.netty.handler.codec.DecoderException(
+                    "model state entry count " + count + " outside 0.." + MAX_MODEL_STATE_ENTRIES);
+        }
+    }
+
+    static void validateModelStateTotalChars(int totalChars) {
+        if (totalChars < 0 || totalChars > MAX_MODEL_STATE_TOTAL_CHARS) {
+            throw new io.netty.handler.codec.DecoderException(
+                    "model state data exceeds " + MAX_MODEL_STATE_TOTAL_CHARS + " characters");
+        }
     }
 
     public static void writeModelStateOverride(RegistryFriendlyByteBuf buffer, Map<String, String> raw) {
         Map<String, String> normalized = normalizeModelStateOverride(raw);
         buffer.writeVarInt(normalized.size());
         for (Map.Entry<String, String> entry : normalized.entrySet()) {
-            buffer.writeUtf(entry.getKey(), 64);
-            buffer.writeUtf(entry.getValue(), 64);
+            buffer.writeUtf(entry.getKey(), MAX_MODEL_STATE_COMPONENT_CHARS);
+            buffer.writeUtf(entry.getValue(), MAX_MODEL_STATE_COMPONENT_CHARS);
         }
     }
 }

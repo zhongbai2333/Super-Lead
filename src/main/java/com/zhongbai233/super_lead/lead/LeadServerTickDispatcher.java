@@ -23,5 +23,8 @@ final class LeadServerTickDispatcher {
         RopeTripController.tick(serverLevel);
         ParrotRopePerchController.tick(serverLevel);
         ZiplineController.tick(serverLevel);
+        if (SuperLeadSavedData.get(serverLevel).hasDirtyChunks()) {
+            SuperLeadPayloads.sendDirtyToDimension(serverLevel);
+        }
     }
 }

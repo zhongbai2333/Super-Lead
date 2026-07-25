@@ -3,6 +3,7 @@ package com.zhongbai233.super_lead.lead.client.chunk;
 import com.zhongbai233.super_lead.lead.LeadConnection;
 import com.zhongbai233.super_lead.lead.client.render.RopeAttachmentRenderer;
 import com.zhongbai233.super_lead.lead.client.sim.RopeSimulation;
+import com.zhongbai233.super_lead.lead.client.sim.RopeTuning;
 import com.zhongbai233.super_lead.tuning.ClientTuning;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -496,6 +497,18 @@ public final class StaticRopeChunkRegistry {
         }
     }
 
+    public synchronized void onConnectionsChanged(Level level, List<LeadConnection> connections,
+            Iterable<UUID> changedIds) {
+        if (level == null || !level.isClientSide())
+            return;
+        realSources = List.copyOf(connections);
+        connectionSyncDirty = true;
+        invalidateConnections(level, changedIds);
+        if (connections.isEmpty()) {
+            rebuildInternal(level, null);
+        }
+    }
+
     public synchronized void publishStressSources(Level level, List<StressSource> sources) {
         if (level == null || !level.isClientSide())
             return;
@@ -787,6 +800,9 @@ public final class StaticRopeChunkRegistry {
         if (enabled) {
             for (LeadConnection c : realSources) {
                 eligible++;
+                if (skipStaticMeshForTransparency(RopeTuning.forConnection(c), c)) {
+                    continue;
+                }
                 if (isDynamicallyHeld(c.id(), now)) {
                     waitingQuiet++;
                     continue;
@@ -1055,6 +1071,8 @@ public final class StaticRopeChunkRegistry {
     private void collectRealSources(
             Level level, Function<UUID, RopeSimulation> simLookup, long now, RebuildState next) {
         for (LeadConnection connection : realSources) {
+            if (skipStaticMeshForTransparency(RopeTuning.forConnection(connection), connection))
+                continue;
             if (isDynamicallyHeld(connection.id(), now))
                 continue;
             addRealSource(level, simLookup, connection, next);
@@ -1063,6 +1081,8 @@ public final class StaticRopeChunkRegistry {
 
     private void addRealSource(
             Level level, Function<UUID, RopeSimulation> simLookup, LeadConnection connection, RebuildState next) {
+        if (skipStaticMeshForTransparency(RopeTuning.forConnection(connection), connection))
+            return;
         RopeSimulation sim = simLookup == null ? null : simLookup.apply(connection.id());
         RopeStaticGeometryResult result = buildRealSourceGeometry(level, connection, sim);
         if (!hasGeometry(result))
@@ -1074,6 +1094,18 @@ public final class StaticRopeChunkRegistry {
         next.bakedAttachments.addAll(RopeAttachmentRenderer.bakeStatic(
                 level, connection, result.snapshot.x, result.snapshot.y, result.snapshot.z));
         updateMissingAnchorBake(level, connection, sim == null);
+    }
+
+    static boolean skipStaticMeshForTransparency(RopeTuning tuning, LeadConnection connection) {
+        return tuning != null && connection != null
+            && skipStaticMeshForTransparency(
+                tuning.isConfiguredFullyTransparent(connection.kind()),
+                tuning.isFullyTransparent(connection.kind()));
+        }
+
+        static boolean skipStaticMeshForTransparency(
+            boolean configuredFullyTransparent, boolean currentlyFullyTransparent) {
+        return configuredFullyTransparent || currentlyFullyTransparent;
     }
 
     private RopeStaticGeometryResult buildRealSourceGeometry(
@@ -1252,8 +1284,6 @@ public final class StaticRopeChunkRegistry {
     }
 
     private static boolean isQuiescent(RopeSimulation sim) {
-        if (sim.isSettled())
-            return true;
         if (sim.quietTicks() >= CHUNK_MESH_FALLBACK_QUIET_TICKS
                 && sim.maxNodeMotionSqr() < CHUNK_MESH_QUIET_MOTION_SQR)
             return true;
@@ -1341,7 +1371,7 @@ public final class StaticRopeChunkRegistry {
     }
 
     static ExitDebounce advanceExitDebounce(ExitDebounce previous, long steppedTick, double motionSqr) {
-        if (motionSqr >= HIGH_LOD_HARD_EXIT_MOTION_SQR) {
+        if (motionSqr >= CHUNK_MESH_QUIET_MOTION_SQR) {
             return null;
         }
         if (steppedTick == Long.MIN_VALUE) {

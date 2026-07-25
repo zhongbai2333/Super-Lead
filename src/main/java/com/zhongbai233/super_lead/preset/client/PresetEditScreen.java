@@ -37,7 +37,7 @@ import net.neoforged.neoforge.client.network.ClientPacketDistributor;
  */
 public final class PresetEditScreen extends Screen {
     private static final int WIDGET_H = 16;
-    private static final int COLOR_WIDGET_H = 34;
+    private static final int COLOR_WIDGET_H = 45;
     private static final int PADDING = 8;
     private static final int SIDEBAR_W = 100;
     private static final int TAB_BTN_H = 20;
@@ -755,13 +755,13 @@ public final class PresetEditScreen extends Screen {
         private static final int HANDLE_W = 3;
 
         private final java.util.function.Consumer<String> sink;
-        private int rgb;
+        private int argb;
         private int activeChannel = -1;
 
         PresetColorRgbControl(int x, int y, int width, int height, int initialRgb,
                 java.util.function.Consumer<String> sink) {
             super(x, y, width, height, Component.empty());
-            this.rgb = initialRgb & 0xFFFFFF;
+            this.argb = initialRgb;
             this.sink = sink;
         }
 
@@ -771,11 +771,12 @@ public final class PresetEditScreen extends Screen {
             int x = getX();
             int y = getY();
             graphics.fill(x, y, x + SWATCH_W, y + getHeight(), 0xFF101010);
-            graphics.fill(x + 1, y + 1, x + SWATCH_W - 1, y + getHeight() - 1, 0xFF000000 | rgb);
+            drawAlphaBackground(graphics, x + 1, y + 1, x + SWATCH_W - 1, y + getHeight() - 1);
+            graphics.fill(x + 1, y + 1, x + SWATCH_W - 1, y + getHeight() - 1, argb);
 
-            int[] values = { (rgb >> 16) & 0xFF, (rgb >> 8) & 0xFF, rgb & 0xFF };
-            int[] colors = { 0xFFFF4040, 0xFF40FF60, 0xFF508CFF };
-            for (int channel = 0; channel < 3; channel++) {
+            int[] values = { argb >>> 24, (argb >> 16) & 0xFF, (argb >> 8) & 0xFF, argb & 0xFF };
+            int[] colors = { 0xFFFFFFFF, 0xFFFF4040, 0xFF40FF60, 0xFF508CFF };
+            for (int channel = 0; channel < 4; channel++) {
                 drawChannel(graphics, channel, values[channel], colors[channel]);
             }
         }
@@ -834,22 +835,25 @@ public final class PresetEditScreen extends Screen {
             int barX1 = barX1();
             double slider = Mth.clamp((mouseX - barX0) / Math.max(1.0D, barX1 - barX0), 0.0D, 1.0D);
             int channelValue = (int) Math.round(slider * 255.0D);
-            int r = (rgb >> 16) & 0xFF;
-            int g = (rgb >> 8) & 0xFF;
-            int b = rgb & 0xFF;
+            int a = argb >>> 24;
+            int r = (argb >> 16) & 0xFF;
+            int g = (argb >> 8) & 0xFF;
+            int b = argb & 0xFF;
             if (channel == 0) {
-                r = channelValue;
+                a = channelValue;
             } else if (channel == 1) {
+                r = channelValue;
+            } else if (channel == 2) {
                 g = channelValue;
             } else {
                 b = channelValue;
             }
-            rgb = (r << 16) | (g << 8) | b;
-            sink.accept(String.format(java.util.Locale.ROOT, "#%06X", rgb));
+            argb = (a << 24) | (r << 16) | (g << 8) | b;
+            sink.accept(String.format(java.util.Locale.ROOT, "#%08X", argb));
         }
 
         private int channelAt(double mouseY) {
-            for (int channel = 0; channel < 3; channel++) {
+            for (int channel = 0; channel < 4; channel++) {
                 int y0 = channelY(channel);
                 if (mouseY >= y0 && mouseY < y0 + BAR_H) {
                     return channel;
@@ -868,6 +872,12 @@ public final class PresetEditScreen extends Screen {
 
         private int channelY(int channel) {
             return getY() + channel * (BAR_H + BAR_GAP);
+        }
+
+        private static void drawAlphaBackground(GuiGraphicsExtractor graphics, int x0, int y0, int x1, int y1) {
+            int split = (x0 + x1) / 2;
+            graphics.fill(x0, y0, split, y1, 0xFFB0B0B0);
+            graphics.fill(split, y0, x1, y1, 0xFF606060);
         }
     }
 }

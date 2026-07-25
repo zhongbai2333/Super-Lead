@@ -517,6 +517,63 @@ public final class ClientRopeInteractions {
         return bestId == null ? null : new AttachPick(bestId, bestT, bestPoint, bestA, bestB);
     }
 
+    /**
+     * Low-cost fallback picking for fully transparent ropes. They have no client
+     * simulation or render geometry, but shears must still be able to target them.
+     */
+    static AttachPick pickInvisibleCutPoint(Minecraft mc, float partialTick) {
+        if (mc.player == null || mc.level == null) {
+            return null;
+        }
+        if (!mc.player.getMainHandItem().is(net.minecraft.world.item.Items.SHEARS)) {
+            return null;
+        }
+        Camera camera = mc.gameRenderer.getMainCamera();
+        Vec3 cameraPos = camera.position();
+        var forward = camera.forwardVector();
+        double length = Math.sqrt(forward.x() * forward.x() + forward.y() * forward.y()
+            + forward.z() * forward.z());
+        if (length <= 1.0e-9D) {
+            return null;
+        }
+        double dirX = forward.x() / length;
+        double dirY = forward.y() / length;
+        double dirZ = forward.z() / length;
+        double maxDistance = SuperLeadNetwork.maxExtendedLeashDistance();
+        if (mc.hitResult != null && mc.hitResult.getType() != net.minecraft.world.phys.HitResult.Type.MISS) {
+            maxDistance = Math.min(maxDistance,
+                    mc.hitResult.getLocation().distanceTo(cameraPos) + ATTACH_PICK_RADIUS);
+        } else {
+            maxDistance = Math.min(maxDistance, mc.player.blockInteractionRange() + 2.0D);
+        }
+
+        List<LeadConnection> connections = SuperLeadNetwork.connections(mc.level);
+        double bestDistSqr = ATTACH_PICK_RADIUS * ATTACH_PICK_RADIUS;
+        AttachPick best = null;
+        for (LeadConnection connection : connections) {
+            RopeTuning tuning = RopeTuning.forConnection(connection);
+            if (!tuning.isConfiguredFullyTransparent(connection.kind())) {
+                continue;
+            }
+            LeadEndpointLayout.Endpoints endpoints = LeadEndpointLayout.endpoints(
+                    mc.level, connection, connections);
+            Vec3 a = endpoints.from();
+            Vec3 b = endpoints.to();
+            Vec3 fallback = RopeSagModel.stableUnitVector(connection.id().getLeastSignificantBits());
+            for (int sample = 0; sample <= 16; sample++) {
+                double t = sample / 16.0D;
+                Vec3 point = RopeSagModel.point(a, b, t, tuning.slack(), tuning.gravity(), fallback);
+                double distance = RopePickMath.distancePointToRaySqr(point.x, point.y, point.z,
+                        cameraPos.x, cameraPos.y, cameraPos.z, dirX, dirY, dirZ, maxDistance);
+                if (distance < bestDistSqr) {
+                    bestDistSqr = distance;
+                    best = new AttachPick(connection.id(), Math.max(0.02D, Math.min(0.98D, t)), point, a, b);
+                }
+            }
+        }
+        return best;
+    }
+
     static AttachPick pickZiplinePoint(Minecraft mc, float partialTick) {
         ZiplinePickContext context = ZiplinePickContext.from(mc);
         if (context == null)

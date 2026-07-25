@@ -30,6 +30,9 @@ final class LeadClientConnectionCache {
     private static final Map<NetworkKey, Map<UUID, LeadConnection>> CONNECTIONS_BY_ID = new HashMap<>();
     private static final Map<NetworkKey, Map<Long, Set<UUID>>> CHUNK_CONNECTIONS = new HashMap<>();
     private static final Map<NetworkKey, Map<UUID, Integer>> CONNECTION_REFCOUNTS = new HashMap<>();
+    private static final Map<NetworkKey, UUID> SYNC_EPOCHS = new HashMap<>();
+    private static final Map<NetworkKey, Map<Long, Long>> CHUNK_REVISIONS = new HashMap<>();
+    private static final Map<NetworkKey, Map<UUID, Long>> CONNECTION_REVISIONS = new HashMap<>();
     private static final Map<NetworkKey, Long> REVISIONS = new HashMap<>();
     private static final Map<NetworkKey, Long> ENDPOINT_LAYOUT_REVISIONS = new HashMap<>();
     private static final Map<NetworkKey, Map<UUID, EndpointLayoutIdentity>> ENDPOINT_LAYOUT_IDENTITIES = new HashMap<>();
@@ -66,6 +69,9 @@ final class LeadClientConnectionCache {
         CONNECTIONS_BY_ID.clear();
         CHUNK_CONNECTIONS.clear();
         CONNECTION_REFCOUNTS.clear();
+        SYNC_EPOCHS.clear();
+        CHUNK_REVISIONS.clear();
+        CONNECTION_REVISIONS.clear();
         REVISIONS.clear();
         ENDPOINT_LAYOUT_REVISIONS.clear();
         ENDPOINT_LAYOUT_IDENTITIES.clear();
@@ -93,6 +99,25 @@ final class LeadClientConnectionCache {
         rebuildConnectionList(key);
         CHUNK_CONNECTIONS.remove(key);
         CONNECTION_REFCOUNTS.remove(key);
+        CHUNK_REVISIONS.remove(key);
+        CONNECTION_REVISIONS.remove(key);
+    }
+
+    static void beginSyncEpoch(Level level, UUID epoch) {
+        beginSyncEpoch(NetworkKey.of(level), epoch);
+    }
+
+    static void beginSyncEpoch(NetworkKey key, UUID epoch) {
+        SYNC_EPOCHS.put(key, epoch);
+        CONNECTIONS.remove(key);
+        CONNECTIONS_BY_ID.remove(key);
+        CHUNK_CONNECTIONS.remove(key);
+        CONNECTION_REFCOUNTS.remove(key);
+        CHUNK_REVISIONS.remove(key);
+        CONNECTION_REVISIONS.remove(key);
+        ENDPOINT_LAYOUT_IDENTITIES.remove(key);
+        REVISIONS.put(key, REVISIONS.getOrDefault(key, 0L) + 1L);
+        ENDPOINT_LAYOUT_REVISIONS.put(key, ENDPOINT_LAYOUT_REVISIONS.getOrDefault(key, 0L) + 1L);
     }
 
     static void applyChanges(Level level, List<UUID> removed, List<LeadConnection> upserts) {
@@ -110,57 +135,105 @@ final class LeadClientConnectionCache {
         rebuildConnectionList(key);
     }
 
-    static void replaceChunk(Level level, ChunkPos chunk, List<LeadConnection> connections) {
-        replaceChunk(NetworkKey.of(level), chunk, connections);
+    static ConnectionDelta replaceChunk(Level level, ChunkPos chunk, UUID epoch, long revision,
+            List<LeadConnection> connections) {
+        return replaceChunk(NetworkKey.of(level), chunk, epoch, revision, connections);
     }
 
-    static void replaceChunk(NetworkKey key, ChunkPos chunk, List<LeadConnection> connections) {
-        replaceChunk(key, SuperLeadSavedData.chunkKey(chunk), connections);
+    static ConnectionDelta replaceChunk(NetworkKey key, ChunkPos chunk, UUID epoch, long revision,
+            List<LeadConnection> connections) {
+        return replaceChunk(key, SuperLeadSavedData.chunkKey(chunk), epoch, revision, connections);
     }
 
-    static void replaceChunk(NetworkKey key, long chunkKey, List<LeadConnection> connections) {
+    static ConnectionDelta replaceChunk(NetworkKey key, long chunkKey, UUID epoch, long revision,
+            List<LeadConnection> connections) {
+        if (!epoch.equals(SYNC_EPOCHS.get(key)) || revision < 0L) {
+            return ConnectionDelta.EMPTY;
+        }
+        Map<Long, Long> chunkRevisions = CHUNK_REVISIONS.computeIfAbsent(key, ignored -> new HashMap<>());
+        Long previousChunkRevision = chunkRevisions.get(chunkKey);
+        if (previousChunkRevision != null && revision <= previousChunkRevision.longValue()) {
+            return ConnectionDelta.EMPTY;
+        }
+
         Map<Long, Set<UUID>> byChunk = CHUNK_CONNECTIONS.computeIfAbsent(key, ignored -> new HashMap<>());
         Map<UUID, Integer> refCounts = CONNECTION_REFCOUNTS.computeIfAbsent(key, ignored -> new HashMap<>());
         Map<UUID, LeadConnection> byId = CONNECTIONS_BY_ID.computeIfAbsent(key, ignored -> new LinkedHashMap<>());
+        Map<UUID, Long> connectionRevisions = CONNECTION_REVISIONS.computeIfAbsent(key, ignored -> new HashMap<>());
 
-        Set<UUID> oldIds = byChunk.remove(chunkKey);
-        if (oldIds != null) {
-            for (UUID id : oldIds) {
-                decrementRef(byId, refCounts, id);
-            }
-        }
-
+        Set<UUID> oldIds = byChunk.getOrDefault(chunkKey, Set.of());
         LinkedHashSet<UUID> newIds = new LinkedHashSet<>();
+        for (LeadConnection connection : connections) {
+            newIds.add(connection.id());
+        }
+        LinkedHashSet<UUID> affectedIds = new LinkedHashSet<>(oldIds);
+        affectedIds.addAll(newIds);
+        Map<UUID, LeadConnection> before = valuesForIds(byId, affectedIds);
+
+        newIds.clear();
         for (LeadConnection connection : connections) {
             if (!newIds.add(connection.id()))
                 continue;
-            byId.put(connection.id(), connection);
-            refCounts.put(connection.id(), refCounts.getOrDefault(connection.id(), 0) + 1);
+            UUID id = connection.id();
+            if (!oldIds.contains(id)) {
+                refCounts.put(id, refCounts.getOrDefault(id, 0) + 1);
+            }
+            Long connectionRevision = connectionRevisions.get(id);
+            if (!byId.containsKey(id) || connectionRevision == null || revision > connectionRevision.longValue()) {
+                byId.put(id, connection);
+                connectionRevisions.put(id, revision);
+            }
+        }
+        for (UUID id : oldIds) {
+            if (!newIds.contains(id)) {
+                decrementRef(byId, refCounts, connectionRevisions, id);
+            }
         }
         if (!newIds.isEmpty()) {
             byChunk.put(chunkKey, newIds);
+        } else {
+            byChunk.remove(chunkKey);
         }
+        chunkRevisions.put(chunkKey, revision);
         pruneUnreferenced(key);
         rebuildConnectionList(key);
+        return connectionDelta(before, byId, affectedIds);
     }
 
-    static void unloadChunk(Level level, ChunkPos chunk) {
-        NetworkKey key = NetworkKey.of(level);
+    static ConnectionDelta unloadChunk(Level level, ChunkPos chunk, UUID epoch, long revision) {
+        return unloadChunk(NetworkKey.of(level), SuperLeadSavedData.chunkKey(chunk), epoch, revision);
+    }
+
+    static ConnectionDelta unloadChunk(NetworkKey key, long chunkKey, UUID epoch, long revision) {
+        if (!epoch.equals(SYNC_EPOCHS.get(key)) || revision < 0L) {
+            return ConnectionDelta.EMPTY;
+        }
+        Map<Long, Long> chunkRevisions = CHUNK_REVISIONS.computeIfAbsent(key, ignored -> new HashMap<>());
+        Long previousChunkRevision = chunkRevisions.get(chunkKey);
+        if (previousChunkRevision != null && revision <= previousChunkRevision.longValue()) {
+            return ConnectionDelta.EMPTY;
+        }
+        // Keep the unload revision as a tombstone. A delayed snapshot at or below
+        // this sequence must not resurrect an unwatched chunk.
+        chunkRevisions.put(chunkKey, revision);
         Map<Long, Set<UUID>> byChunk = CHUNK_CONNECTIONS.get(key);
         if (byChunk == null) {
-            return;
+            return ConnectionDelta.EMPTY;
         }
-        Set<UUID> oldIds = byChunk.remove(SuperLeadSavedData.chunkKey(chunk));
+        Set<UUID> oldIds = byChunk.remove(chunkKey);
         if (oldIds == null || oldIds.isEmpty()) {
-            return;
+            return ConnectionDelta.EMPTY;
         }
         Map<UUID, Integer> refCounts = CONNECTION_REFCOUNTS.computeIfAbsent(key, ignored -> new HashMap<>());
         Map<UUID, LeadConnection> byId = CONNECTIONS_BY_ID.computeIfAbsent(key, ignored -> new LinkedHashMap<>());
+        Map<UUID, Long> connectionRevisions = CONNECTION_REVISIONS.computeIfAbsent(key, ignored -> new HashMap<>());
+        Map<UUID, LeadConnection> before = valuesForIds(byId, oldIds);
         for (UUID id : oldIds) {
-            decrementRef(byId, refCounts, id);
+            decrementRef(byId, refCounts, connectionRevisions, id);
         }
         pruneUnreferenced(key);
         rebuildConnectionList(key);
+        return connectionDelta(before, byId, oldIds);
     }
 
     private static Map<UUID, LeadConnection> indexById(NetworkKey key) {
@@ -171,11 +244,13 @@ final class LeadClientConnectionCache {
         return out;
     }
 
-    private static void decrementRef(Map<UUID, LeadConnection> byId, Map<UUID, Integer> refCounts, UUID id) {
+    private static void decrementRef(Map<UUID, LeadConnection> byId, Map<UUID, Integer> refCounts,
+            Map<UUID, Long> connectionRevisions, UUID id) {
         int next = refCounts.getOrDefault(id, 0) - 1;
         if (next <= 0) {
             refCounts.remove(id);
             byId.remove(id);
+            connectionRevisions.remove(id);
         } else {
             refCounts.put(id, next);
         }
@@ -204,6 +279,39 @@ final class LeadClientConnectionCache {
         if (!previousLayout.equals(nextLayout)) {
             ENDPOINT_LAYOUT_REVISIONS.put(key, ENDPOINT_LAYOUT_REVISIONS.getOrDefault(key, 0L) + 1L);
         }
+    }
+
+    private static Map<UUID, LeadConnection> valuesForIds(Map<UUID, LeadConnection> source,
+            Iterable<UUID> ids) {
+        Map<UUID, LeadConnection> values = new LinkedHashMap<>();
+        for (UUID id : ids) {
+            LeadConnection connection = source.get(id);
+            if (connection != null) {
+                values.put(id, connection);
+            }
+        }
+        return values;
+    }
+
+    private static ConnectionDelta connectionDelta(Map<UUID, LeadConnection> before,
+            Map<UUID, LeadConnection> after, Iterable<UUID> affectedIds) {
+        LinkedHashSet<UUID> added = new LinkedHashSet<>();
+        LinkedHashSet<UUID> updated = new LinkedHashSet<>();
+        LinkedHashSet<UUID> removed = new LinkedHashSet<>();
+        for (UUID id : affectedIds) {
+            LeadConnection previous = before.get(id);
+            LeadConnection current = after.get(id);
+            if (previous == null && current != null) {
+                added.add(id);
+            } else if (previous != null && current == null) {
+                removed.add(id);
+            } else if (previous != null && !previous.equals(current)) {
+                updated.add(id);
+            }
+        }
+        return added.isEmpty() && updated.isEmpty() && removed.isEmpty()
+                ? ConnectionDelta.EMPTY
+                : new ConnectionDelta(added, updated, removed);
     }
 
     private static Map<UUID, EndpointLayoutIdentity> endpointLayoutIdentities(List<LeadConnection> connections) {

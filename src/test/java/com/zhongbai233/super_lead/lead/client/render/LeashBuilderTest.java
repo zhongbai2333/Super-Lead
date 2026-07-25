@@ -128,4 +128,11 @@ class LeashBuilderTest {
             }
         }
     }
+
+    @Test
+    void rgbShadingPreservesOriginalAlpha() {
+        assertEquals(0x80563412, LeashBuilder.combineAlphaAndRgb(0x80ABCDEF, 0x563412));
+        assertEquals(0x00563412, LeashBuilder.combineAlphaAndRgb(0x00ABCDEF, 0x563412));
+        assertEquals(0xFF563412, LeashBuilder.combineAlphaAndRgb(0xFFABCDEF, 0x563412));
+    }
 }

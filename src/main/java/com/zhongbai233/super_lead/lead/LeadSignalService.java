@@ -751,11 +751,18 @@ final class LeadSignalService {
     private static void notifyRedstoneAnchor(ServerLevel level, LeadAnchor anchor) {
         BlockPos attachedPos = anchor.pos();
         BlockPos outputPos = attachedPos.relative(anchor.face());
+        if (!isChunkAvailableNow(level, attachedPos) || !isChunkAvailableNow(level, outputPos)) {
+            return;
+        }
 
         level.neighborChanged(attachedPos, level.getBlockState(outputPos).getBlock(), null);
 
         level.updateNeighborsAt(outputPos, level.getBlockState(outputPos).getBlock());
         level.updateNeighborsAt(attachedPos, level.getBlockState(attachedPos).getBlock());
+    }
+
+    private static boolean isChunkAvailableNow(ServerLevel level, BlockPos pos) {
+        return level.getChunkSource().getChunkNow(pos.getX() >> 4, pos.getZ() >> 4) != null;
     }
 
     private static final class EnergyHandlerCache {

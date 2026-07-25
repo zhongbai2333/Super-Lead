@@ -2,36 +2,50 @@ package com.zhongbai233.super_lead.tuning;
 
 import java.util.Locale;
 
-/** RGB color tuning value stored as 0xRRGGBB. */
+/** ARGB color tuning value stored as 0xAARRGGBB; legacy RGB is opaque. */
 public record ColorTuningType() implements TuningType<Integer> {
-    public static final int MIN = 0x000000;
-    public static final int MAX = 0xFFFFFF;
-
     @Override
     public String format(Integer value) {
-        int rgb = value == null ? 0 : value & MAX;
-        return String.format(Locale.ROOT, "#%06X", rgb);
+        int argb = value == null ? 0xFF000000 : value;
+        return String.format(Locale.ROOT, "#%08X", argb);
     }
 
     @Override
     public Integer parse(String value) {
         String raw = value.trim();
         if (raw.startsWith("#")) {
-            return Integer.parseInt(raw.substring(1), 16);
+            return parseHex(raw.substring(1));
         }
         if (raw.startsWith("0x") || raw.startsWith("0X")) {
-            return Integer.parseInt(raw.substring(2), 16);
+            return parseHex(raw.substring(2));
         }
-        return Integer.parseInt(raw);
+        long decimal = Long.parseLong(raw);
+        if (decimal >= 0L && decimal <= 0xFFFFFFL) {
+            return 0xFF000000 | (int) decimal;
+        }
+        if (decimal >= Integer.MIN_VALUE && decimal <= 0xFFFFFFFFL) {
+            return (int) decimal;
+        }
+        throw new NumberFormatException("ARGB value outside 32-bit range: " + raw);
     }
 
     @Override
     public boolean validate(Integer value) {
-        return value != null && value >= MIN && value <= MAX;
+        return value != null;
     }
 
     @Override
     public String describeRange() {
-        return "#000000..#FFFFFF";
+        return "#00000000..#FFFFFFFF (#RRGGBB is opaque)";
+    }
+
+    private static int parseHex(String hex) {
+        if (hex.length() == 6) {
+            return 0xFF000000 | Integer.parseInt(hex, 16);
+        }
+        if (hex.length() == 8) {
+            return Integer.parseUnsignedInt(hex, 16);
+        }
+        throw new NumberFormatException("Expected 6 or 8 hexadecimal digits");
     }
 }

@@ -7,6 +7,7 @@ import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.suggestion.SuggestionProvider;
 import com.zhongbai233.super_lead.Super_lead;
 import com.zhongbai233.super_lead.lead.client.debug.RopeDebugLabels;
+import com.zhongbai233.super_lead.lead.client.debug.RopePhysicsDiagnostics;
 import com.zhongbai233.super_lead.tuning.ClientTuning;
 import com.zhongbai233.super_lead.tuning.TuningKey;
 import com.zhongbai233.super_lead.tuning.gui.SuperLeadConfigScreen;
@@ -54,7 +55,8 @@ public final class SuperLeadCommands {
                         .then(Commands.literal("rope_labels")
                                 .executes(SuperLeadCommands::toggleRopeLabels)
                                 .then(Commands.literal("on").executes(ctx -> setRopeLabels(ctx, true)))
-                                .then(Commands.literal("off").executes(ctx -> setRopeLabels(ctx, false)))))
+                        .then(Commands.literal("off").executes(ctx -> setRopeLabels(ctx, false))))
+                    .then(Commands.literal("physics").executes(SuperLeadCommands::physicsDiagnostics)))
                 .then(Commands.literal("status").executes(SuperLeadCommands::status))
                 .then(Commands.literal("gui").executes(SuperLeadCommands::openGui));
         dispatcher.register(root);
@@ -208,6 +210,46 @@ public final class SuperLeadCommands {
                 () -> Component.literal("Rope debug labels: " + (enabled ? "on" : "off"))
                         .withStyle(enabled ? ChatFormatting.GREEN : ChatFormatting.GRAY),
                 false);
+        return 1;
+    }
+
+    private static int physicsDiagnostics(CommandContext<CommandSourceStack> ctx) {
+        RopePhysicsDiagnostics.Snapshot snapshot = RopePhysicsDiagnostics.snapshot();
+        RopePhysicsDiagnostics.HistorySummary history = RopePhysicsDiagnostics.historySummary();
+        if (!snapshot.available()) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "No rope physics tick has been sampled yet. Join a world and wait one tick."));
+            return 0;
+        }
+        ctx.getSource().sendSuccess(() -> Component.literal(String.format(Locale.ROOT,
+                "Super Lead physics tick=%d total=%.3fms entries=%d budget=%d/%d deadline=%s",
+                snapshot.tick(), snapshot.physicsMs(), snapshot.entries(), snapshot.budgetUsed(),
+                snapshot.budgetMax(), snapshot.deadlineExhausted() ? "EXHAUSTED" : "ok"))
+                .withStyle(snapshot.deadlineExhausted() ? ChatFormatting.RED : ChatFormatting.GOLD), false);
+        ctx.getSource().sendSuccess(() -> Component.literal(String.format(Locale.ROOT,
+                "  neighbor=%.3fms candidates=%d narrow=%d capDrop=%d guard=%s",
+                snapshot.neighborMs(), snapshot.neighborCandidates(), snapshot.neighborNarrowPhase(),
+                snapshot.neighborDroppedByCap(),
+                snapshot.neighborTruncated() ? "TRIPPED" : "ok")), false);
+        ctx.getSource().sendSuccess(() -> Component.literal(String.format(Locale.ROOT,
+                "  syncSolve=%.3fms solves=%d slowest=%s",
+                snapshot.syncSolveMs(), snapshot.syncSolves(), snapshot.slowestSyncSummary())), false);
+        ctx.getSource().sendSuccess(() -> Component.literal(String.format(Locale.ROOT,
+                "  entityQuery=%.3fms queries=%d raw=%d contacts=%d releaseScan=%.3fms",
+                snapshot.entityQueryMs(), snapshot.entityQueries(), snapshot.entityRaw(),
+                snapshot.entityContacts(), snapshot.releaseMs())), false);
+        ctx.getSource().sendSuccess(() -> Component.literal(String.format(Locale.ROOT,
+                "  asyncPrepare=%.3fms submitted=%d pending=%d capacity=%d running=%d retained=%d",
+                snapshot.asyncPrepareMs(), snapshot.asyncSubmitted(), snapshot.asyncPending(),
+                snapshot.asyncCapacity(), snapshot.asyncRunning(), snapshot.asyncRetained())), false);
+        ctx.getSource().sendSuccess(() -> Component.literal(
+                "  overload budgetSkips=" + snapshot.budgetSkips()
+                        + " circuitBreakers=" + snapshot.circuitBreakerSkips()
+                        + " states=" + snapshot.states()), false);
+        ctx.getSource().sendSuccess(() -> Component.literal(String.format(Locale.ROOT,
+                "  last %d ticks: physics avg/p95/max=%.3f/%.3f/%.3fms entity=%.3f/%.3f/%.3fms",
+                history.samples(), history.physicsAverageMs(), history.physicsP95Ms(), history.physicsMaxMs(),
+                history.entityAverageMs(), history.entityP95Ms(), history.entityMaxMs())), false);
         return 1;
     }
 

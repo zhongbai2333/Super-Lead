@@ -1303,7 +1303,9 @@ public final class LeashBuilder {
         };
         int base = effectiveTuning.baseColor(effectiveKind);
         int accent = effectiveTuning.accentColor(effectiveKind);
-        int rgb = bright ? accent : base;
+        int selected = bright ? accent : base;
+        int alpha = selected & 0xFF000000;
+        int rgb = selected & 0xFFFFFF;
 
         if (effectiveKind == LeadKind.REDSTONE && powered) {
             rgb = brighten(blend(rgb, accent, bright ? 0.35D : 0.20D), bright ? 1.45D : 1.30D);
@@ -1323,7 +1325,11 @@ public final class LeashBuilder {
             }
         }
 
-        return 0xFF000000 | shade(rgb, shade);
+        return combineAlphaAndRgb(alpha, shade(rgb, shade));
+    }
+
+    static int combineAlphaAndRgb(int argb, int rgb) {
+        return (argb & 0xFF000000) | (rgb & 0xFFFFFF);
     }
 
     private static int shade(int rgb, double shade) {

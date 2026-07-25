@@ -8,7 +8,7 @@ import net.minecraft.network.RegistryFriendlyByteBuf;
 
 final class LeadConnectionPayloadCodec {
     static final int MAX_CONNECTIONS_PER_PAYLOAD = 65_536;
-    static final int MAX_ATTACHMENTS_PER_CONNECTION = 4_096;
+    static final int MAX_ATTACHMENTS_PER_CONNECTION = LeadConnection.MAX_ATTACHMENTS;
     static final int MAX_CONTACTS_PER_PAYLOAD = 65_536;
     static final int MAX_ZIPLINES_PER_PAYLOAD = 65_536;
 

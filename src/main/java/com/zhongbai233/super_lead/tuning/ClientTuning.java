@@ -399,7 +399,7 @@ public final class ClientTuning {
     private static TuningKey<Integer> registerC(String id, String group,
             int defaultValue, String description) {
         TuningKey<Integer> key = new TuningKey<>(
-                id, group, TuningType.colorRgb(), defaultValue, description);
+                id, group, TuningType.colorRgb(), 0xFF000000 | defaultValue, description);
         KEYS.put(id, key);
         return key;
     }

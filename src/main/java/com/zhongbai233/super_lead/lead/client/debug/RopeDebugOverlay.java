@@ -39,6 +39,7 @@ public final class RopeDebugOverlay implements DebugScreenEntry {
             @Nullable Level serverOrClientLevel,
             @Nullable LevelChunk clientChunk,
             @Nullable LevelChunk serverChunk) {
+        RopePhysicsDiagnostics.Snapshot physics = RopePhysicsDiagnostics.snapshot();
         displayer.addToGroup(GROUP, List.of(
                 "[SuperLead] conns=" + RopeDebugStats.totalConnections
                         + " sim=" + RopeDebugStats.simEntries
@@ -71,7 +72,18 @@ public final class RopeDebugOverlay implements DebugScreenEntry {
                     + " defer=" + RopeDebugStats.visibilityFarDeferred,
                 "[SuperLead] neighbor candidates=" + RopeDebugStats.neighborCandidates
                         + " narrow=" + RopeDebugStats.neighborNarrowPhase
+                    + " capDrop=" + RopeDebugStats.neighborDroppedByCap
                         + " guard=" + (RopeDebugStats.neighborBuildTruncated ? "TRIPPED" : "ok"),
+                String.format(Locale.ROOT,
+                    "[SuperLead] phys %.2fms neighbor=%.2f sync=%.2f budget=%d/%d skip=%d/%d",
+                    physics.physicsMs(), physics.neighborMs(), physics.syncSolveMs(),
+                    physics.budgetUsed(), physics.budgetMax(),
+                    physics.budgetSkips(), physics.circuitBreakerSkips()),
+                String.format(Locale.ROOT,
+                    "[SuperLead] entity %.2fms q=%d hit=%d async prep=%.2f run=%d pend=%d cap=%d",
+                    physics.entityQueryMs(), physics.entityQueries(), physics.entityContacts(),
+                    physics.asyncPrepareMs(), physics.asyncRunning(),
+                    physics.asyncPending(), physics.asyncCapacity()),
                 "[SuperLead] zones=" + PhysicsZonesClient.zones().size()
                         + " overrides=" + zoneOverrideCount()
                         + " zoneEpoch=" + PhysicsZonesClient.epoch(),

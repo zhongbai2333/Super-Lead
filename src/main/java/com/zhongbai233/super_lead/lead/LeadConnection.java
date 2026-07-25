@@ -23,6 +23,7 @@ public record LeadConnection(UUID id, LeadAnchor from, LeadAnchor to, LeadKind k
     public static final UUID NO_ADVENTURE_OWNER = new UUID(0L, 0L);
     public static final int MIN_LENGTH_UNITS = 1;
     public static final int MAX_LENGTH_UNITS = 4;
+    public static final int MAX_ATTACHMENTS = 4_096;
 
     public static final Codec<LeadConnection> CODEC = RecordCodecBuilder.create(instance -> instance.group(
                 UUIDUtil.CODEC.fieldOf("id").forGetter(connection -> connection.id()),
@@ -52,7 +53,8 @@ public record LeadConnection(UUID id, LeadAnchor from, LeadAnchor to, LeadKind k
         tier = Math.max(0, tier);
         extractAnchor = Math.max(0, Math.min(2, extractAnchor));
         lengthUnits = Math.max(MIN_LENGTH_UNITS, Math.min(MAX_LENGTH_UNITS, lengthUnits));
-        attachments = attachments == null ? List.of() : List.copyOf(attachments);
+        attachments = attachments == null ? List.of() : List.copyOf(
+            attachments.size() > MAX_ATTACHMENTS ? attachments.subList(0, MAX_ATTACHMENTS) : attachments);
         physicsPreset = normalizePhysicsPreset(physicsPreset);
         manualPhysicsPreset = normalizePhysicsPreset(manualPhysicsPreset);
         adventureOwner = adventureOwner == null ? NO_ADVENTURE_OWNER : adventureOwner;
@@ -149,6 +151,9 @@ public record LeadConnection(UUID id, LeadAnchor from, LeadAnchor to, LeadKind k
     }
 
     public LeadConnection addAttachment(RopeAttachment attachment) {
+        if (attachments.size() >= MAX_ATTACHMENTS) {
+            return this;
+        }
         List<RopeAttachment> list = new ArrayList<>(attachments);
         list.add(attachment);
         Collections.sort(list, (x, y) -> Double.compare(x.t(), y.t()));

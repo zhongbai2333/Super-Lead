@@ -5,13 +5,13 @@ import net.minecraft.network.RegistryFriendlyByteBuf;
 import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.resources.Identifier;
+import java.util.UUID;
 
 /**
  * Clears all client-side rope connection caches before chunk-scoped sync
  * refills them.
  */
-public record ClearRopeCache() implements CustomPacketPayload {
-    public static final ClearRopeCache INSTANCE = new ClearRopeCache();
+public record ClearRopeCache(UUID epoch) implements CustomPacketPayload {
     public static final CustomPacketPayload.Type<ClearRopeCache> TYPE = new CustomPacketPayload.Type<>(
             Identifier.fromNamespaceAndPath(Super_lead.MODID, "clear_rope_cache"));
     public static final StreamCodec<RegistryFriendlyByteBuf, ClearRopeCache> STREAM_CODEC = CustomPacketPayload
@@ -23,9 +23,10 @@ public record ClearRopeCache() implements CustomPacketPayload {
     }
 
     private void write(RegistryFriendlyByteBuf buffer) {
+        buffer.writeUUID(epoch);
     }
 
     private static ClearRopeCache read(RegistryFriendlyByteBuf buffer) {
-        return INSTANCE;
+        return new ClearRopeCache(buffer.readUUID());
     }
 }

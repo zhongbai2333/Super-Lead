@@ -48,6 +48,8 @@ final class LeadTransferService {
     private static final int MUSIC_PLAYER_EXTRACT_COOLDOWN_TICKS = 200; // 绳子送入后完整保护（等待解码+播放完毕）
     private static final int MUSIC_PLAYER_FALSE_DEBOUNCE_TICKS = 10; // 自然播放完毕后快速允许抽取
     private static final int MUSIC_PLAYER_DISC_DEBOUNCE_TICKS = 100; // 玩家放入唱片等待解码器启动（5s）
+    private static final int MAX_THERMAL_PAIR_CALLS_PER_COMPONENT_TICK = 256;
+    private static final int MAX_THERMAL_PAIR_CALLS_PER_LEVEL_TICK = 1024;
 
     /**
      * Per-dimension cached generation and pre-built indexes for each transfer kind.
@@ -171,9 +173,11 @@ final class LeadTransferService {
         }
 
         MekanismHeatBridge.HandlerCache heatHandlers = new MekanismHeatBridge.HandlerCache();
+        ThermalTickBudget thermalBudget = new ThermalTickBudget(MAX_THERMAL_PAIR_CALLS_PER_LEVEL_TICK);
         int size = thermalConnections.size();
         boolean[] visited = new boolean[size];
         Map<BlockPos, List<Integer>> connectionsByPos = indexConnectionsByBlockPos(thermalConnections, size);
+        List<List<Integer>> components = new ArrayList<>();
         for (int i = 0; i < thermalConnections.size(); i++) {
             if (visited[i]) {
                 continue;
@@ -188,9 +192,30 @@ final class LeadTransferService {
                 addUnvisitedNeighborsByPos(current.from().pos(), connectionsByPos, visited, component);
                 addUnvisitedNeighborsByPos(current.to().pos(), connectionsByPos, visited, component);
             }
-
-            balanceThermalComponent(level, component, thermalConnections, heatHandlers);
+            components.add(component);
         }
+
+        RuntimeState state = runtimeState(level);
+        Set<UUID> activeComponents = new HashSet<>();
+        for (List<Integer> component : components) {
+            activeComponents.add(thermalComponentId(component, thermalConnections));
+        }
+        state.thermalPairCursors.keySet().retainAll(activeComponents);
+        int componentCount = components.size();
+        int start = componentCount == 0 ? 0 : Math.floorMod(state.thermalComponentCursor, componentCount);
+        int processed = 0;
+        for (int offset = 0; offset < componentCount; offset++) {
+            List<Integer> component = components.get((start + offset) % componentCount);
+            balanceThermalComponent(level, component, thermalConnections, heatHandlers,
+                    state.thermalPairCursors, thermalBudget);
+            processed++;
+            if (thermalBudget.exhausted()) {
+                break;
+            }
+        }
+        state.thermalComponentCursor = componentCount == 0
+                ? 0
+                : Math.floorMod(start + Math.max(1, processed), componentCount);
     }
 
     static void tickAeNetwork(ServerLevel level) {
@@ -431,7 +456,8 @@ final class LeadTransferService {
     }
 
     private static void balanceThermalComponent(ServerLevel level, List<Integer> component,
-            List<LeadConnection> thermalConnections, MekanismHeatBridge.HandlerCache heatHandlers) {
+            List<LeadConnection> thermalConnections, MekanismHeatBridge.HandlerCache heatHandlers,
+            Map<UUID, ThermalPairCursor> pairCursors, ThermalTickBudget tickBudget) {
         List<LeadAnchor> endpoints = new ArrayList<>();
         Set<LeadAnchor> seenAnchors = new HashSet<>();
         double componentRate = 0.0D;
@@ -450,14 +476,62 @@ final class LeadTransferService {
         // Without this N endpoints would allow N*(N-1)/2 × componentRate
         // heat transfer per tick instead of the intended componentRate total.
         double remaining = componentRate;
-        for (int i = 0; i < endpoints.size() && remaining > 0.0D; i++) {
-            for (int j = i + 1; j < endpoints.size() && remaining > 0.0D; j++) {
-                double moved = heatHandlers.balance(level, endpoints.get(i), endpoints.get(j), remaining);
-                if (moved > 0.0D) {
-                    remaining -= moved;
-                }
+        UUID componentId = thermalComponentId(component, thermalConnections);
+        ThermalPairCursor cursor = normalizeThermalPairCursor(
+                pairCursors.getOrDefault(componentId, ThermalPairCursor.START), endpoints.size());
+        int componentCalls = 0;
+        long pairCount = thermalPairCount(endpoints.size());
+        long visitedPairs = 0L;
+        while (remaining > 0.0D && visitedPairs < pairCount
+                && componentCalls < MAX_THERMAL_PAIR_CALLS_PER_COMPONENT_TICK
+                && tickBudget.tryConsume()) {
+            double moved = heatHandlers.balance(level,
+                    endpoints.get(cursor.first()), endpoints.get(cursor.second()), remaining);
+            if (moved > 0.0D) {
+                remaining -= moved;
+            }
+            cursor = advanceThermalPairCursor(cursor, endpoints.size());
+            componentCalls++;
+            visitedPairs++;
+        }
+        pairCursors.put(componentId, cursor);
+    }
+
+    private static UUID thermalComponentId(List<Integer> component, List<LeadConnection> connections) {
+        UUID smallest = connections.get(component.getFirst()).id();
+        for (int index : component) {
+            UUID candidate = connections.get(index).id();
+            if (candidate.compareTo(smallest) < 0) {
+                smallest = candidate;
             }
         }
+        return smallest;
+    }
+
+    static long thermalPairCount(int endpointCount) {
+        return endpointCount < 2 ? 0L : ((long) endpointCount * (endpointCount - 1L)) / 2L;
+    }
+
+    static ThermalPairCursor normalizeThermalPairCursor(ThermalPairCursor cursor, int endpointCount) {
+        if (endpointCount < 2 || cursor == null || cursor.first() < 0 || cursor.second() <= cursor.first()
+                || cursor.second() >= endpointCount) {
+            return ThermalPairCursor.START;
+        }
+        return cursor;
+    }
+
+    static ThermalPairCursor advanceThermalPairCursor(ThermalPairCursor cursor, int endpointCount) {
+        if (endpointCount < 2) {
+            return ThermalPairCursor.START;
+        }
+        ThermalPairCursor current = normalizeThermalPairCursor(cursor, endpointCount);
+        if (current.second() + 1 < endpointCount) {
+            return new ThermalPairCursor(current.first(), current.second() + 1);
+        }
+        if (current.first() + 2 < endpointCount) {
+            return new ThermalPairCursor(current.first() + 1, current.first() + 2);
+        }
+        return ThermalPairCursor.START;
     }
 
     private static void addThermalEndpoint(ServerLevel level, LeadAnchor anchor, List<LeadAnchor> endpoints,
@@ -1051,5 +1125,31 @@ final class LeadTransferService {
         private final Map<BlockPos, Long> musicPlayerCooldown = new HashMap<>();
         private final Map<BlockPos, Long> musicPlayerFalseSince = new HashMap<>();
         private final Set<BlockPos> musicPlayerWasPlaying = new HashSet<>();
+        private final Map<UUID, ThermalPairCursor> thermalPairCursors = new HashMap<>();
+        private int thermalComponentCursor;
+    }
+
+    record ThermalPairCursor(int first, int second) {
+        static final ThermalPairCursor START = new ThermalPairCursor(0, 1);
+    }
+
+    private static final class ThermalTickBudget {
+        private int remaining;
+
+        private ThermalTickBudget(int maxCalls) {
+            this.remaining = Math.max(0, maxCalls);
+        }
+
+        boolean tryConsume() {
+            if (remaining <= 0) {
+                return false;
+            }
+            remaining--;
+            return true;
+        }
+
+        boolean exhausted() {
+            return remaining <= 0;
+        }
     }
 }

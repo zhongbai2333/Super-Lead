@@ -92,6 +92,8 @@ public record RopeTuning(
         private static final IdentityHashMap<RopeTuning, HashMap<TopologyCacheKey, RopeTuning>> TOPOLOGY_CACHE =
             new IdentityHashMap<>();
     private static RopeTuning localDefaultsCache;
+    private static volatile boolean transparentEditingMode;
+    private static final int TRANSPARENT_EDIT_ALPHA = 0x60;
     private static long localDefaultsRenderEpoch = Long.MIN_VALUE;
     private static long localDefaultsPhysicsEpoch = Long.MIN_VALUE;
 
@@ -316,6 +318,11 @@ public record RopeTuning(
     }
 
     public int baseColor(LeadKind kind) {
+        int configured = configuredBaseColor(kind);
+        return isConfiguredFullyTransparent(kind) ? editingColor(configured) : configured;
+    }
+
+    private int configuredBaseColor(LeadKind kind) {
         return switch (kind) {
             case REDSTONE -> redstoneBaseColor;
             case ENERGY -> energyBaseColor;
@@ -325,10 +332,15 @@ public record RopeTuning(
             case THERMAL -> thermalBaseColor;
             case AE_NETWORK -> aeNetworkBaseColor;
             default -> normalBaseColor;
-        } & 0xFFFFFF;
+        };
     }
 
     public int accentColor(LeadKind kind) {
+        int configured = configuredAccentColor(kind);
+        return isConfiguredFullyTransparent(kind) ? editingColor(configured) : configured;
+    }
+
+    private int configuredAccentColor(LeadKind kind) {
         return switch (kind) {
             case REDSTONE -> redstoneAccentColor;
             case ENERGY -> energyAccentColor;
@@ -338,7 +350,34 @@ public record RopeTuning(
             case THERMAL -> thermalAccentColor;
             case AE_NETWORK -> aeNetworkAccentColor;
             default -> normalAccentColor;
-        } & 0xFFFFFF;
+        };
+    }
+
+    public static void setTransparentEditingMode(boolean enabled) {
+        transparentEditingMode = enabled;
+    }
+
+    static boolean transparentEditingMode() {
+        return transparentEditingMode;
+    }
+
+    static int editingColor(int argb) {
+        if (!transparentEditingMode || (argb >>> 24) != 0) {
+            return argb;
+        }
+        return (TRANSPARENT_EDIT_ALPHA << 24) | (argb & 0xFFFFFF);
+    }
+
+    public boolean isFullyTransparent(LeadKind kind) {
+        return (baseColor(kind) >>> 24) == 0 && (accentColor(kind) >>> 24) == 0;
+    }
+
+    public boolean isConfiguredFullyTransparent(LeadKind kind) {
+        return colorsFullyTransparent(configuredBaseColor(kind), configuredAccentColor(kind));
+    }
+
+    static boolean colorsFullyTransparent(int baseArgb, int accentArgb) {
+        return (baseArgb >>> 24) == 0 && (accentArgb >>> 24) == 0;
     }
 
     public int colorHashFor(LeadKind kind) {

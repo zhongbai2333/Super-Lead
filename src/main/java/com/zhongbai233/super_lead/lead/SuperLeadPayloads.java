@@ -67,12 +67,16 @@ public final class SuperLeadPayloads {
             return false;
         long now = ((ServerLevel) player.level()).getGameTime();
         var playerMap = C2S_LAST_TICK.computeIfAbsent(player.getUUID(), k -> new ConcurrentHashMap<>());
-        Long last = playerMap.put(packetName, now);
-        return last == null || now - last >= C2S_MIN_INTERVAL_TICKS;
+        Long last = playerMap.get(packetName);
+        if (last != null && now - last < C2S_MIN_INTERVAL_TICKS) {
+            return false;
+        }
+        playerMap.put(packetName, now);
+        return true;
     }
 
     public static void register(RegisterPayloadHandlersEvent event) {
-        var registrar = event.registrar("1");
+        var registrar = event.registrar("3");
         registrar
                 .playToServer(UseConnectionAction.TYPE, UseConnectionAction.STREAM_CODEC,
                         SuperLeadPayloads::handleUseConnectionAction)
@@ -165,16 +169,21 @@ public final class SuperLeadPayloads {
     public static void sendToPlayer(ServerPlayer player) {
         // Clear the client's previous dimension cache. Actual rope data is sent by
         // ChunkWatchEvent.Sent after each chunk arrives on the client.
-        PacketDistributor.sendToPlayer(player, ClearRopeCache.INSTANCE);
+        PacketDistributor.sendToPlayer(player,
+            new ClearRopeCache(SuperLeadSavedData.get((ServerLevel) player.level()).syncEpoch()));
     }
 
     public static void sendChunkToPlayer(ServerLevel level, ServerPlayer player, ChunkPos chunk) {
+        SuperLeadSavedData.RopeChunkSnapshot snapshot = SuperLeadSavedData.get(level).snapshotForChunk(chunk);
         PacketDistributor.sendToPlayer(player,
-                new SyncRopeChunk(chunk, SuperLeadSavedData.get(level).connectionsForChunk(chunk)));
+            new SyncRopeChunk(chunk, snapshot.epoch(), snapshot.revision(), snapshot.connections()));
     }
 
     public static void unloadChunkForPlayer(ServerPlayer player, ChunkPos chunk) {
-        PacketDistributor.sendToPlayer(player, new UnloadRopeChunk(chunk));
+        ServerLevel level = (ServerLevel) player.level();
+        SuperLeadSavedData data = SuperLeadSavedData.get(level);
+        PacketDistributor.sendToPlayer(player,
+            new UnloadRopeChunk(chunk, data.syncEpoch(), data.nextSyncRevision()));
     }
 
     /**
@@ -186,7 +195,14 @@ public final class SuperLeadPayloads {
         SuperLeadSavedData data = SuperLeadSavedData.get(level);
         java.util.Set<Long> dirty = data.consumeDirtyChunkKeys();
         for (long chunkKey : dirty) {
-            sendChunkToTracking(level, SuperLeadSavedData.chunkFromKey(chunkKey));
+            try {
+                sendChunkToTracking(level, SuperLeadSavedData.chunkFromKey(chunkKey));
+            } catch (RuntimeException exception) {
+                data.markChunkDirty(chunkKey);
+                com.mojang.logging.LogUtils.getLogger().error(
+                        "Failed to sync dirty Super Lead chunk {}; it will be retried",
+                        SuperLeadSavedData.chunkFromKey(chunkKey), exception);
+            }
         }
     }
 
@@ -207,8 +223,9 @@ public final class SuperLeadPayloads {
     }
 
     private static void sendChunkToTracking(ServerLevel level, ChunkPos chunk) {
+        SuperLeadSavedData.RopeChunkSnapshot snapshot = SuperLeadSavedData.get(level).snapshotForChunk(chunk);
         PacketDistributor.sendToPlayersTrackingChunk(level, chunk,
-                new SyncRopeChunk(chunk, SuperLeadSavedData.get(level).connectionsForChunk(chunk)));
+            new SyncRopeChunk(chunk, snapshot.epoch(), snapshot.revision(), snapshot.connections()));
     }
 
     private static void runOnServer(IPayloadContext context,
@@ -326,6 +343,8 @@ public final class SuperLeadPayloads {
             if (opt.isEmpty())
                 return;
             LeadConnection connection = opt.get();
+            if (!SuperLeadNetwork.canTouchConnectionForAttachment(level, player, connection))
+                return;
             // Snapshot world position before removal so the particle lands where the item
             // was.
             net.minecraft.world.phys.Vec3 particlePos = null;
@@ -364,6 +383,8 @@ public final class SuperLeadPayloads {
             if (opt.isEmpty())
                 return;
             LeadConnection connection = opt.get();
+            if (!SuperLeadNetwork.canTouchConnectionForAttachment(level, player, connection))
+                return;
             SuperLeadNetwork.toggleAttachmentForm(level, connection, payload.attachmentId());
         });
     }
@@ -410,6 +431,8 @@ public final class SuperLeadPayloads {
             LeadConnection connection = opt.get();
             if (connection.kind() != LeadKind.AE_NETWORK)
                 return;
+            if (!SuperLeadNetwork.canTouchConnectionForAttachment(level, player, connection))
+                return;
             for (RopeAttachment attachment : connection.attachments()) {
                 if (!attachment.id().equals(payload.attachmentId()))
                     continue;
@@ -434,6 +457,8 @@ public final class SuperLeadPayloads {
             if (opt.isEmpty())
                 return;
             LeadConnection connection = opt.get();
+            if (!SuperLeadNetwork.canTouchConnectionForAttachment(level, player, connection))
+                return;
             SuperLeadNetwork.updateAttachmentSignText(level, connection, payload.attachmentId(),
                     payload.frontText(), payload.lines());
         });
@@ -450,6 +475,8 @@ public final class SuperLeadPayloads {
             if (opt.isEmpty())
                 return;
             LeadConnection connection = opt.get();
+            if (!SuperLeadNetwork.canTouchConnectionForAttachment(level, player, connection))
+                return;
             if (payload.operation() == UpdateSignAttachmentAppearance.OP_GLOW) {
                 SuperLeadNetwork.applySignGlow(level, connection, payload.attachmentId(), payload.frontText());
             } else if (payload.operation() == UpdateSignAttachmentAppearance.OP_DYE) {
@@ -550,6 +577,15 @@ public final class SuperLeadPayloads {
                     com.mojang.logging.LogUtils.getLogger().info(
                             "[super_lead DEBUG] handleUseConnectionAction SKIP cantTarget action={} connKind={} connTier={}",
                             action.name(), connection.kind(), connection.tier());
+                }
+                return;
+            }
+            if (!SuperLeadNetwork.canUseClientPickedConnection(
+                    level, player, connection, payload.hitPoint(), payload.hitT())) {
+                if (SuperLeadEvents.debugPackets) {
+                    com.mojang.logging.LogUtils.getLogger().info(
+                            "[super_lead DEBUG] handleUseConnectionAction SKIP invalidHit action={} connId={}",
+                            action.name(), payload.connectionId());
                 }
                 return;
             }

@@ -15,10 +15,72 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import org.junit.jupiter.api.Test;
 
 class SuperLeadClientEventsTest {
+    @Test
+    void circularNeighborScanVisitsEveryIndexFromRotatedStart() {
+        assertEquals(3, SuperLeadClientEvents.circularIndex(3, 0, 5));
+        assertEquals(4, SuperLeadClientEvents.circularIndex(3, 1, 5));
+        assertEquals(0, SuperLeadClientEvents.circularIndex(3, 2, 5));
+        assertEquals(1, SuperLeadClientEvents.circularIndex(3, 3, 5));
+        assertEquals(2, SuperLeadClientEvents.circularIndex(3, 4, 5));
+    }
+
+    @Test
+    void neighborPriorityPrefersCloserBoundsRegardlessOfTraversalOrder() {
+        AABB origin = new AABB(0.0D, 0.0D, 0.0D, 1.0D, 1.0D, 1.0D);
+        AABB near = new AABB(0.5D, 0.0D, 0.0D, 1.5D, 1.0D, 1.0D);
+        AABB far = new AABB(3.0D, 0.0D, 0.0D, 4.0D, 1.0D, 1.0D);
+
+        assertTrue(SuperLeadClientEvents.neighborPriorityScore(origin, near)
+                < SuperLeadClientEvents.neighborPriorityScore(origin, far));
+        assertEquals(SuperLeadClientEvents.neighborPriorityScore(origin, near),
+                SuperLeadClientEvents.neighborPriorityScore(near, origin));
+    }
+
+            @Test
+            void neighborPairKeyIsCanonicalAcrossRotatedScans() {
+            assertEquals(SuperLeadClientEvents.neighborPairKey(2, 9),
+                SuperLeadClientEvents.neighborPairKey(9, 2));
+            assertFalse(SuperLeadClientEvents.neighborPairKey(2, 9)
+                == SuperLeadClientEvents.neighborPairKey(2, 10));
+            }
+
+    @Test
+    void transparentEditingModeTracksToolSelectionTransitions() {
+        SuperLeadClientEvents.updateTransparentEditingMode(false);
+
+        assertTrue(SuperLeadClientEvents.updateTransparentEditingMode(true));
+        assertFalse(SuperLeadClientEvents.updateTransparentEditingMode(true));
+        assertTrue(SuperLeadClientEvents.updateTransparentEditingMode(false));
+        assertFalse(SuperLeadClientEvents.updateTransparentEditingMode(false));
+    }
+
+    @Test
+    void mainHandShearsRevealGlobally() {
+        var context = SuperLeadClientEvents.transparentRevealContext(true, true);
+
+        assertTrue(context.globalReveal());
+        assertFalse(context.localReveal());
+    }
+
+    @Test
+    void nonShearsRopeActionsRevealLocally() {
+        var context = SuperLeadClientEvents.transparentRevealContext(false, true);
+
+        assertFalse(context.globalReveal());
+        assertTrue(context.localReveal());
+    }
+
+    @Test
+    void noRopeActionHidesTransparentRopes() {
+        var context = SuperLeadClientEvents.transparentRevealContext(false, false);
+
+        assertFalse(context.revealsAny());
+    }
 
     @Test
     void roundRobinTraversalWrapsWithoutSkippingEntries() {
@@ -120,6 +182,18 @@ class SuperLeadClientEventsTest {
     @Test
     void refinementWaitsUntilStrictlyInsideFineTopologyRange() {
         assertFalse(SuperLeadClientEvents.shouldStartLodRefinement(true, false, 25.0D, 25.0D));
+    }
+
+    @Test
+    void ropeStackContactForcesImmediatePhysicsAtHighLod() {
+        assertTrue(SuperLeadClientEvents.requiresImmediatePhysicsStep(
+                false, true, false, false, 0.0D));
+    }
+
+    @Test
+    void quietIsolatedRopeCanStillUseLodCadence() {
+        assertFalse(SuperLeadClientEvents.requiresImmediatePhysicsStep(
+                false, false, false, false, 0.0D));
     }
 
     @Test

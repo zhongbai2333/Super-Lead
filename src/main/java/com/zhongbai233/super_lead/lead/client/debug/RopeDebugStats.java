@@ -29,6 +29,7 @@ public final class RopeDebugStats {
     public static volatile int meshDirtyFlushed;
     public static volatile int neighborCandidates;
     public static volatile int neighborNarrowPhase;
+    public static volatile int neighborDroppedByCap;
     public static volatile boolean neighborBuildTruncated;
 
     public static volatile int bakeCacheHits;
@@ -70,6 +71,7 @@ public final class RopeDebugStats {
         meshDirtyFlushed = 0;
         neighborCandidates = 0;
         neighborNarrowPhase = 0;
+        neighborDroppedByCap = 0;
         neighborBuildTruncated = false;
         bakeCacheHits = 0;
         bakeCacheMisses = 0;

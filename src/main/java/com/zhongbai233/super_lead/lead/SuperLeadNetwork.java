@@ -5,6 +5,7 @@ import com.zhongbai233.super_lead.preset.PresetServerManager;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -44,6 +45,7 @@ import net.minecraft.world.phys.Vec3;
  * the same package-private helper pattern.
  */
 public final class SuperLeadNetwork {
+    private static final int PERIODIC_VALIDATION_BUDGET = 64;
     public static final double MAX_LEASH_DISTANCE = 12.0D;
     public static final int MAX_LENGTH_UNITS = LeadConnection.MAX_LENGTH_UNITS;
     private static final double SERVER_CONFIRMED_ATTACH_REMOVAL_RADIUS = 2.50D;
@@ -227,16 +229,21 @@ public final class SuperLeadNetwork {
     }
 
     /** Replaces the client-side rope snapshot for one watched chunk. */
-    public static void replaceChunkConnections(Level level, ChunkPos chunk, List<LeadConnection> connections) {
-        LeadClientConnectionCache.replaceChunk(level, chunk, connections);
+    public static ConnectionDelta replaceChunkConnections(Level level, ChunkPos chunk, UUID epoch, long revision,
+            List<LeadConnection> connections) {
+        return LeadClientConnectionCache.replaceChunk(level, chunk, epoch, revision, connections);
     }
 
     /**
      * Drops one watched chunk from the client mirror, preserving ropes referenced
      * by other watched chunks.
      */
-    public static void unloadChunkConnections(Level level, ChunkPos chunk) {
-        LeadClientConnectionCache.unloadChunk(level, chunk);
+    public static ConnectionDelta unloadChunkConnections(Level level, ChunkPos chunk, UUID epoch, long revision) {
+        return LeadClientConnectionCache.unloadChunk(level, chunk, epoch, revision);
+    }
+
+    public static void beginConnectionSync(Level level, UUID epoch) {
+        LeadClientConnectionCache.beginSyncEpoch(level, epoch);
     }
 
     /** Clears all client connection mirrors when leaving a server or client world. */
@@ -248,14 +255,66 @@ public final class SuperLeadNetwork {
     public static void pruneInvalid(Level level) {
         if (!level.isClientSide() && level instanceof ServerLevel serverLevel) {
             SuperLeadSavedData data = SuperLeadSavedData.get(serverLevel);
+            int budget = periodicValidationBudget(data.connectionCount());
+            pruneInvalidCandidates(serverLevel, data, data.pollValidationBatch(budget));
+        }
+
+        // Clients receive authoritative chunk-scoped rope data from the server. Do not
+        // prune here: a cross-chunk rope can reference an endpoint chunk that has not
+        // streamed in yet.
+    }
+
+    static int periodicValidationBudget(int connectionCount) {
+        if (connectionCount <= 0) {
+            return 0;
+        }
+        return Math.min(PERIODIC_VALIDATION_BUDGET, Math.max(1, (connectionCount + 19) / 20));
+    }
+
+    public static void pruneInvalidNearBlock(ServerLevel level, BlockPos changedPos) {
+        if (level == null || changedPos == null) {
+            return;
+        }
+        SuperLeadSavedData data = SuperLeadSavedData.get(level);
+        LinkedHashMap<UUID, LeadConnection> candidates = new LinkedHashMap<>();
+        int centerX = changedPos.getX() >> 4;
+        int centerZ = changedPos.getZ() >> 4;
+        for (int chunkX = centerX - 1; chunkX <= centerX + 1; chunkX++) {
+            for (int chunkZ = centerZ - 1; chunkZ <= centerZ + 1; chunkZ++) {
+                for (LeadConnection connection : data.connectionsForChunk(new ChunkPos(chunkX, chunkZ))) {
+                    if (blockChangeCanAffectConnection(changedPos, connection)) {
+                        candidates.put(connection.id(), connection);
+                    }
+                }
+            }
+        }
+        pruneInvalidCandidates(level, data, candidates.values());
+    }
+
+    static boolean blockChangeCanAffectConnection(BlockPos changedPos, LeadConnection connection) {
+        if (changedPos == null || connection == null) {
+            return false;
+        }
+        LeadAnchor from = connection.from();
+        LeadAnchor to = connection.to();
+        return changedPos.equals(from.pos())
+                || changedPos.equals(to.pos())
+                || changedPos.equals(from.outsideSurfacePos())
+                || changedPos.equals(to.outsideSurfacePos());
+    }
+
+    private static void pruneInvalidCandidates(ServerLevel serverLevel, SuperLeadSavedData data,
+            Iterable<LeadConnection> candidates) {
             List<LeadConnection> invalidConnections = new ArrayList<>();
-            for (LeadConnection connection : data.connectionsView()) {
-                if (invalid(level, connection)) {
+            List<LeadConnection> checkedConnections = new ArrayList<>();
+            for (LeadConnection connection : candidates) {
+                checkedConnections.add(connection);
+                if (invalid(serverLevel, connection)) {
                     invalidConnections.add(connection);
                 }
             }
             if (invalidConnections.isEmpty()) {
-                ensureFenceKnots(serverLevel);
+                ensureFenceKnots(serverLevel, checkedConnections);
                 return;
             }
 
@@ -265,38 +324,53 @@ public final class SuperLeadNetwork {
             }
             boolean removed = data.removeIf(connection -> invalidIds.contains(connection.id()));
             if (!removed) {
-                ensureFenceKnots(serverLevel);
+                ensureFenceKnots(serverLevel, checkedConnections);
                 return;
             }
 
             for (LeadConnection connection : invalidConnections) {
-                Vec3 midpoint = midpoint(level, connection);
+                Vec3 midpoint = midpoint(serverLevel, connection);
                 dropConnectionDrops(serverLevel, connection, midpoint, null);
                 cleanupFenceKnot(serverLevel, connection.from());
                 cleanupFenceKnot(serverLevel, connection.to());
                 notifyRedstoneChange(serverLevel, connection);
             }
-            ensureFenceKnots(serverLevel);
+            ensureFenceKnots(serverLevel, checkedConnections);
             SuperLeadPayloads.sendDirtyToDimension(serverLevel);
             PresetServerManager.syncDimensionPresets(serverLevel);
-            return;
-        }
-
-        // Clients receive authoritative chunk-scoped rope data from the server. Do not
-        // prune here:
-        // a cross-chunk rope can reference an endpoint chunk that has not streamed in
-        // yet, and
-        // treating that unloaded endpoint as air would incorrectly delete a valid
-        // visible rope.
     }
 
     private static boolean invalid(Level level, LeadConnection connection) {
+        if (level instanceof ServerLevel serverLevel
+                && !validationChunksLoaded(connection,
+                pos -> isBlockChunkLoaded(serverLevel, pos))) {
+            // An unloaded endpoint is unknown, not invalid. Never force-load chunks from
+            // the periodic validation sweep; the rope will be checked again after its
+            // endpoint chunks are naturally loaded.
+            return false;
+        }
         LeadEndpointLayout.Endpoints endpoints = endpoints(level, connection);
         return level.getBlockState(connection.from().pos()).isAir()
                 || level.getBlockState(connection.to().pos()).isAir()
                 || endpoints.from().distanceTo(endpoints.to()) > maxLeashDistance(connection)
                 || anchorFaceBlocked(level, connection.from())
                 || anchorFaceBlocked(level, connection.to());
+    }
+
+    static boolean validationChunksLoaded(LeadConnection connection, Predicate<BlockPos> isLoaded) {
+        if (connection == null || isLoaded == null) {
+            return false;
+        }
+        LeadAnchor from = connection.from();
+        LeadAnchor to = connection.to();
+        return isLoaded.test(from.pos())
+                && isLoaded.test(to.pos())
+                && isLoaded.test(from.outsideSurfacePos())
+                && isLoaded.test(to.outsideSurfacePos());
+    }
+
+    private static boolean isBlockChunkLoaded(ServerLevel level, BlockPos pos) {
+        return level.getChunkSource().getChunkNow(pos.getX() >> 4, pos.getZ() >> 4) != null;
     }
 
     /**
@@ -528,15 +602,15 @@ public final class SuperLeadNetwork {
         Vec3 a = endpoints.from();
         Vec3 b = endpoints.to();
 
-        // 1. Hit point must be in front of player, and player must be within
-        // reasonable distance of at least one rope endpoint.
+        // 1. Hit point must be in front of and within interaction reach of the
+        // player. Checking the claimed point instead of the endpoints keeps long
+        // ropes editable from their middle while rejecting remote UUID actions.
         Vec3 toHit = claimedHitPoint.subtract(origin);
         if (toHit.dot(player.getViewVector(1.0F)) < -0.5D) {
             return false;
         }
         double maxReach = serverConfirmedPickReach();
-        if (origin.distanceToSqr(a) > maxReach * maxReach
-                && origin.distanceToSqr(b) > maxReach * maxReach) {
+        if (toHit.lengthSqr() > maxReach * maxReach) {
             return false;
         }
 
@@ -1442,14 +1516,25 @@ public final class SuperLeadNetwork {
         return point.distanceToSqr(closest);
     }
 
-    private static void ensureFenceKnots(ServerLevel level) {
-        for (LeadConnection connection : SuperLeadSavedData.get(level).connectionsView()) {
+    private static void ensureFenceKnots(ServerLevel level, Iterable<LeadConnection> connections) {
+        Set<LeadAnchor> ensured = new HashSet<>();
+        for (LeadConnection connection : connections) {
+            if (!SuperLeadSavedData.get(level).find(connection.id()).isPresent()) {
+                continue;
+            }
+            if (ensured.add(connection.from().logicalPort())) {
             ensureFenceKnot(level, connection.from());
+            }
+            if (ensured.add(connection.to().logicalPort())) {
             ensureFenceKnot(level, connection.to());
+            }
         }
     }
 
     private static void ensureFenceKnot(ServerLevel level, LeadAnchor anchor) {
+        if (!isBlockChunkLoaded(level, anchor.pos())) {
+            return;
+        }
         if (!(level.getBlockState(anchor.pos()).getBlock() instanceof FenceBlock)) {
             return;
         }
@@ -1459,6 +1544,9 @@ public final class SuperLeadNetwork {
     }
 
     private static void cleanupFenceKnot(ServerLevel level, LeadAnchor anchor) {
+        if (!isBlockChunkLoaded(level, anchor.pos())) {
+            return;
+        }
         if (!(level.getBlockState(anchor.pos()).getBlock() instanceof FenceBlock)) {
             return;
         }

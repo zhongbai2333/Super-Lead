@@ -16,9 +16,35 @@ import java.util.Set;
 import java.util.UUID;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.phys.AABB;
+import net.minecraft.client.renderer.chunk.ChunkSectionLayer;
 import org.junit.jupiter.api.Test;
 
 class StaticRopeChunkRegistryTest {
+    @Test
+    void configuredTransparentEditingRopeNeverEntersChunkMesh() {
+        assertTrue(StaticRopeChunkRegistry.skipStaticMeshForTransparency(true, false));
+    }
+
+    @Test
+    void currentlyInvisibleRopeNeverEntersChunkMesh() {
+        assertTrue(StaticRopeChunkRegistry.skipStaticMeshForTransparency(false, true));
+    }
+
+    @Test
+    void ordinaryVisibleRopeRemainsEligibleForChunkMesh() {
+        assertFalse(StaticRopeChunkRegistry.skipStaticMeshForTransparency(false, false));
+    }
+
+    @Test
+    void ropeColorsArePartitionedByAlphaIntoChunkLayers() {
+        assertTrue(RopeSectionMeshDriver.colorBelongsToLayer(0xFFFFFFFF, ChunkSectionLayer.SOLID));
+        assertFalse(RopeSectionMeshDriver.colorBelongsToLayer(0xFFFFFFFF, ChunkSectionLayer.TRANSLUCENT));
+        assertFalse(RopeSectionMeshDriver.colorBelongsToLayer(0x80FFFFFF, ChunkSectionLayer.SOLID));
+        assertTrue(RopeSectionMeshDriver.colorBelongsToLayer(0x80FFFFFF, ChunkSectionLayer.TRANSLUCENT));
+        assertFalse(RopeSectionMeshDriver.colorBelongsToLayer(0x00FFFFFF, ChunkSectionLayer.SOLID));
+        assertFalse(RopeSectionMeshDriver.colorBelongsToLayer(0x00FFFFFF, ChunkSectionLayer.TRANSLUCENT));
+    }
+
     @Test
     void pureClaimExpansionCanBeDebouncedIntoOneRebuild() {
         UUID existing = UUID.randomUUID();
@@ -176,8 +202,8 @@ class StaticRopeChunkRegistryTest {
 
     @Test
     void repeatedFramesDoNotCountTheSamePhysicsSample() {
-        var first = StaticRopeChunkRegistry.advanceExitDebounce(null, 100L, 1.0e-4D);
-        var repeated = StaticRopeChunkRegistry.advanceExitDebounce(first, 100L, 1.0e-4D);
+        var first = StaticRopeChunkRegistry.advanceExitDebounce(null, 100L, 1.0e-5D);
+        var repeated = StaticRopeChunkRegistry.advanceExitDebounce(first, 100L, 1.0e-5D);
 
         assertSame(first, repeated);
         assertEquals(1, repeated.nonQuietSteps());
@@ -185,9 +211,9 @@ class StaticRopeChunkRegistryTest {
 
     @Test
     void distinctPhysicsSamplesAccumulateExitEvidence() {
-        var first = StaticRopeChunkRegistry.advanceExitDebounce(null, 100L, 1.0e-4D);
-        var second = StaticRopeChunkRegistry.advanceExitDebounce(first, 104L, 1.0e-4D);
-        var third = StaticRopeChunkRegistry.advanceExitDebounce(second, 108L, 1.0e-4D);
+        var first = StaticRopeChunkRegistry.advanceExitDebounce(null, 100L, 1.0e-5D);
+        var second = StaticRopeChunkRegistry.advanceExitDebounce(first, 104L, 1.0e-5D);
+        var third = StaticRopeChunkRegistry.advanceExitDebounce(second, 108L, 1.0e-5D);
 
         assertEquals(3, third.nonQuietSteps());
         assertEquals(108L, third.lastSteppedTick());
@@ -195,9 +221,9 @@ class StaticRopeChunkRegistryTest {
 
     @Test
     void highLodFreezeRequiresThreeDistinctLowMotionSamples() {
-        var first = StaticRopeChunkRegistry.advanceExitDebounce(null, 100L, 1.0e-4D);
-        var second = StaticRopeChunkRegistry.advanceExitDebounce(first, 104L, 1.0e-4D);
-        var third = StaticRopeChunkRegistry.advanceExitDebounce(second, 108L, 1.0e-4D);
+        var first = StaticRopeChunkRegistry.advanceExitDebounce(null, 100L, 1.0e-5D);
+        var second = StaticRopeChunkRegistry.advanceExitDebounce(first, 104L, 1.0e-5D);
+        var third = StaticRopeChunkRegistry.advanceExitDebounce(second, 108L, 1.0e-5D);
 
         assertEquals(1, first.nonQuietSteps());
         assertEquals(2, second.nonQuietSteps());
@@ -206,10 +232,10 @@ class StaticRopeChunkRegistryTest {
 
     @Test
     void sparseLowMotionSamplesAreDeduplicatedForHighLodEntry() {
-        var first = StaticRopeChunkRegistry.advanceExitDebounce(null, 100L, 1.0e-4D);
-        var repeatedFrame = StaticRopeChunkRegistry.advanceExitDebounce(first, 100L, 1.0e-4D);
-        var second = StaticRopeChunkRegistry.advanceExitDebounce(repeatedFrame, 104L, 1.0e-4D);
-        var third = StaticRopeChunkRegistry.advanceExitDebounce(second, 108L, 1.0e-4D);
+        var first = StaticRopeChunkRegistry.advanceExitDebounce(null, 100L, 1.0e-5D);
+        var repeatedFrame = StaticRopeChunkRegistry.advanceExitDebounce(first, 100L, 1.0e-5D);
+        var second = StaticRopeChunkRegistry.advanceExitDebounce(repeatedFrame, 104L, 1.0e-5D);
+        var third = StaticRopeChunkRegistry.advanceExitDebounce(second, 108L, 1.0e-5D);
 
         assertEquals(1, repeatedFrame.nonQuietSteps());
         assertEquals(3, third.nonQuietSteps());
@@ -220,6 +246,13 @@ class StaticRopeChunkRegistryTest {
         var previous = new StaticRopeChunkRegistry.ExitDebounce(100L, 1);
 
         assertNull(StaticRopeChunkRegistry.advanceExitDebounce(previous, 104L, 5.0e-4D));
+    }
+
+    @Test
+    void turningPointMotionCannotAccumulateChunkMeshEntryEvidence() {
+        assertNull(StaticRopeChunkRegistry.advanceExitDebounce(null, 100L, 1.0e-4D));
+        assertNull(StaticRopeChunkRegistry.advanceExitDebounce(null, 104L, 3.0e-4D));
+        assertNull(StaticRopeChunkRegistry.advanceExitDebounce(null, 108L, 4.99e-4D));
     }
 
     @Test
@@ -242,7 +275,7 @@ class StaticRopeChunkRegistryTest {
     @Test
     void rewoundStepTickStartsFreshEvidence() {
         var previous = new StaticRopeChunkRegistry.ExitDebounce(100L, 2);
-        var reset = StaticRopeChunkRegistry.advanceExitDebounce(previous, 50L, 1.0e-4D);
+        var reset = StaticRopeChunkRegistry.advanceExitDebounce(previous, 50L, 1.0e-5D);
 
         assertEquals(1, reset.nonQuietSteps());
         assertEquals(50L, reset.lastSteppedTick());

@@ -3,6 +3,7 @@ package com.zhongbai233.super_lead.lead;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
 
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
@@ -30,6 +31,31 @@ class LeadTransferServiceTest {
         assertSame(List.of(), LeadTransferService.unvisitedBranches(List.of(), Set.of()));
         assertSame(List.of(), LeadTransferService.unvisitedBranches(
                 List.of(connection), Set.of(connection.id())));
+    }
+
+    @Test
+    void thermalPairCursorVisitsEveryPairBeforeWrapping() {
+        int endpoints = 4;
+        var cursor = LeadTransferService.ThermalPairCursor.START;
+        Set<String> pairs = new LinkedHashSet<>();
+        long pairCount = LeadTransferService.thermalPairCount(endpoints);
+
+        for (long i = 0; i < pairCount; i++) {
+            pairs.add(cursor.first() + ":" + cursor.second());
+            cursor = LeadTransferService.advanceThermalPairCursor(cursor, endpoints);
+        }
+
+        assertEquals(Set.of("0:1", "0:2", "0:3", "1:2", "1:3", "2:3"), pairs);
+        assertEquals(LeadTransferService.ThermalPairCursor.START, cursor);
+    }
+
+    @Test
+    void thermalPairCursorResetsWhenEndpointCountShrinks() {
+        var stale = new LeadTransferService.ThermalPairCursor(3, 5);
+
+        assertEquals(LeadTransferService.ThermalPairCursor.START,
+                LeadTransferService.normalizeThermalPairCursor(stale, 3));
+        assertEquals(0L, LeadTransferService.thermalPairCount(1));
     }
 
     private static LeadConnection connection(String id, int x) {

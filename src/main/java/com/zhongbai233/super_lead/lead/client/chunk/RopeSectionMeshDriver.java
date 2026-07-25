@@ -26,6 +26,13 @@ public final class RopeSectionMeshDriver {
      */
     private static final Identifier NEUTRAL_UV_SPRITE_ID = Identifier.withDefaultNamespace("block/white_stained_glass");
     private static final float ATTACHMENT_LINE_HALF_THICKNESS = 0.012F;
+    // Rope face shading is already baked into LeashBuilder.ropeColor(). Chunk
+    // terrain shaders also shade from the submitted normal; using geometric rope
+    // normals would apply a second directional-light pass that dynamic ropes do not
+    // receive. A stable upward normal keeps chunk-mesh handoff lighting consistent.
+    private static final float ROPE_LIGHT_NORMAL_X = 0.0F;
+    private static final float ROPE_LIGHT_NORMAL_Y = 1.0F;
+    private static final float ROPE_LIGHT_NORMAL_Z = 0.0F;
     private static volatile long debugCallbacks;
     private static volatile long debugHits;
 
@@ -70,9 +77,15 @@ public final class RopeSectionMeshDriver {
         final List<RopeSectionSnapshot> capturedSnaps = snaps;
 
         event.addRenderer(ctx -> {
-            VertexConsumer vc = ctx.getOrCreateChunkBuffer(ChunkSectionLayer.SOLID);
+            VertexConsumer solid = ctx.getOrCreateChunkBuffer(ChunkSectionLayer.SOLID);
             for (RopeSectionSnapshot s : capturedSnaps) {
-                emit(vc, s, ox, oy, oz, u, v);
+                emit(solid, s, ox, oy, oz, u, v, ChunkSectionLayer.SOLID, true);
+            }
+            if (hasColorsForLayer(capturedSnaps, ChunkSectionLayer.TRANSLUCENT)) {
+                VertexConsumer translucent = ctx.getOrCreateChunkBuffer(ChunkSectionLayer.TRANSLUCENT);
+                for (RopeSectionSnapshot s : capturedSnaps) {
+                    emit(translucent, s, ox, oy, oz, u, v, ChunkSectionLayer.TRANSLUCENT, false);
+                }
             }
         });
         registry.markSectionBuildObserved(key, build.generation(), currentTick());
@@ -105,8 +118,9 @@ public final class RopeSectionMeshDriver {
         }
     }
 
-        private static void emit(VertexConsumer vc, RopeSectionSnapshot s,
-            double ox, double oy, double oz, float u, float v) {
+    private static void emit(VertexConsumer vc, RopeSectionSnapshot s,
+            double ox, double oy, double oz, float u, float v,
+            ChunkSectionLayer layer, boolean emitAttachmentLines) {
         int last = s.nodeCount - 1;
         int start = Math.max(0, Math.min(s.segmentStart, last));
         int end = Math.max(start, Math.min(s.segmentEndExclusive, last));
@@ -138,43 +152,38 @@ public final class RopeSectionMeshDriver {
             int colorBase = i * 4;
             int lightA = s.nodeLight[i];
             int lightB = s.nodeLight[j];
-            Normal sideNormal = normal(
-                    sideAx + sideBx, sideAy + sideBy, sideAz + sideBz,
-                    1.0F, 0.0F, 0.0F);
-            Normal upNormal = normal(
-                    upAx + upBx, upAy + upBy, upAz + upBz,
-                    0.0F, 1.0F, 0.0F);
-
             // face 0 (+side)
             quad(vc, aPx, aPy, aPz, lightA, bPx, bPy, bPz, lightB, bQx, bQy, bQz, lightB, aQx, aQy, aQz, lightA,
-                    s.segmentColorARGB[colorBase], u, v, sideNormal.x, sideNormal.y, sideNormal.z);
+                    s.segmentColorARGB[colorBase], u, v, layer);
             // face 1 (-up)
             quad(vc, aQx, aQy, aQz, lightA, bQx, bQy, bQz, lightB, bRx, bRy, bRz, lightB, aRx, aRy, aRz, lightA,
-                    s.segmentColorARGB[colorBase + 1], u, v, -upNormal.x, -upNormal.y, -upNormal.z);
+                    s.segmentColorARGB[colorBase + 1], u, v, layer);
             // face 2 (-side)
             quad(vc, aRx, aRy, aRz, lightA, bRx, bRy, bRz, lightB, bSx, bSy, bSz, lightB, aSx, aSy, aSz, lightA,
-                    s.segmentColorARGB[colorBase + 2], u, v, -sideNormal.x, -sideNormal.y, -sideNormal.z);
+                    s.segmentColorARGB[colorBase + 2], u, v, layer);
             // face 3 (+up)
             quad(vc, aSx, aSy, aSz, lightA, bSx, bSy, bSz, lightB, bPx, bPy, bPz, lightB, aPx, aPy, aPz, lightA,
-                    s.segmentColorARGB[colorBase + 3], u, v, upNormal.x, upNormal.y, upNormal.z);
+                    s.segmentColorARGB[colorBase + 3], u, v, layer);
         }
 
         // End cap at the first node (only if this section contains it).
         if (s.segmentStart == 0 && last >= 0) {
             int idx = 0;
-            emitEndCap(vc, s, idx, ox, oy, oz, u, v, nodeScale(s, idx), false);
+            emitEndCap(vc, s, idx, ox, oy, oz, u, v, nodeScale(s, idx), false, layer);
         }
         // End cap at the last node (only if this section contains it).
         if (s.segmentEndExclusive >= last && last >= 0) {
             int idx = last;
-            emitEndCap(vc, s, idx, ox, oy, oz, u, v, nodeScale(s, idx), true);
+            emitEndCap(vc, s, idx, ox, oy, oz, u, v, nodeScale(s, idx), true, layer);
         }
 
-        for (RopeSectionLine line : s.attachmentLines) {
-            emitLineQuads(vc,
-                    localCoordinate(line.ax(), ox), localCoordinate(line.ay(), oy), localCoordinate(line.az(), oz),
-                    localCoordinate(line.bx(), ox), localCoordinate(line.by(), oy), localCoordinate(line.bz(), oz),
-                    line.color(), line.light(), u, v);
+        if (emitAttachmentLines) {
+            for (RopeSectionLine line : s.attachmentLines) {
+                emitLineQuads(vc,
+                        localCoordinate(line.ax(), ox), localCoordinate(line.ay(), oy), localCoordinate(line.az(), oz),
+                        localCoordinate(line.bx(), ox), localCoordinate(line.by(), oy), localCoordinate(line.bz(), oz),
+                        line.color(), line.light(), u, v);
+            }
         }
     }
 
@@ -189,7 +198,8 @@ public final class RopeSectionMeshDriver {
     }
 
     private static void emitEndCap(VertexConsumer vc, RopeSectionSnapshot s, int idx,
-            double ox, double oy, double oz, float u, float v, float scale, boolean flipWinding) {
+            double ox, double oy, double oz, float u, float v, float scale, boolean flipWinding,
+            ChunkSectionLayer layer) {
         float px = localCoordinate(s.x[idx], ox);
         float py = localCoordinate(s.y[idx], oy);
         float pz = localCoordinate(s.z[idx], oz);
@@ -199,52 +209,34 @@ public final class RopeSectionMeshDriver {
         float sux = s.ux[idx] * scale;
         float suy = s.uy[idx] * scale;
         float suz = s.uz[idx] * scale;
-        Normal capNormal = endCapNormal(s, idx, flipWinding);
         int light = s.nodeLight[idx];
         // End cap color: use the first segment's face color slightly darkened.
         int colorBase = Math.min(idx, s.segmentColorARGB.length / 4 - 1) * 4;
         int capColor = s.segmentColorARGB.length > 0
                 ? s.segmentColorARGB[Math.min(colorBase, s.segmentColorARGB.length - 1)]
                 : 0xFF888888;
+        if (!colorBelongsToLayer(capColor, layer)) {
+            return;
+        }
         if (flipWinding) {
             vertex(vc, px + ssx + sux, py + ssy + suy, pz + ssz + suz, capColor, u, v, light,
-                    capNormal.x, capNormal.y, capNormal.z); // P
+                    ROPE_LIGHT_NORMAL_X, ROPE_LIGHT_NORMAL_Y, ROPE_LIGHT_NORMAL_Z); // P
             vertex(vc, px + ssx - sux, py + ssy - suy, pz + ssz - suz, capColor, u, v, light,
-                    capNormal.x, capNormal.y, capNormal.z); // Q
+                    ROPE_LIGHT_NORMAL_X, ROPE_LIGHT_NORMAL_Y, ROPE_LIGHT_NORMAL_Z); // Q
             vertex(vc, px - ssx - sux, py - ssy - suy, pz - ssz - suz, capColor, u, v, light,
-                    capNormal.x, capNormal.y, capNormal.z); // R
+                    ROPE_LIGHT_NORMAL_X, ROPE_LIGHT_NORMAL_Y, ROPE_LIGHT_NORMAL_Z); // R
             vertex(vc, px - ssx + sux, py - ssy + suy, pz - ssz + suz, capColor, u, v, light,
-                    capNormal.x, capNormal.y, capNormal.z); // S
+                    ROPE_LIGHT_NORMAL_X, ROPE_LIGHT_NORMAL_Y, ROPE_LIGHT_NORMAL_Z); // S
         } else {
             vertex(vc, px - ssx + sux, py - ssy + suy, pz - ssz + suz, capColor, u, v, light,
-                    capNormal.x, capNormal.y, capNormal.z); // S
+                    ROPE_LIGHT_NORMAL_X, ROPE_LIGHT_NORMAL_Y, ROPE_LIGHT_NORMAL_Z); // S
             vertex(vc, px - ssx - sux, py - ssy - suy, pz - ssz - suz, capColor, u, v, light,
-                    capNormal.x, capNormal.y, capNormal.z); // R
+                    ROPE_LIGHT_NORMAL_X, ROPE_LIGHT_NORMAL_Y, ROPE_LIGHT_NORMAL_Z); // R
             vertex(vc, px + ssx - sux, py + ssy - suy, pz + ssz - suz, capColor, u, v, light,
-                    capNormal.x, capNormal.y, capNormal.z); // Q
+                    ROPE_LIGHT_NORMAL_X, ROPE_LIGHT_NORMAL_Y, ROPE_LIGHT_NORMAL_Z); // Q
             vertex(vc, px + ssx + sux, py + ssy + suy, pz + ssz + suz, capColor, u, v, light,
-                    capNormal.x, capNormal.y, capNormal.z); // P
+                    ROPE_LIGHT_NORMAL_X, ROPE_LIGHT_NORMAL_Y, ROPE_LIGHT_NORMAL_Z); // P
         }
-    }
-
-    private static Normal endCapNormal(RopeSectionSnapshot s, int idx, boolean endCap) {
-        int other = endCap ? idx - 1 : idx + 1;
-        if (other < 0 || other >= s.nodeCount) {
-            return new Normal(0.0F, 1.0F, 0.0F);
-        }
-        float nx = (float) (s.x[idx] - s.x[other]);
-        float ny = (float) (s.y[idx] - s.y[other]);
-        float nz = (float) (s.z[idx] - s.z[other]);
-        return normal(nx, ny, nz, 0.0F, 1.0F, 0.0F);
-    }
-
-    private static Normal normal(float x, float y, float z, float fallbackX, float fallbackY, float fallbackZ) {
-        float lenSqr = x * x + y * y + z * z;
-        if (lenSqr < 1.0e-10F) {
-            return new Normal(fallbackX, fallbackY, fallbackZ);
-        }
-        float invLen = (float) (1.0D / Math.sqrt(lenSqr));
-        return new Normal(x * invLen, y * invLen, z * invLen);
     }
 
     private static void quad(VertexConsumer vc,
@@ -253,13 +245,35 @@ public final class RopeSectionMeshDriver {
             float x2, float y2, float z2, int l2,
             float x3, float y3, float z3, int l3,
             int color, float u, float v,
-            float nx, float ny, float nz) {
+            ChunkSectionLayer layer) {
+        if (!colorBelongsToLayer(color, layer)) {
+            return;
+        }
         // Reversed winding keeps the generated faces outward-facing in the chunk
         // buffer.
-        vertex(vc, x3, y3, z3, color, u, v, l3, nx, ny, nz);
-        vertex(vc, x2, y2, z2, color, u, v, l2, nx, ny, nz);
-        vertex(vc, x1, y1, z1, color, u, v, l1, nx, ny, nz);
-        vertex(vc, x0, y0, z0, color, u, v, l0, nx, ny, nz);
+        vertex(vc, x3, y3, z3, color, u, v, l3, ROPE_LIGHT_NORMAL_X, ROPE_LIGHT_NORMAL_Y, ROPE_LIGHT_NORMAL_Z);
+        vertex(vc, x2, y2, z2, color, u, v, l2, ROPE_LIGHT_NORMAL_X, ROPE_LIGHT_NORMAL_Y, ROPE_LIGHT_NORMAL_Z);
+        vertex(vc, x1, y1, z1, color, u, v, l1, ROPE_LIGHT_NORMAL_X, ROPE_LIGHT_NORMAL_Y, ROPE_LIGHT_NORMAL_Z);
+        vertex(vc, x0, y0, z0, color, u, v, l0, ROPE_LIGHT_NORMAL_X, ROPE_LIGHT_NORMAL_Y, ROPE_LIGHT_NORMAL_Z);
+    }
+
+    static boolean colorBelongsToLayer(int argb, ChunkSectionLayer layer) {
+        int alpha = argb >>> 24;
+        if (alpha == 0) {
+            return false;
+        }
+        return layer == ChunkSectionLayer.SOLID ? alpha == 255 : layer == ChunkSectionLayer.TRANSLUCENT && alpha < 255;
+    }
+
+    static boolean hasColorsForLayer(List<RopeSectionSnapshot> snapshots, ChunkSectionLayer layer) {
+        for (RopeSectionSnapshot snapshot : snapshots) {
+            for (int color : snapshot.segmentColorARGB) {
+                if (colorBelongsToLayer(color, layer)) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     private static void vertex(VertexConsumer vc, float x, float y, float z, int color,
@@ -268,7 +282,7 @@ public final class RopeSectionMeshDriver {
                 .setColor(color)
                 .setUv(u, v)
                 .setLight(light)
-                .setNormal(nx, ny, nz);
+            .setNormal(ROPE_LIGHT_NORMAL_X, ROPE_LIGHT_NORMAL_Y, ROPE_LIGHT_NORMAL_Z);
     }
 
     private static void emitLineQuads(VertexConsumer vc,
@@ -312,29 +326,22 @@ public final class RopeSectionMeshDriver {
             float bx, float by, float bz,
             float nx, float ny, float nz,
             int color, int light, float u, float v) {
-        Normal faceNormal = normal(
-                (by - ay) * nz - (bz - az) * ny,
-                (bz - az) * nx - (bx - ax) * nz,
-                (bx - ax) * ny - (by - ay) * nx,
-                0.0F, 1.0F, 0.0F);
         vertex(vc, ax - nx, ay - ny, az - nz, color, u, v, light,
-                faceNormal.x, faceNormal.y, faceNormal.z);
+                ROPE_LIGHT_NORMAL_X, ROPE_LIGHT_NORMAL_Y, ROPE_LIGHT_NORMAL_Z);
         vertex(vc, bx - nx, by - ny, bz - nz, color, u, v, light,
-                faceNormal.x, faceNormal.y, faceNormal.z);
+                ROPE_LIGHT_NORMAL_X, ROPE_LIGHT_NORMAL_Y, ROPE_LIGHT_NORMAL_Z);
         vertex(vc, bx + nx, by + ny, bz + nz, color, u, v, light,
-                faceNormal.x, faceNormal.y, faceNormal.z);
+                ROPE_LIGHT_NORMAL_X, ROPE_LIGHT_NORMAL_Y, ROPE_LIGHT_NORMAL_Z);
         vertex(vc, ax + nx, ay + ny, az + nz, color, u, v, light,
-                faceNormal.x, faceNormal.y, faceNormal.z);
+                ROPE_LIGHT_NORMAL_X, ROPE_LIGHT_NORMAL_Y, ROPE_LIGHT_NORMAL_Z);
         vertex(vc, ax + nx, ay + ny, az + nz, color, u, v, light,
-                -faceNormal.x, -faceNormal.y, -faceNormal.z);
+                ROPE_LIGHT_NORMAL_X, ROPE_LIGHT_NORMAL_Y, ROPE_LIGHT_NORMAL_Z);
         vertex(vc, bx + nx, by + ny, bz + nz, color, u, v, light,
-                -faceNormal.x, -faceNormal.y, -faceNormal.z);
+                ROPE_LIGHT_NORMAL_X, ROPE_LIGHT_NORMAL_Y, ROPE_LIGHT_NORMAL_Z);
         vertex(vc, bx - nx, by - ny, bz - nz, color, u, v, light,
-                -faceNormal.x, -faceNormal.y, -faceNormal.z);
+                ROPE_LIGHT_NORMAL_X, ROPE_LIGHT_NORMAL_Y, ROPE_LIGHT_NORMAL_Z);
         vertex(vc, ax - nx, ay - ny, az - nz, color, u, v, light,
-                -faceNormal.x, -faceNormal.y, -faceNormal.z);
+                ROPE_LIGHT_NORMAL_X, ROPE_LIGHT_NORMAL_Y, ROPE_LIGHT_NORMAL_Z);
     }
 
-    private record Normal(float x, float y, float z) {
-    }
 }

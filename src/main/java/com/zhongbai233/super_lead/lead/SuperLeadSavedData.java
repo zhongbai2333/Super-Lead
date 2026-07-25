@@ -4,11 +4,13 @@ import com.mojang.serialization.Codec;
 import com.mojang.serialization.codecs.RecordCodecBuilder;
 import com.zhongbai233.super_lead.Super_lead;
 import java.util.AbstractCollection;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.EnumMap;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -61,6 +63,11 @@ public final class SuperLeadSavedData extends SavedData {
     private final Map<Long, List<LeadConnection>> ownedByChunk = new HashMap<>();
     private final Map<Long, Set<UUID>> refsByChunk = new HashMap<>();
     private final Set<Long> dirtyChunkKeys = new LinkedHashSet<>();
+    private final ArrayDeque<UUID> validationQueue = new ArrayDeque<>();
+    private final Set<UUID> validationQueued = new HashSet<>();
+    private final UUID syncEpoch = UUID.randomUUID();
+    /** Monotonic ordering for chunk snapshots and unload tombstones in this epoch. */
+    private long syncRevision;
     /**
      * Monotonically increasing counter bumped on every add/remove/update.
      * Tick handlers can compare against a cached value to skip index rebuilds
@@ -87,6 +94,7 @@ public final class SuperLeadSavedData extends SavedData {
                 stored.coveredChunks.add(ownerChunk);
                 indexByKind(connection);
                 ownedByChunk.computeIfAbsent(ownerChunk, key -> new ArrayList<>()).add(connection);
+                enqueueValidation(connection.id());
             }
         }
         for (RopeChunkBucket bucket : buckets) {
@@ -156,6 +164,10 @@ public final class SuperLeadSavedData extends SavedData {
         };
     }
 
+    int connectionCount() {
+        return byId.size();
+    }
+
     public List<LeadConnection> connectionsOfKind(LeadKind kind) {
         LinkedHashMap<UUID, LeadConnection> indexed = byKind.get(kind);
         return indexed == null || indexed.isEmpty() ? List.of() : List.copyOf(indexed.values());
@@ -192,6 +204,21 @@ public final class SuperLeadSavedData extends SavedData {
         return generation;
     }
 
+    UUID syncEpoch() {
+        return syncEpoch;
+    }
+
+    RopeChunkSnapshot snapshotForChunk(ChunkPos chunk) {
+        return new RopeChunkSnapshot(syncEpoch, nextSyncRevision(), connectionsForChunk(chunk));
+    }
+
+    long nextSyncRevision() {
+        if (syncRevision == Long.MAX_VALUE) {
+            throw new IllegalStateException("rope sync revision exhausted");
+        }
+        return ++syncRevision;
+    }
+
     public List<LeadConnection> connectionsForChunk(ChunkPos chunk) {
         long key = chunkKey(chunk);
         LinkedHashMap<UUID, LeadConnection> out = new LinkedHashMap<>();
@@ -225,6 +252,34 @@ public final class SuperLeadSavedData extends SavedData {
         LinkedHashSet<Long> out = new LinkedHashSet<>(dirtyChunkKeys);
         dirtyChunkKeys.clear();
         return out;
+    }
+
+    boolean hasDirtyChunks() {
+        return !dirtyChunkKeys.isEmpty();
+    }
+
+    void markChunkDirty(long chunkKey) {
+        dirtyChunkKeys.add(chunkKey);
+    }
+
+    List<LeadConnection> pollValidationBatch(int maxConnections) {
+        int budget = Math.max(0, maxConnections);
+        if (budget == 0 || validationQueue.isEmpty()) {
+            return List.of();
+        }
+        ArrayList<LeadConnection> out = new ArrayList<>(Math.min(budget, validationQueue.size()));
+        int attempts = Math.min(budget, validationQueue.size());
+        for (int i = 0; i < attempts; i++) {
+            UUID id = validationQueue.removeFirst();
+            StoredRope stored = byId.get(id);
+            if (stored == null) {
+                validationQueued.remove(id);
+                continue;
+            }
+            out.add(stored.connection);
+            validationQueue.addLast(id);
+        }
+        return List.copyOf(out);
     }
 
     public void add(LeadConnection connection) {
@@ -298,6 +353,7 @@ public final class SuperLeadSavedData extends SavedData {
         StoredRope stored = new StoredRope(connection, owner);
         stored.coveredChunks.addAll(covered);
         byId.put(connection.id(), stored);
+        enqueueValidation(connection.id());
         indexByKind(connection);
 
         List<LeadConnection> owned = ownedByChunk.computeIfAbsent(owner, key -> new ArrayList<>());
@@ -317,6 +373,8 @@ public final class SuperLeadSavedData extends SavedData {
 
     private void remove(UUID id) {
         StoredRope stored = byId.remove(id);
+        validationQueued.remove(id);
+        validationQueue.remove(id);
         if (stored == null) {
             return;
         }
@@ -343,6 +401,12 @@ public final class SuperLeadSavedData extends SavedData {
 
     private void markDirtyChunks(Set<Long> chunks) {
         dirtyChunkKeys.addAll(chunks);
+    }
+
+    private void enqueueValidation(UUID id) {
+        if (validationQueued.add(id)) {
+            validationQueue.addLast(id);
+        }
     }
 
     private void indexByKind(LeadConnection connection) {
@@ -442,6 +506,12 @@ public final class SuperLeadSavedData extends SavedData {
         private RopeChunkBucket {
             owned = List.copyOf(owned);
             refs = List.copyOf(refs);
+        }
+    }
+
+    record RopeChunkSnapshot(UUID epoch, long revision, List<LeadConnection> connections) {
+        RopeChunkSnapshot {
+            connections = List.copyOf(connections);
         }
     }
 

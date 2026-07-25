@@ -622,7 +622,7 @@ public final class SuperLeadEvents {
                 }
             });
         }
-        if (!event.getLevel().isClientSide() && event.getLevel().getGameTime() % 20L == 0L) {
+        if (!event.getLevel().isClientSide()) {
             SuperLeadNetwork.pruneInvalid(event.getLevel());
         }
         LeadServerTickDispatcher.tick(event.getLevel());
@@ -634,13 +634,14 @@ public final class SuperLeadEvents {
             return;
         LeadSignalService.markRedstoneDirty(level);
         ServerRopeCurve.invalidateTerrain(level);
-        SuperLeadNetwork.pruneInvalid(level);
+        SuperLeadNetwork.pruneInvalidNearBlock(level, event.getPos());
     }
 
     @SubscribeEvent
     public static void onNeighborNotified(BlockEvent.NeighborNotifyEvent event) {
         if (event.getLevel() instanceof net.minecraft.server.level.ServerLevel level) {
             LeadSignalService.markRedstoneDirty(level);
+            SuperLeadNetwork.pruneInvalidNearBlock(level, event.getPos());
         }
     }
 

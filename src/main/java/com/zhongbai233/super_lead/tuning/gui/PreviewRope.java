@@ -292,8 +292,8 @@ public final class PreviewRope {
         double halfPx = halfMeters * pxPerMeter * (render3d ? 1.0D : widthFactor);
         int thick = Math.max(1, (int) Math.round(halfPx * 2.0D));
 
-        int color = 0xFF000000 | (value(ClientTuning.COLOR_NORMAL_ACCENT) & 0xFFFFFF);
-        int outlineColor = 0xFF000000 | (value(ClientTuning.COLOR_NORMAL_BASE) & 0xFFFFFF);
+        int color = value(ClientTuning.COLOR_NORMAL_ACCENT);
+        int outlineColor = value(ClientTuning.COLOR_NORMAL_BASE);
         rebuildScreenCache(left, top);
 
         for (int i = 0; i < n - 1; i++) {

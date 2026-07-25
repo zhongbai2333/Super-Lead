@@ -15,6 +15,7 @@ import com.zhongbai233.super_lead.lead.ZiplineController;
 import com.zhongbai233.super_lead.lead.client.chunk.RopeSectionSnapshot;
 import com.zhongbai233.super_lead.lead.client.chunk.StaticRopeChunkRegistry;
 import com.zhongbai233.super_lead.lead.client.debug.RopeDebugLabels;
+import com.zhongbai233.super_lead.lead.client.debug.RopePhysicsDiagnostics;
 import com.zhongbai233.super_lead.lead.client.debug.RopeDebugStats;
 import com.zhongbai233.super_lead.lead.client.render.ItemFlowAnimator;
 import com.zhongbai233.super_lead.lead.client.render.LeashBuilder;
@@ -30,6 +31,7 @@ import com.zhongbai233.super_lead.lead.client.sim.RopeEntityContact;
 import com.zhongbai233.super_lead.lead.client.sim.RopeForceField;
 import com.zhongbai233.super_lead.lead.client.sim.RopeSimulation;
 import com.zhongbai233.super_lead.lead.client.sim.RopeTuning;
+import com.zhongbai233.super_lead.lead.physics.RopeSagModel;
 import com.zhongbai233.super_lead.preset.client.PhysicsZonesClient;
 import com.zhongbai233.super_lead.tuning.ClientTuning;
 import java.util.ArrayList;
@@ -91,10 +93,15 @@ public final class SuperLeadClientEvents {
     private static final double NEIGHBOR_GRID_SIZE = 4.0D;
     private static final double NEIGHBOR_BOUNDS_MARGIN = 0.08D;
     private static final double NEIGHBOR_CONTACT_DISTANCE = 0.14D;
+    private static final double TRANSPARENT_REVEAL_DISTANCE_SQR = 25.0D;
+    private static final int TRANSPARENT_REVEAL_SAMPLES = 16;
     /** Hard caps that keep crowded rope buckets from degrading toward O(N^2*S^2). */
     private static final int MAX_NEIGHBORS_PER_ROPE = 6;
     private static final int MAX_NEIGHBOR_CANDIDATES_PER_FRAME = 4096;
     private static final int MAX_NEIGHBOR_NARROW_PHASE_PER_FRAME = 1024;
+    /** Reserve most of the 4ms driver window for actual rope solves. */
+    private static final long MAX_NEIGHBOR_BUILD_NANOS = 1_500_000L;
+    private static final long MAX_NEIGHBOR_BUCKET_NANOS = 500_000L;
     /** Main-thread rope solving may consume at most this much of one client tick. */
     private static final long MAX_MAIN_THREAD_PHYSICS_NANOS = 4_000_000L;
     /** Sparse terrain-only maintenance outside the full-physics LOD radius. */
@@ -116,6 +123,9 @@ public final class SuperLeadClientEvents {
     private static final Map<UUID, RopeSimulation> SIMS = new HashMap<>();
     private static final Set<UUID> FRAME_ACTIVE = new HashSet<>();
     private static final Map<UUID, Double> FRAME_LOD_DISTANCE = new HashMap<>();
+    private static boolean transparentEditingMode;
+    private static int neighborBuildRoundRobinCursor;
+    private static int neighborBucketRoundRobinCursor;
     private static final List<RenderEntry> FRAME_SIM_ENTRIES = new ArrayList<>();
     private static final List<RenderEntry> FRAME_STATIC_COLLISION_ENTRIES = new ArrayList<>();
     private static final List<RenderEntry> FRAME_RENDER_ENTRIES = new ArrayList<>();
@@ -232,6 +242,7 @@ public final class SuperLeadClientEvents {
         }
         long tick = level.getGameTime();
         StaticRopeChunkRegistry staticRopes = StaticRopeChunkRegistry.get();
+        syncTransparentEditingMode(minecraft);
         ArrayList<UUID> immediate = new ArrayList<>(ids.size());
         for (UUID id : ids) {
             if (staticRopes.isMeshAccepted(id) && !staticRopes.shouldDynamicLinger(id, tick)) {
@@ -330,6 +341,20 @@ public final class SuperLeadClientEvents {
         return null;
     }
 
+    private static LeadConnection findConnectionForHighlight(ClientLevel level, List<RenderEntry> entries,
+            UUID id) {
+        LeadConnection rendered = findById(entries, id);
+        if (rendered != null) {
+            return rendered;
+        }
+        for (LeadConnection connection : SuperLeadNetwork.connections(level)) {
+            if (connection.id().equals(id)) {
+                return connection;
+            }
+        }
+        return null;
+    }
+
     private SuperLeadClientEvents() {
     }
 
@@ -355,6 +380,12 @@ public final class SuperLeadClientEvents {
             return;
         }
 
+        StaticRopeChunkRegistry staticRopes = StaticRopeChunkRegistry.get();
+        // Tool selection is local client state and normally produces no packet or
+        // collision event. Synchronize it every render frame before transparent
+        // connections are filtered. Configured-transparent editing ropes stay
+        // dynamic, so changing tools must not rebuild unrelated chunk sections.
+        syncTransparentEditingMode(minecraft);
         SuperLeadNetwork.pruneInvalid(level);
         long tick = level.getGameTime();
         float partialTick = minecraft.getDeltaTracker().getGameTimeDeltaPartialTick(false);
@@ -369,7 +400,6 @@ public final class SuperLeadClientEvents {
         List<LeadConnection> connections = SuperLeadNetwork.connections(level);
         Map<UUID, LeadEndpointLayout.Endpoints> endpointsByConnection = LeadEndpointLayout
                 .endpointsByConnection(level, connections);
-        StaticRopeChunkRegistry staticRopes = StaticRopeChunkRegistry.get();
         Set<UUID> active = FRAME_ACTIVE;
         Map<UUID, Double> lodDistanceByConnection = FRAME_LOD_DISTANCE;
         List<RenderEntry> simEntries = FRAME_SIM_ENTRIES;
@@ -388,6 +418,7 @@ public final class SuperLeadClientEvents {
         parrotWeightedRopes.clear();
         publishCompletedAsyncPhysics(active, physicsNanosByConnection, physicsStateByConnection,
             tick, partialTick);
+        TransparentRevealContext revealContext = transparentRevealContext(minecraft.player);
         // First pass: keep sims for ropes within render distance even when they are
         // outside the
         // camera frustum. Frustum culling must only skip draw submission; if it also
@@ -398,7 +429,7 @@ public final class SuperLeadClientEvents {
         for (LeadConnection connection : connections) {
             addConnectionEntry(level, minecraft, staticRopes, endpointsByConnection, active,
                     lodDistanceByConnection, simEntries, staticSimIds, renderEntries,
-                    staticCollisionEntries, connection, cameraPos, frustum, partialTick, tick);
+                    staticCollisionEntries, connection, cameraPos, frustum, partialTick, tick, revealContext);
         }
         // Second pass: drive each sim with its neighbours so rope-rope constraints
         // participate
@@ -407,6 +438,7 @@ public final class SuperLeadClientEvents {
         // but still receive sparse terrain-only maintenance before static handoff.
         if (tick != lastRepelTick) {
             lastRepelTick = tick;
+            RopePhysicsDiagnostics.begin(tick);
             stepFrameSimulations(level, minecraft.player, simEntries, staticCollisionEntries,
                     parrotWeightedRopes, active,
                     physicsNanosByConnection, physicsStateByConnection, tick, partialTick);
@@ -417,7 +449,9 @@ public final class SuperLeadClientEvents {
         // Must run after the stepping loop so LOD transitions within this frame are
         // captured.
         updateMaintainableSimIds(simEntries, staticSimIds, tick);
+        long releaseStartNanos = System.nanoTime();
         releaseDynamicActiveStaticRopes(level, renderEntries, staticRopes, parrotWeightedRopes, tick);
+        RopePhysicsDiagnostics.finishRelease(System.nanoTime() - releaseStartNanos);
         Set<UUID> changedParrotLoads = changedMembership(LAST_PARROT_WEIGHTED_ROPES, parrotWeightedRopes);
         if (!changedParrotLoads.isEmpty()) {
             // Wake once when a load appears or disappears. A constant weight may
@@ -480,7 +514,7 @@ public final class SuperLeadClientEvents {
         retainAttachmentSwingStates(connections, bakedStaticAttachments, tick);
 
         ClientRopeInteractions.setHovered(
-                highlight == null ? null : findById(renderEntries, highlight.id()),
+            highlight == null ? null : findConnectionForHighlight(level, renderEntries, highlight.id()),
                 highlight == null ? null : highlight.hitPoint(),
                 highlight == null ? 0.5D : highlight.hitT());
 
@@ -504,6 +538,66 @@ public final class SuperLeadClientEvents {
         }
     }
 
+    private static void syncTransparentEditingMode(Minecraft minecraft) {
+        updateTransparentEditingMode(transparentRevealContext(minecraft.player).revealsAny());
+    }
+
+    static boolean updateTransparentEditingMode(boolean editing) {
+        boolean changed = editing != transparentEditingMode;
+        transparentEditingMode = editing;
+        RopeTuning.setTransparentEditingMode(editing);
+        return changed;
+    }
+
+    private static TransparentRevealContext transparentRevealContext(Player player) {
+        if (player == null) {
+            return new TransparentRevealContext(false, false);
+        }
+        boolean mainShears = player.getMainHandItem().is(net.minecraft.world.item.Items.SHEARS);
+        boolean hasAction = LeadConnectionAction.fromStack(player.getMainHandItem()).isPresent()
+                || LeadConnectionAction.fromStack(player.getOffhandItem()).isPresent();
+        return transparentRevealContext(mainShears, hasAction);
+    }
+
+    static TransparentRevealContext transparentRevealContext(boolean mainShears, boolean hasAction) {
+        return new TransparentRevealContext(mainShears, hasAction && !mainShears);
+    }
+
+    static double distancePointToSegmentSqr(Vec3 point, Vec3 a, Vec3 b) {
+        double dx = b.x - a.x;
+        double dy = b.y - a.y;
+        double dz = b.z - a.z;
+        double lengthSqr = dx * dx + dy * dy + dz * dz;
+        if (lengthSqr <= 1.0e-9D) {
+            return point.distanceToSqr(a);
+        }
+        double t = ((point.x - a.x) * dx + (point.y - a.y) * dy + (point.z - a.z) * dz) / lengthSqr;
+        t = Math.max(0.0D, Math.min(1.0D, t));
+        double cx = a.x + dx * t - point.x;
+        double cy = a.y + dy * t - point.y;
+        double cz = a.z + dz * t - point.z;
+        return cx * cx + cy * cy + cz * cz;
+    }
+
+    static boolean isWithinTransparentRevealDistance(
+            Vec3 a, Vec3 b, RopeTuning tuning, LeadConnection connection, Player player) {
+        if (a == null || b == null || tuning == null || connection == null || player == null) {
+            return false;
+        }
+        Vec3 point = player.getBoundingBox().getCenter();
+        Vec3 fallback = RopeSagModel.stableUnitVector(connection.id().getLeastSignificantBits());
+        Vec3 previous = RopeSagModel.point(a, b, 0.0D, tuning.slack(), tuning.gravity(), fallback);
+        for (int sample = 1; sample <= TRANSPARENT_REVEAL_SAMPLES; sample++) {
+            double t = sample / (double) TRANSPARENT_REVEAL_SAMPLES;
+            Vec3 current = RopeSagModel.point(a, b, t, tuning.slack(), tuning.gravity(), fallback);
+            if (distancePointToSegmentSqr(point, previous, current) <= TRANSPARENT_REVEAL_DISTANCE_SQR) {
+                return true;
+            }
+            previous = current;
+        }
+        return false;
+    }
+
     private static Map<UUID, Long> debugPhysicsNanosMap() {
         FRAME_PHYSICS_NANOS.clear();
         return FRAME_PHYSICS_NANOS;
@@ -515,6 +609,8 @@ public final class SuperLeadClientEvents {
     }
 
     private static void clearClientState() {
+        transparentEditingMode = false;
+        RopeTuning.setTransparentEditingMode(false);
         cancelAllAsyncPhysics();
         SIMS.clear();
         LAST_DYNAMIC_STEP_TICK.clear();
@@ -528,6 +624,8 @@ public final class SuperLeadClientEvents {
         lastDebugStatsTick = Long.MIN_VALUE;
         lastMaintainableSimIdsTick = Long.MIN_VALUE;
         physicsRoundRobinCursor = 0;
+        neighborBuildRoundRobinCursor = 0;
+        neighborBucketRoundRobinCursor = 0;
         FRAME_ACTIVE.clear();
         FRAME_LOD_DISTANCE.clear();
         FRAME_SIM_ENTRIES.clear();
@@ -545,6 +643,7 @@ public final class SuperLeadClientEvents {
         RopeDynamicLights.clear();
         RopeDebugLabels.clear();
         RopeDebugStats.clear();
+        RopePhysicsDiagnostics.clear();
         RopeContactsClient.clear();
         ZiplineClientState.clear();
         AttachmentSwingClient.clear();
@@ -560,17 +659,27 @@ public final class SuperLeadClientEvents {
             Set<UUID> parrotWeightedRopes, Set<UUID> active,
             Map<UUID, Long> physicsNanosByConnection,
             Map<UUID, String> physicsStateByConnection, long tick, float partialTick) {
-        NeighborMapResult neighborResult = buildNeighborMap(simEntries, staticCollisionEntries, tick);
+        long physicsStartNanos = System.nanoTime();
+        long physicsDeadlineNanos = physicsStartNanos + MAX_MAIN_THREAD_PHYSICS_NANOS;
+        long neighborStartNanos = System.nanoTime();
+        long neighborDeadlineNanos = Math.min(physicsDeadlineNanos,
+            neighborStartNanos + MAX_NEIGHBOR_BUILD_NANOS);
+        NeighborMapResult neighborResult = buildNeighborMap(
+            simEntries, staticCollisionEntries, tick, neighborDeadlineNanos);
+        long neighborNanos = System.nanoTime() - neighborStartNanos;
         RopeDebugStats.neighborCandidates = neighborResult.candidates();
         RopeDebugStats.neighborNarrowPhase = neighborResult.narrowPhase();
+        RopeDebugStats.neighborDroppedByCap = neighborResult.droppedByCap();
         RopeDebugStats.neighborBuildTruncated = neighborResult.truncated();
+        RopePhysicsDiagnostics.recordNeighborBuild(neighborNanos, neighborResult.candidates(),
+            neighborResult.narrowPhase(), neighborResult.droppedByCap(), neighborResult.truncated());
 
         if (!neighborResult.staticContacts().isEmpty()) {
             disturbConnections(level, neighborResult.staticContacts(), tick + 8L);
         }
 
         PhysicsBudget physicsBudget = new PhysicsBudget(
-                ClientTuning.DYNAMIC_PHYSICS_BUDGET.get(), MAX_MAIN_THREAD_PHYSICS_NANOS);
+            ClientTuning.DYNAMIC_PHYSICS_BUDGET.get(), physicsDeadlineNanos);
         int entryCount = simEntries.size();
         int start = entryCount == 0 ? 0 : Math.floorMod(physicsRoundRobinCursor, entryCount);
         for (int offset = 0; offset < entryCount; offset++) {
@@ -581,6 +690,9 @@ public final class SuperLeadClientEvents {
         if (entryCount > 0) {
             physicsRoundRobinCursor = nextRoundRobinStart(start, entryCount, physicsBudget.used());
         }
+        RopePhysicsDiagnostics.finishPhysics(System.nanoTime() - physicsStartNanos,
+                entryCount, physicsBudget.used(), physicsBudget.max(), physicsBudget.timeExhausted(),
+                runningAsyncPhysicsJobs(), ASYNC_PHYSICS_JOBS.size());
     }
 
     static int roundRobinIndex(int start, int offset, int size) {
@@ -606,7 +718,28 @@ public final class SuperLeadClientEvents {
             StaticRopeChunkRegistry staticRopes, Map<UUID, LeadEndpointLayout.Endpoints> endpointsByConnection, Set<UUID> active,
             Map<UUID, Double> lodDistanceByConnection, List<RenderEntry> simEntries, Set<UUID> staticSimIds,
             List<RenderEntry> renderEntries, List<RenderEntry> staticCollisionEntries,
-            LeadConnection connection, Vec3 cameraPos, Frustum frustum, float partialTick, long tick) {
+            LeadConnection connection, Vec3 cameraPos, Frustum frustum, float partialTick, long tick,
+            TransparentRevealContext revealContext) {
+        RopeTuning tuning = RopeTuning.forConnection(connection);
+        if (tuning.isConfiguredFullyTransparent(connection.kind())) {
+            if (!revealContext.globalReveal()) {
+                LeadEndpointLayout.Endpoints transparentEndpoints = endpointsByConnection.get(connection.id());
+                if (transparentEndpoints == null) {
+                    transparentEndpoints = LeadEndpointLayout.endpoints(level, connection, List.of(connection));
+                }
+                if (!revealContext.localReveal()
+                        || !isWithinTransparentRevealDistance(
+                                transparentEndpoints.from(), transparentEndpoints.to(), tuning, connection,
+                                minecraft.player)) {
+                    // Invisible ropes remain in the authoritative client cache for
+                    // picking, but stay out of render and simulation work unless a
+                    // held rope tool is allowed to reveal this rope.
+                    return;
+                }
+            }
+        } else if (tuning.isFullyTransparent(connection.kind())) {
+            return;
+        }
         LeadEndpointLayout.Endpoints endpoints = endpointsByConnection.get(connection.id());
         if (endpoints == null) {
             endpoints = LeadEndpointLayout.endpoints(level, connection, List.of(connection));
@@ -825,8 +958,11 @@ public final class SuperLeadClientEvents {
             parrotWeightedRopes.add(id);
         }
 
+        List<RopeSimulation> neighbors = neighborsBySim.getOrDefault(entry.sim(), List.of());
         double collisionRisk = predictedPlayerCollisionRisk(player, entry);
-        StepDecision decision = stepDecision(entry, tick, physicsBudget, !forceFields.isEmpty(), collisionRisk);
+        boolean stackContact = !neighbors.isEmpty() || entry.sim().ropeStackQuietTicks() > 0;
+        StepDecision decision = stepDecision(entry, tick, physicsBudget,
+            !forceFields.isEmpty(), stackContact, collisionRisk);
         if (!decision.shouldStep()) {
             if (isOverloadSkipState(decision.state())) {
                 // A hard budget miss is not intentional LOD pacing. Discard its time
@@ -845,7 +981,6 @@ public final class SuperLeadClientEvents {
             && !entry.sim().hasMeshCollisionRenderTransition()) {
             markCollisionRenderPhase(id, tick, partialTick);
         }
-        List<RopeSimulation> neighbors = neighborsBySim.getOrDefault(entry.sim(), List.of());
         if (decision.interval() > 1) {
             // This gap was requested by the activity scheduler, not caused by a late
             // frame. Advance one fixed physics step and discard the deliberately
@@ -853,8 +988,12 @@ public final class SuperLeadClientEvents {
             entry.sim().prepareSingleScheduledStep(tick);
         }
         if (canStepAsync(entry, neighbors, entityContacts, decision.windActive())) {
+            long asyncPrepareStart = System.nanoTime();
             AsyncSubmission submission = submitAsyncPhysics(level, entry, forceFields, entityContacts,
                     tick, decision.interval(), active);
+            RopePhysicsDiagnostics.recordAsyncPrepare(System.nanoTime() - asyncPrepareStart,
+                submission == AsyncSubmission.SUBMITTED ? "submitted"
+                    : submission == AsyncSubmission.ALREADY_IN_FLIGHT ? "pending" : "capacity");
             if (submission == AsyncSubmission.SUBMITTED) {
                 LAST_DYNAMIC_STEP_TICK.put(id, tick);
                 recordPhysicsState(physicsNanosByConnection, physicsStateByConnection, id, 0L, "async");
@@ -867,6 +1006,8 @@ public final class SuperLeadClientEvents {
                 // a capacity rejection after the deadline simply drops this debt.
                 if (submission == AsyncSubmission.CAPACITY_FULL) {
                     entry.sim().prepareSingleScheduledStep(tick + 1L);
+                } else {
+                    physicsBudget.releaseConsumedSlot();
                 }
                 recordPhysicsState(physicsNanosByConnection, physicsStateByConnection, id, 0L,
                         submission == AsyncSubmission.ALREADY_IN_FLIGHT ? "pending" : "capacity-skip");
@@ -880,11 +1021,12 @@ public final class SuperLeadClientEvents {
 
         cancelAsyncPhysics(id);
         entry.sim().prepareScheduledRenderStep(tick, decision.interval());
-        long stepStart = RopeDebugLabels.enabled() ? System.nanoTime() : 0L;
+        long stepStart = System.nanoTime();
         boolean stepped = entry.sim().step(level, entry.a(), entry.b(), tick,
                 neighbors, forceFields, entityContacts);
         LAST_DYNAMIC_STEP_TICK.put(id, tick);
-        long stepNanos = RopeDebugLabels.enabled() ? System.nanoTime() - stepStart : 0L;
+        long stepNanos = System.nanoTime() - stepStart;
+        RopePhysicsDiagnostics.recordSyncSolve(id, entry.sim().nodeCount(), stepNanos);
         recordPhysicsState(physicsNanosByConnection, physicsStateByConnection, id,
                 stepNanos, stepped ? decision.state() : "idle");
         maybeReportPlayerContact(player, entry.connection(), entry.sim(), entry.a(), entry.b(), tick);
@@ -1047,10 +1189,11 @@ public final class SuperLeadClientEvents {
     }
 
     private static StepDecision stepDecision(RenderEntry entry, long tick, PhysicsBudget physicsBudget,
-            boolean forceActive, double collisionRisk) {
+            boolean forceActive, boolean stackContact, double collisionRisk) {
         boolean synchronous = hasSynchronousDynamicReason(entry);
         boolean endpointMoved = entry.sim().hasEndpointWakeMovement(entry.a(), entry.b());
-        boolean forceHot = forceActive || synchronous || endpointMoved || collisionRisk >= 0.80D;
+        boolean forceHot = requiresImmediatePhysicsStep(
+            forceActive, stackContact, synchronous, endpointMoved, collisionRisk);
         boolean windActive = entry.sim().hasActiveWind(entry.a(), entry.b(), tick);
         RopeActivityScheduler.State previous = ACTIVITY_STATES.get(entry.connection().id());
         double sample = activitySample(entry, collisionRisk, forceActive, synchronous, windActive);
@@ -1068,7 +1211,9 @@ public final class SuperLeadClientEvents {
         if (forceHot) {
             return physicsBudget.tryForceConsume()
                 ? new StepDecision(true,
-                    forceActive ? "force" : synchronous ? "sync!" : endpointMoved ? "endpoint!" : "predict!",
+                    stackContact ? "stack!"
+                        : forceActive ? "force"
+                            : synchronous ? "sync!" : endpointMoved ? "endpoint!" : "predict!",
                     1, windActive)
                     : new StepDecision(false, "circuit-breaker", 1, windActive);
         }
@@ -1087,6 +1232,12 @@ public final class SuperLeadClientEvents {
         }
         return new StepDecision(true, activity.tier().name().toLowerCase() + "/" + interval,
                 interval, false);
+    }
+
+    static boolean requiresImmediatePhysicsStep(
+            boolean forceActive, boolean stackContact, boolean synchronous,
+            boolean endpointMoved, double collisionRisk) {
+        return forceActive || stackContact || synchronous || endpointMoved || collisionRisk >= 0.80D;
     }
 
     static int scheduledPhysicsInterval(RopeActivityScheduler.State activity,
@@ -1188,11 +1339,12 @@ public final class SuperLeadClientEvents {
         // skipped simulation tick. Repaying that debt would multiply the very work this
         // LOD path is intended to avoid and can pull a resting rope through terrain.
         entry.sim().prepareSingleScheduledStep(tick);
-        long stepStart = RopeDebugLabels.enabled() ? System.nanoTime() : 0L;
+        long stepStart = System.nanoTime();
         boolean stepped = entry.sim().step(level, entry.a(), entry.b(), tick,
                 List.of(), List.of(), List.of());
         LAST_DYNAMIC_STEP_TICK.put(id, tick);
-        long stepNanos = RopeDebugLabels.enabled() ? System.nanoTime() - stepStart : 0L;
+        long stepNanos = System.nanoTime() - stepStart;
+        RopePhysicsDiagnostics.recordSyncSolve(id, entry.sim().nodeCount(), stepNanos);
         recordPhysicsState(physicsNanosByConnection, physicsStateByConnection, id,
                 stepNanos, stepped ? "terrain-lod" : "terrain-idle");
     }
@@ -1654,9 +1806,9 @@ public final class SuperLeadClientEvents {
         private final long deadlineNanos;
         private int used;
 
-        private PhysicsBudget(int max, long maxNanos) {
+        private PhysicsBudget(int max, long deadlineNanos) {
             this.max = Math.max(0, max);
-            this.deadlineNanos = System.nanoTime() + Math.max(0L, maxNanos);
+            this.deadlineNanos = deadlineNanos;
         }
 
         boolean tryConsume() {
@@ -1675,12 +1827,22 @@ public final class SuperLeadClientEvents {
             return true;
         }
 
+        void releaseConsumedSlot() {
+            if (used > 0) {
+                used--;
+            }
+        }
+
         private boolean timeExhausted() {
             return System.nanoTime() >= deadlineNanos;
         }
 
         int used() {
             return used;
+        }
+
+        int max() {
+            return max;
         }
     }
 
@@ -1779,6 +1941,7 @@ public final class SuperLeadClientEvents {
 
     private static void recordPhysicsState(Map<UUID, Long> nanosByConnection,
             Map<UUID, String> stateByConnection, UUID id, long nanos, String state) {
+        RopePhysicsDiagnostics.recordPhysicsState(state);
         if (!RopeDebugLabels.enabled()) {
             return;
         }
@@ -2207,6 +2370,15 @@ public final class SuperLeadClientEvents {
             return null;
         }
 
+        if (action == LeadConnectionAction.CUT) {
+            ClientRopeInteractions.AttachPick invisiblePick = ClientRopeInteractions.pickInvisibleCutPoint(
+                    minecraft, partialTick);
+            if (invisiblePick != null) {
+                return new ConnectionHighlight(invisiblePick.connectionId(), action.previewColor(),
+                        invisiblePick.point(), invisiblePick.t());
+            }
+        }
+
         Camera camera = minecraft.gameRenderer.getMainCamera();
         var forward = camera.forwardVector();
         double dirX = forward.x();
@@ -2504,6 +2676,12 @@ public final class SuperLeadClientEvents {
             double lodDistSqr, AABB bounds, AABB physicsBounds) {
     }
 
+    record TransparentRevealContext(boolean globalReveal, boolean localReveal) {
+        boolean revealsAny() {
+            return globalReveal || localReveal;
+        }
+    }
+
     private record EntityContactSnapshot(long tick, List<RopeEntityContact> contacts) {
     }
 
@@ -2537,39 +2715,72 @@ public final class SuperLeadClientEvents {
     }
 
     private static NeighborMapResult buildNeighborMap(
-            List<RenderEntry> dynamicEntries, List<RenderEntry> staticEntries, long tick) {
+            List<RenderEntry> dynamicEntries, List<RenderEntry> staticEntries, long tick,
+            long deadlineNanos) {
         List<RenderEntry> entries = new ArrayList<>(dynamicEntries.size() + staticEntries.size());
         entries.addAll(dynamicEntries);
         entries.addAll(staticEntries);
-        RopeNeighborBuckets buckets = buildNeighborBuckets(entries);
-        Map<RopeSimulation, List<RopeSimulation>> out = new HashMap<>();
-        Set<UUID> staticContacts = new HashSet<>();
         NeighborBuildBudget budget = new NeighborBuildBudget(
-                MAX_NEIGHBOR_CANDIDATES_PER_FRAME, MAX_NEIGHBOR_NARROW_PHASE_PER_FRAME);
-        for (int i = 0; i < dynamicEntries.size(); i++) {
+            MAX_NEIGHBOR_CANDIDATES_PER_FRAME, MAX_NEIGHBOR_NARROW_PHASE_PER_FRAME, deadlineNanos);
+        BucketBuildResult bucketBuild = buildNeighborBuckets(entries,
+            Math.min(deadlineNanos, System.nanoTime() + MAX_NEIGHBOR_BUCKET_NANOS));
+        RopeNeighborBuckets buckets = bucketBuild.buckets();
+        List<NeighborContact> contacts = new ArrayList<>();
+        Set<UUID> staticWakeContacts = new HashSet<>();
+        Set<Long> seenPairs = new HashSet<>();
+        int dynamicCount = dynamicEntries.size();
+        int start = dynamicCount == 0 ? 0 : Math.floorMod(neighborBuildRoundRobinCursor, dynamicCount);
+        int scanned = 0;
+        for (int offset = 0; offset < dynamicCount; offset++) {
             if (budget.exhausted())
                 break;
+            int i = circularIndex(start, offset, dynamicCount);
+            scanned++;
             RenderEntry entry = entries.get(i);
             if (!participatesInPhysics(entry))
                 continue;
-            collectNeighborPairs(entries, dynamicEntries.size(), buckets, i, entry, out, staticContacts, budget,
-                    tick);
+                collectNeighborPairs(entries, dynamicEntries.size(), buckets, i, entry, contacts,
+                    staticWakeContacts, seenPairs, budget, tick);
         }
+        neighborBuildRoundRobinCursor = dynamicCount == 0
+                ? 0
+                : Math.floorMod(start + Math.max(1, scanned), dynamicCount);
+        NeighborSelection selection = selectNeighborContacts(contacts);
         return new NeighborMapResult(
-            out.isEmpty() ? Map.of() : out,
-            staticContacts.isEmpty() ? Set.of() : Set.copyOf(staticContacts),
-            budget.exhausted(), budget.candidates(), budget.narrowPhase());
+                selection.neighbors(),
+                staticWakeContacts.isEmpty() ? Set.of() : Set.copyOf(staticWakeContacts),
+                bucketBuild.truncated() || budget.exhausted(),
+                budget.candidates(), budget.narrowPhase(), selection.droppedByCap());
     }
 
-    private static RopeNeighborBuckets buildNeighborBuckets(List<RenderEntry> entries) {
+            private static BucketBuildResult buildNeighborBuckets(
+                List<RenderEntry> entries, long deadlineNanos) {
         RopeNeighborBuckets buckets = new RopeNeighborBuckets(NEIGHBOR_GRID_SIZE);
-        for (int i = 0; i < entries.size(); i++) {
+        int size = entries.size();
+        int start = size == 0 ? 0 : Math.floorMod(neighborBucketRoundRobinCursor, size);
+        int added = 0;
+        for (int offset = 0; offset < size; offset++) {
+            if (System.nanoTime() >= deadlineNanos) {
+                break;
+            }
+            int i = circularIndex(start, offset, size);
+            added++;
             RenderEntry entry = entries.get(i);
             if (participatesInPhysics(entry)) {
                 buckets.add(i, entry.physicsBounds().inflate(NEIGHBOR_BOUNDS_MARGIN));
             }
         }
-        return buckets;
+        neighborBucketRoundRobinCursor = size == 0
+                ? 0
+                : Math.floorMod(start + Math.max(1, added), size);
+        return new BucketBuildResult(buckets, added < size);
+    }
+
+    static int circularIndex(int start, int offset, int size) {
+        if (size <= 0) {
+            throw new IllegalArgumentException("size must be positive");
+        }
+        return Math.floorMod(start + offset, size);
     }
 
     private static boolean participatesInPhysics(RenderEntry entry) {
@@ -2603,13 +2814,13 @@ public final class SuperLeadClientEvents {
 
     private static void collectNeighborPairs(
             List<RenderEntry> entries, int dynamicCount, RopeNeighborBuckets buckets, int index, RenderEntry entry,
-            Map<RopeSimulation, List<RopeSimulation>> neighborsBySim, Set<UUID> staticContacts,
+            List<NeighborContact> contacts, Set<UUID> staticWakeContacts, Set<Long> seenPairs,
             NeighborBuildBudget budget, long tick) {
         AABB query = entry.physicsBounds().inflate(NEIGHBOR_BOUNDS_MARGIN);
         HashSet<Integer> seen = new HashSet<>();
         buckets.forEachCandidateWhile(query, candidate -> collectNeighborPairCandidate(
-            entries, dynamicCount, index, entry, query, seen, neighborsBySim, staticContacts, budget, candidate,
-            tick));
+            entries, dynamicCount, index, entry, query, seen, contacts, staticWakeContacts,
+            seenPairs, budget, candidate, tick));
     }
 
     private static boolean collectNeighborPairCandidate(
@@ -2619,12 +2830,13 @@ public final class SuperLeadClientEvents {
             RenderEntry entry,
             AABB query,
             HashSet<Integer> seen,
-            Map<RopeSimulation, List<RopeSimulation>> neighborsBySim,
-            Set<UUID> staticContacts,
+            List<NeighborContact> contacts,
+            Set<UUID> staticWakeContacts,
+            Set<Long> seenPairs,
             NeighborBuildBudget budget,
             int candidate,
             long tick) {
-        if (candidate <= index || !seen.add(candidate))
+        if (candidate == index || !seen.add(candidate) || !seenPairs.add(neighborPairKey(index, candidate)))
             return !budget.exhausted();
         if (!budget.tryCandidate())
             return false;
@@ -2632,31 +2844,66 @@ public final class SuperLeadClientEvents {
         if (!participatesInPhysics(other) || !query.intersects(other.physicsBounds())) {
             return true;
         }
-        List<RopeSimulation> ownNeighbors = neighborsBySim.computeIfAbsent(entry.sim(), ignored -> new ArrayList<>());
         boolean otherIsStatic = candidate >= dynamicCount;
-        List<RopeSimulation> otherNeighbors = otherIsStatic
-            ? null
-            : neighborsBySim.computeIfAbsent(other.sim(), ignored -> new ArrayList<>());
-        if (ownNeighbors.size() >= MAX_NEIGHBORS_PER_ROPE
-            || (otherNeighbors != null && otherNeighbors.size() >= MAX_NEIGHBORS_PER_ROPE)) {
-            return true;
-        }
         if (!budget.tryNarrowPhase())
             return false;
         if (entry.sim().mightContact(other.sim(), NEIGHBOR_CONTACT_DISTANCE)) {
-            ownNeighbors.add(other.sim());
-            recordReverseNeighborOrStaticWake(
-                    otherIsStatic, shouldWakeStaticFromContact(entry.sim(), tick),
-                    other.connection().id(), staticContacts, otherNeighbors, entry.sim());
-        } else {
-            if (ownNeighbors.isEmpty()) {
-                neighborsBySim.remove(entry.sim());
+            boolean wakeStatic = shouldWakeStaticFromContact(entry.sim(), tick);
+            if (otherIsStatic && wakeStatic) {
+                staticWakeContacts.add(other.connection().id());
             }
-            if (otherNeighbors != null && otherNeighbors.isEmpty()) {
-                neighborsBySim.remove(other.sim());
-            }
+            contacts.add(new NeighborContact(entry.sim(), other.sim(), other.connection().id(), otherIsStatic,
+                    wakeStatic,
+                    neighborPriorityScore(entry.physicsBounds(), other.physicsBounds())));
         }
         return true;
+    }
+
+    static double neighborPriorityScore(AABB first, AABB second) {
+        double dx = (first.minX + first.maxX) - (second.minX + second.maxX);
+        double dy = (first.minY + first.maxY) - (second.minY + second.maxY);
+        double dz = (first.minZ + first.maxZ) - (second.minZ + second.maxZ);
+        return dx * dx + dy * dy + dz * dz;
+    }
+
+    static long neighborPairKey(int first, int second) {
+        int low = Math.min(first, second);
+        int high = Math.max(first, second);
+        return ((long) low << 32) ^ (high & 0xFFFFFFFFL);
+    }
+
+    private static NeighborSelection selectNeighborContacts(List<NeighborContact> contacts) {
+        if (contacts.isEmpty()) {
+            return NeighborSelection.EMPTY;
+        }
+        contacts.sort((left, right) -> Double.compare(left.priorityScore(), right.priorityScore()));
+        Map<RopeSimulation, List<RopeSimulation>> neighbors = new HashMap<>();
+        int droppedByCap = 0;
+        for (NeighborContact contact : contacts) {
+            List<RopeSimulation> own = neighbors.computeIfAbsent(contact.own(), ignored -> new ArrayList<>());
+            List<RopeSimulation> reverse = contact.otherStatic()
+                    ? null
+                    : neighbors.computeIfAbsent(contact.other(), ignored -> new ArrayList<>());
+            if (own.size() >= MAX_NEIGHBORS_PER_ROPE
+                    || (reverse != null && reverse.size() >= MAX_NEIGHBORS_PER_ROPE)) {
+                droppedByCap++;
+                if (own.isEmpty()) {
+                    neighbors.remove(contact.own());
+                }
+                if (reverse != null && reverse.isEmpty()) {
+                    neighbors.remove(contact.other());
+                }
+                continue;
+            }
+            own.add(contact.other());
+            if (reverse != null) {
+                recordReverseNeighborOrStaticWake(false, false, contact.otherId(),
+                        Set.of(), reverse, contact.own());
+            }
+        }
+        return new NeighborSelection(
+                neighbors.isEmpty() ? Map.of() : neighbors,
+                droppedByCap);
     }
 
     static void recordReverseNeighborOrStaticWake(
@@ -2692,36 +2939,61 @@ public final class SuperLeadClientEvents {
             Set<UUID> staticContacts,
             boolean truncated,
             int candidates,
-            int narrowPhase) {
+                int narrowPhase,
+                int droppedByCap) {
+            }
+
+            private record NeighborContact(
+                RopeSimulation own,
+                RopeSimulation other,
+                UUID otherId,
+                boolean otherStatic,
+                boolean wakeStatic,
+                double priorityScore) {
+            }
+
+            private record NeighborSelection(
+                Map<RopeSimulation, List<RopeSimulation>> neighbors,
+                int droppedByCap) {
+                private static final NeighborSelection EMPTY = new NeighborSelection(Map.of(), 0);
+    }
+
+    private record BucketBuildResult(RopeNeighborBuckets buckets, boolean truncated) {
     }
 
     private static final class NeighborBuildBudget {
         private final int maxCandidates;
         private final int maxNarrowPhase;
+        private final long deadlineNanos;
         private int candidates;
         private int narrowPhase;
 
-        private NeighborBuildBudget(int maxCandidates, int maxNarrowPhase) {
+        private NeighborBuildBudget(int maxCandidates, int maxNarrowPhase, long deadlineNanos) {
             this.maxCandidates = Math.max(0, maxCandidates);
             this.maxNarrowPhase = Math.max(0, maxNarrowPhase);
+            this.deadlineNanos = deadlineNanos;
         }
 
         boolean tryCandidate() {
-            if (candidates >= maxCandidates)
+            if (candidates >= maxCandidates || timeExhausted())
                 return false;
             candidates++;
             return true;
         }
 
         boolean tryNarrowPhase() {
-            if (narrowPhase >= maxNarrowPhase)
+            if (narrowPhase >= maxNarrowPhase || timeExhausted())
                 return false;
             narrowPhase++;
             return true;
         }
 
         boolean exhausted() {
-            return candidates >= maxCandidates || narrowPhase >= maxNarrowPhase;
+            return candidates >= maxCandidates || narrowPhase >= maxNarrowPhase || timeExhausted();
+        }
+
+        boolean timeExhausted() {
+            return System.nanoTime() >= deadlineNanos;
         }
 
         int candidates() {
@@ -2742,10 +3014,13 @@ public final class SuperLeadClientEvents {
      */
     private static List<RopeEntityContact> collectEntityContacts(ClientLevel level, RopeSimulation sim, Vec3 a,
             Vec3 b) {
+        long queryStartNanos = System.nanoTime();
         AABB ropeBounds = sim.currentBounds().inflate(ENTITY_QUERY_MARGIN);
         List<Entity> raw = level.getEntities((Entity) null, ropeBounds, e -> !e.isSpectator() && e.isPickable());
-        if (raw.isEmpty())
+        if (raw.isEmpty()) {
+            RopePhysicsDiagnostics.recordEntityQuery(System.nanoTime() - queryStartNanos, 0, 0);
             return List.of();
+        }
         List<RopeEntityContact> out = new ArrayList<>(raw.size());
         for (Entity entity : raw) {
             if (ZiplineClientState.isZiplining(entity.getId())) {
@@ -2762,6 +3037,7 @@ public final class SuperLeadClientEvents {
                 continue;
             out.add(new RopeEntityContact(box, entity.getDeltaMovement(), entity instanceof Player));
         }
+        RopePhysicsDiagnostics.recordEntityQuery(System.nanoTime() - queryStartNanos, raw.size(), out.size());
         return out;
     }
 
