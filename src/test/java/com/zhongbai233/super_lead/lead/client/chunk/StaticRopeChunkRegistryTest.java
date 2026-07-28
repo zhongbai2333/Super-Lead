@@ -2,8 +2,6 @@ package com.zhongbai233.super_lead.lead.client.chunk;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNull;
-import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.zhongbai233.super_lead.lead.RopeAttachment;
@@ -20,6 +18,34 @@ import net.minecraft.client.renderer.chunk.ChunkSectionLayer;
 import org.junit.jupiter.api.Test;
 
 class StaticRopeChunkRegistryTest {
+    @Test
+    void unchangedPublishedSourceCanReuseItsImmutableBake() {
+        UUID id = UUID.randomUUID();
+        RopeStaticGeometryResult geometry = new RopeStaticGeometryResult(
+                bakedSnapshot(id), Set.of(1L));
+
+        assertTrue(StaticRopeChunkRegistry.canReusePublishedSource(
+                id, false, Set.of(), Map.of(id, geometry)));
+    }
+
+    @Test
+    void changedOrFullyInvalidatedSourceMustBeRebuilt() {
+        UUID id = UUID.randomUUID();
+        RopeStaticGeometryResult geometry = new RopeStaticGeometryResult(
+                bakedSnapshot(id), Set.of(1L));
+
+        assertFalse(StaticRopeChunkRegistry.canReusePublishedSource(
+                id, false, Set.of(id), Map.of(id, geometry)));
+        assertFalse(StaticRopeChunkRegistry.canReusePublishedSource(
+                id, true, Set.of(), Map.of(id, geometry)));
+    }
+
+    @Test
+    void missingPublishedGeometryCannotBeReused() {
+        assertFalse(StaticRopeChunkRegistry.canReusePublishedSource(
+                UUID.randomUUID(), false, Set.of(), Map.of()));
+    }
+
     @Test
     void configuredTransparentEditingRopeNeverEntersChunkMesh() {
         assertTrue(StaticRopeChunkRegistry.skipStaticMeshForTransparency(true, false));
@@ -200,86 +226,10 @@ class StaticRopeChunkRegistryTest {
         assertFalse(StaticRopeChunkRegistry.isWindCoolingDown(150L, 140L));
     }
 
-    @Test
-    void repeatedFramesDoNotCountTheSamePhysicsSample() {
-        var first = StaticRopeChunkRegistry.advanceExitDebounce(null, 100L, 1.0e-5D);
-        var repeated = StaticRopeChunkRegistry.advanceExitDebounce(first, 100L, 1.0e-5D);
-
-        assertSame(first, repeated);
-        assertEquals(1, repeated.nonQuietSteps());
-    }
-
-    @Test
-    void distinctPhysicsSamplesAccumulateExitEvidence() {
-        var first = StaticRopeChunkRegistry.advanceExitDebounce(null, 100L, 1.0e-5D);
-        var second = StaticRopeChunkRegistry.advanceExitDebounce(first, 104L, 1.0e-5D);
-        var third = StaticRopeChunkRegistry.advanceExitDebounce(second, 108L, 1.0e-5D);
-
-        assertEquals(3, third.nonQuietSteps());
-        assertEquals(108L, third.lastSteppedTick());
-    }
-
-    @Test
-    void highLodFreezeRequiresThreeDistinctLowMotionSamples() {
-        var first = StaticRopeChunkRegistry.advanceExitDebounce(null, 100L, 1.0e-5D);
-        var second = StaticRopeChunkRegistry.advanceExitDebounce(first, 104L, 1.0e-5D);
-        var third = StaticRopeChunkRegistry.advanceExitDebounce(second, 108L, 1.0e-5D);
-
-        assertEquals(1, first.nonQuietSteps());
-        assertEquals(2, second.nonQuietSteps());
-        assertEquals(3, third.nonQuietSteps());
-    }
-
-    @Test
-    void sparseLowMotionSamplesAreDeduplicatedForHighLodEntry() {
-        var first = StaticRopeChunkRegistry.advanceExitDebounce(null, 100L, 1.0e-5D);
-        var repeatedFrame = StaticRopeChunkRegistry.advanceExitDebounce(first, 100L, 1.0e-5D);
-        var second = StaticRopeChunkRegistry.advanceExitDebounce(repeatedFrame, 104L, 1.0e-5D);
-        var third = StaticRopeChunkRegistry.advanceExitDebounce(second, 108L, 1.0e-5D);
-
-        assertEquals(1, repeatedFrame.nonQuietSteps());
-        assertEquals(3, third.nonQuietSteps());
-    }
-
-    @Test
-    void hardDisturbanceBypassesDebounce() {
-        var previous = new StaticRopeChunkRegistry.ExitDebounce(100L, 1);
-
-        assertNull(StaticRopeChunkRegistry.advanceExitDebounce(previous, 104L, 5.0e-4D));
-    }
-
-    @Test
-    void turningPointMotionCannotAccumulateChunkMeshEntryEvidence() {
-        assertNull(StaticRopeChunkRegistry.advanceExitDebounce(null, 100L, 1.0e-4D));
-        assertNull(StaticRopeChunkRegistry.advanceExitDebounce(null, 104L, 3.0e-4D));
-        assertNull(StaticRopeChunkRegistry.advanceExitDebounce(null, 108L, 4.99e-4D));
-    }
-
-    @Test
-    void claimedRopeKeepsMeshThroughResidualMotionBand() {
-        assertTrue(StaticRopeChunkRegistry.shouldRetainClaim(4.0e-5D));
-        assertTrue(StaticRopeChunkRegistry.shouldRetainClaim(4.99e-4D));
-    }
-
-    @Test
-    void claimedRopeExitsMeshOnHardMotion() {
-        assertFalse(StaticRopeChunkRegistry.shouldRetainClaim(5.0e-4D));
-        assertFalse(StaticRopeChunkRegistry.shouldRetainClaim(1.0e-2D));
-    }
-
-    @Test
-    void uninitializedPhysicsSampleDoesNotCount() {
-        assertNull(StaticRopeChunkRegistry.advanceExitDebounce(null, Long.MIN_VALUE, 1.0e-4D));
-    }
-
-    @Test
-    void rewoundStepTickStartsFreshEvidence() {
-        var previous = new StaticRopeChunkRegistry.ExitDebounce(100L, 2);
-        var reset = StaticRopeChunkRegistry.advanceExitDebounce(previous, 50L, 1.0e-5D);
-
-        assertEquals(1, reset.nonQuietSteps());
-        assertEquals(50L, reset.lastSteppedTick());
-    }
+    // The per-registry motion thresholds and the high-LOD entry debounce were
+    // replaced by RopeSimulation's unified at-rest state (entry debounce and exit
+    // hysteresis both live in the solver now), so their tests moved to
+    // RopeSimulation-level coverage of updateSettleState.
 
     @Test
     void lightInfluenceDetectsSegmentWhoseNodesRemainOutside() {
@@ -309,6 +259,46 @@ class StaticRopeChunkRegistryTest {
     void staleSectionBuildCannotCompleteRetirement() {
         assertFalse(StaticRopeChunkRegistry.generationsReached(Map.of(11L, 4L), Map.of(11L, 3L)));
         assertTrue(StaticRopeChunkRegistry.generationsReached(Map.of(11L, 4L), Map.of(11L, 5L)));
+    }
+
+    @Test
+    void sharedSectionRebuildPreservesAcceptedBystanders() {
+        UUID direct = UUID.randomUUID();
+        UUID bystanderA = UUID.randomUUID();
+        UUID bystanderB = UUID.randomUUID();
+        Map<UUID, Set<Long>> sections = Map.of(
+                direct, Set.of(11L),
+                bystanderA, Set.of(11L),
+                bystanderB, Set.of(11L, 12L));
+
+        Set<UUID> preserved = StaticRopeChunkRegistry.preserveAcceptedConnections(
+                Set.of(direct, bystanderA, bystanderB), Set.of(direct), sections, Set.of(11L, 12L));
+
+        assertEquals(Set.of(bystanderA, bystanderB), preserved);
+    }
+
+    @Test
+    void removedOrUnpublishedBystandersCannotRemainAccepted() {
+        UUID removed = UUID.randomUUID();
+        UUID missingSection = UUID.randomUUID();
+        Map<UUID, Set<Long>> sections = Map.of(missingSection, Set.of(11L, 12L));
+
+        Set<UUID> preserved = StaticRopeChunkRegistry.preserveAcceptedConnections(
+                Set.of(removed, missingSection), Set.of(), sections, Set.of(11L));
+
+        assertTrue(preserved.isEmpty());
+    }
+
+    @Test
+    void lightOnlySharedSectionReplacementKeepsEveryAcceptedConnection() {
+        UUID relit = UUID.randomUUID();
+        UUID bystander = UUID.randomUUID();
+        Map<UUID, Set<Long>> sections = Map.of(relit, Set.of(11L), bystander, Set.of(11L));
+
+        Set<UUID> preserved = StaticRopeChunkRegistry.preserveAcceptedConnections(
+                Set.of(relit, bystander), Set.of(), sections, Set.of(11L));
+
+        assertEquals(Set.of(relit, bystander), preserved);
     }
 
     @Test
@@ -362,5 +352,14 @@ class StaticRopeChunkRegistryTest {
                 RopeAttachment.DOUBLE_DEFAULT, RopeAttachment.DOUBLE_DEFAULT,
                 RopeAttachment.DOUBLE_DEFAULT, RopeAttachment.DOUBLE_DEFAULT,
                 RopeAttachment.DOUBLE_DEFAULT, Map.of());
+    }
+
+    private static RopeSectionSnapshot bakedSnapshot(UUID connectionId) {
+        return new RopeSectionSnapshot(
+                connectionId,
+                new double[] { 0.0D, 1.0D }, new double[] { 0.0D, 0.0D }, new double[] { 0.0D, 0.0D },
+                new float[] { 1.0F, 1.0F }, new float[] { 0.0F, 0.0F }, new float[] { 0.0F, 0.0F },
+                new float[] { 0.0F, 0.0F }, new float[] { 1.0F, 1.0F }, new float[] { 0.0F, 0.0F },
+                new int[] { 0, 0 }, new int[] { 0xFFFFFFFF });
     }
 }

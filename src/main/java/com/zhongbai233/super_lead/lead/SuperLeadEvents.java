@@ -21,6 +21,8 @@ import net.neoforged.neoforge.event.entity.player.PlayerEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerInteractEvent;
 import net.neoforged.neoforge.event.level.BlockEvent;
 import net.neoforged.neoforge.event.level.ChunkWatchEvent;
+import net.neoforged.neoforge.event.level.ChunkEvent;
+import net.neoforged.neoforge.event.level.block.BreakBlockEvent;
 import net.neoforged.neoforge.event.tick.LevelTickEvent;
 import org.slf4j.Logger;
 
@@ -635,6 +637,16 @@ public final class SuperLeadEvents {
         LeadSignalService.markRedstoneDirty(level);
         ServerRopeCurve.invalidateTerrain(level);
         SuperLeadNetwork.pruneInvalidNearBlock(level, event.getPos());
+        LeadTransferService.markAeChunkDirty(level, SuperLeadSavedData.chunkKey(event.getPos().getX() >> 4,
+            event.getPos().getZ() >> 4));
+    }
+
+    @SubscribeEvent
+    public static void onBlockBreak(BreakBlockEvent event) {
+        if (event.getLevel() instanceof net.minecraft.server.level.ServerLevel level) {
+            LeadTransferService.markAeChunkDirty(level, SuperLeadSavedData.chunkKey(event.getPos().getX() >> 4,
+                    event.getPos().getZ() >> 4));
+        }
     }
 
     @SubscribeEvent
@@ -642,6 +654,22 @@ public final class SuperLeadEvents {
         if (event.getLevel() instanceof net.minecraft.server.level.ServerLevel level) {
             LeadSignalService.markRedstoneDirty(level);
             SuperLeadNetwork.pruneInvalidNearBlock(level, event.getPos());
+            LeadTransferService.markAeChunkDirty(level, SuperLeadSavedData.chunkKey(event.getPos().getX() >> 4,
+                    event.getPos().getZ() >> 4));
+        }
+    }
+
+    @SubscribeEvent
+    public static void onChunkLoad(ChunkEvent.Load event) {
+        if (event.getLevel() instanceof net.minecraft.server.level.ServerLevel level) {
+            LeadTransferService.markAeChunkDirty(level, SuperLeadSavedData.chunkKey(event.getChunk().getPos()));
+        }
+    }
+
+    @SubscribeEvent
+    public static void onChunkUnload(ChunkEvent.Unload event) {
+        if (event.getLevel() instanceof net.minecraft.server.level.ServerLevel level) {
+            LeadTransferService.markAeChunkDirty(level, SuperLeadSavedData.chunkKey(event.getChunk().getPos()));
         }
     }
 

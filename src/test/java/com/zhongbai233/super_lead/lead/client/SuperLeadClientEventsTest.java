@@ -20,6 +20,14 @@ import net.minecraft.world.phys.Vec3;
 import org.junit.jupiter.api.Test;
 
 class SuperLeadClientEventsTest {
+
+    @Test
+    void pickingIndexIsSkippedWithoutAnInteractionThatQueriesIt() {
+        assertFalse(SuperLeadClientEvents.shouldBuildPickingIndex(false, false, false));
+        assertTrue(SuperLeadClientEvents.shouldBuildPickingIndex(true, false, false));
+        assertTrue(SuperLeadClientEvents.shouldBuildPickingIndex(false, true, false));
+        assertTrue(SuperLeadClientEvents.shouldBuildPickingIndex(false, false, true));
+    }
     @Test
     void circularNeighborScanVisitsEveryIndexFromRotatedStart() {
         assertEquals(3, SuperLeadClientEvents.circularIndex(3, 0, 5));
@@ -165,6 +173,33 @@ class SuperLeadClientEventsTest {
     }
 
     @Test
+    void staleEmptySnapshotDoesNotPermanentlyHoldSettledRopeDynamic() {
+        assertFalse(SuperLeadClientEvents.snapshotRequiresDynamicHold(100L, 107L, false));
+    }
+
+    @Test
+    void missingOrActiveSnapshotConservativelyKeepsRopeDynamic() {
+        assertTrue(SuperLeadClientEvents.snapshotRequiresDynamicHold(Long.MIN_VALUE, 107L, false));
+        assertTrue(SuperLeadClientEvents.snapshotRequiresDynamicHold(100L, 107L, true));
+        assertTrue(SuperLeadClientEvents.snapshotRequiresDynamicHold(108L, 107L, false));
+    }
+
+    @Test
+    void acceptedActiveMeshDoesNotReenterDynamicFromMissingDynamicSnapshots() {
+        assertFalse(SuperLeadClientEvents.shouldEvaluateDynamicRelease(true, false));
+    }
+
+    @Test
+    void claimedMeshStillEvaluatesReleaseWhileDynamicallyLingering() {
+        assertTrue(SuperLeadClientEvents.shouldEvaluateDynamicRelease(true, true));
+    }
+
+    @Test
+    void unacceptedRopeEvaluatesDynamicReleaseReasons() {
+        assertTrue(SuperLeadClientEvents.shouldEvaluateDynamicRelease(false, false));
+    }
+
+    @Test
     void lowDetailShapeStartsRefinementWhenEnteringPhysicsRange() {
         assertTrue(SuperLeadClientEvents.shouldStartLodRefinement(true, false, 24.0D, 25.0D));
     }
@@ -182,6 +217,18 @@ class SuperLeadClientEventsTest {
     @Test
     void refinementWaitsUntilStrictlyInsideFineTopologyRange() {
         assertFalse(SuperLeadClientEvents.shouldStartLodRefinement(true, false, 25.0D, 25.0D));
+    }
+
+    @Test
+    void acceptedStaticMeshIgnoresStableRopeContact() {
+        assertFalse(SuperLeadClientEvents.shouldWakeAcceptedStaticFromMotionForTest(
+                0.02D * 0.02D, false));
+    }
+
+    @Test
+    void acceptedStaticMeshStillWakesForDrivenContact() {
+        assertTrue(SuperLeadClientEvents.shouldWakeAcceptedStaticFromMotionForTest(
+                0.02D * 0.02D, true));
     }
 
     @Test
@@ -221,13 +268,28 @@ class SuperLeadClientEventsTest {
     }
 
     @Test
-    void externalContactWakesStaticMesh() {
+    void externalContactWithoutMotionDoesNotChurnStaticMesh() {
         RopeSimulation pushed = new RopeSimulation(
                 new Vec3(0.0D, 2.0D, 0.0D), new Vec3(4.0D, 2.0D, 0.0D),
                 2L, RopeTuning.localDefaults());
         pushed.setExternalContact(100L, 0.5F, 0.2D, 0.0D, 0.0D);
 
-        assertTrue(SuperLeadClientEvents.shouldWakeStaticFromContact(pushed, 100L));
+        assertFalse(SuperLeadClientEvents.shouldWakeStaticFromContact(pushed, 100L));
+    }
+
+    @Test
+    void stableStackCorrectionDoesNotWakeStaticMesh() {
+        assertFalse(SuperLeadClientEvents.shouldWakeStaticFromContact(1.0e-4D, false));
+    }
+
+    @Test
+    void visibleUndrivenImpactWakesStaticMesh() {
+        assertTrue(SuperLeadClientEvents.shouldWakeStaticFromContact(4.0e-4D, false));
+    }
+
+    @Test
+    void drivenContactUsesSensitiveWakeThreshold() {
+        assertTrue(SuperLeadClientEvents.shouldWakeStaticFromContact(4.0e-5D, true));
     }
 
     @Test
@@ -329,6 +391,28 @@ class SuperLeadClientEventsTest {
         assertEquals(0.10F,
                 SuperLeadClientEvents.updatedCollisionRenderPhase(first, 101L, 0.10F).partialTick(),
                 1.0e-6F);
+    }
+
+    @Test
+    void playerContactRestartsInterpolationOnlyOnContactEdge() {
+        assertTrue(SuperLeadClientEvents.shouldRestartContactRenderInterpolation(null, 100L));
+        assertFalse(SuperLeadClientEvents.shouldRestartContactRenderInterpolation(100L, 100L));
+        assertFalse(SuperLeadClientEvents.shouldRestartContactRenderInterpolation(100L, 101L));
+    }
+
+    @Test
+    void playerContactRestartsAfterGapOrClockRewind() {
+        assertTrue(SuperLeadClientEvents.shouldRestartContactRenderInterpolation(100L, 102L));
+        assertTrue(SuperLeadClientEvents.shouldRestartContactRenderInterpolation(100L, 50L));
+    }
+
+    @Test
+    void playerContactRecoveryKeepsAsyncPhysicsDisabledBriefly() {
+        assertTrue(SuperLeadClientEvents.isRecentPlayerContact(100L, 100L));
+        assertTrue(SuperLeadClientEvents.isRecentPlayerContact(100L, 102L));
+        assertFalse(SuperLeadClientEvents.isRecentPlayerContact(100L, 103L));
+        assertFalse(SuperLeadClientEvents.isRecentPlayerContact(100L, 99L));
+        assertFalse(SuperLeadClientEvents.isRecentPlayerContact(null, 100L));
     }
 
     @Test

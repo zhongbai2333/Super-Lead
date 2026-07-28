@@ -222,8 +222,9 @@ public final class SuperLeadCommands {
             return 0;
         }
         ctx.getSource().sendSuccess(() -> Component.literal(String.format(Locale.ROOT,
-                "Super Lead physics tick=%d total=%.3fms entries=%d budget=%d/%d deadline=%s",
-                snapshot.tick(), snapshot.physicsMs(), snapshot.entries(), snapshot.budgetUsed(),
+                "Super Lead physics tick=%d total=%.3fms maint=%.3fms solve=%.3fms defer=%d entries=%d budget=%d/%d deadline=%s",
+                snapshot.tick(), snapshot.physicsMs(), snapshot.maintenanceMs(), snapshot.solvePassMs(),
+                snapshot.deferredEntries(), snapshot.entries(), snapshot.budgetUsed(),
                 snapshot.budgetMax(), snapshot.deadlineExhausted() ? "EXHAUSTED" : "ok"))
                 .withStyle(snapshot.deadlineExhausted() ? ChatFormatting.RED : ChatFormatting.GOLD), false);
         ctx.getSource().sendSuccess(() -> Component.literal(String.format(Locale.ROOT,
@@ -239,9 +240,12 @@ public final class SuperLeadCommands {
                 snapshot.entityQueryMs(), snapshot.entityQueries(), snapshot.entityRaw(),
                 snapshot.entityContacts(), snapshot.releaseMs())), false);
         ctx.getSource().sendSuccess(() -> Component.literal(String.format(Locale.ROOT,
-                "  asyncPrepare=%.3fms submitted=%d pending=%d capacity=%d running=%d retained=%d",
+                "  asyncPrepare=%.3fms submitted=%d pending=%d capacity=%d running=%d retained=%d workerQ=%.3fms solve=%.3fms age=%.3fms cancel=%.3fms done=%d stale=%d failed=%d cancelled=%d",
                 snapshot.asyncPrepareMs(), snapshot.asyncSubmitted(), snapshot.asyncPending(),
-                snapshot.asyncCapacity(), snapshot.asyncRunning(), snapshot.asyncRetained())), false);
+                snapshot.asyncCapacity(), snapshot.asyncRunning(), snapshot.asyncRetained(),
+                snapshot.asyncQueueWaitMs(), snapshot.asyncSolveMs(), snapshot.asyncOldestPendingMs(), snapshot.asyncCancelledRunningMs(),
+                snapshot.asyncCompleted(), snapshot.asyncStaleDiscard(), snapshot.asyncFailed(),
+                snapshot.asyncCancelled())), false);
         ctx.getSource().sendSuccess(() -> Component.literal(
                 "  overload budgetSkips=" + snapshot.budgetSkips()
                         + " circuitBreakers=" + snapshot.circuitBreakerSkips()

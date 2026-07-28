@@ -94,7 +94,7 @@ public final class SuperLeadClientPayloads {
         StaticRopeChunkRegistry.get()
                 .onConnectionsChanged(level, current, delta.changedIds());
         SuperLeadClientEvents.disturbConnections(
-                level, delta.changedIds(), level.getGameTime() + 8L);
+                level, delta.changedIds(), level.getGameTime() + 8L, "network-chunk-sync");
     }
 
     private static void handleUnloadRopeChunk(UnloadRopeChunk payload, IPayloadContext context) {
@@ -108,7 +108,7 @@ public final class SuperLeadClientPayloads {
         StaticRopeChunkRegistry.get()
                 .onConnectionsChanged(level, current, delta.changedIds());
         SuperLeadClientEvents.disturbConnections(
-                level, delta.changedIds(), level.getGameTime() + 8L);
+                level, delta.changedIds(), level.getGameTime() + 8L, "network-chunk-unload");
     }
 
         static Set<UUID> changedConnectionIds(List<LeadConnection> previous, List<LeadConnection> current) {
@@ -151,7 +151,7 @@ public final class SuperLeadClientPayloads {
         long now = level.getGameTime();
         long pulseEndTick = Math.max(now, payload.startTick()) + payload.durationTicks() + 2L;
         StaticRopeChunkRegistry.get()
-                .holdDynamic(level, payload.connectionId(), pulseEndTick);
+                .holdDynamic(level, payload.connectionId(), pulseEndTick, "item-pulse");
     }
 
     private static void handleRopeContactPulse(RopeContactPulse payload, IPayloadContext context) {

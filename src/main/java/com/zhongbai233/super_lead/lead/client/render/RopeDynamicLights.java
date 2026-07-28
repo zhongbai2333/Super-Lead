@@ -41,7 +41,6 @@ public final class RopeDynamicLights {
     private static final double EFFECT_RADIUS = 7.75D;
     private static final double EFFECT_RADIUS_SQR = EFFECT_RADIUS * EFFECT_RADIUS;
     private static final double LIGHT_FALLOFF_PER_BLOCK = 2.0D;
-    private static final double SOURCE_MOVE_DIRTY_DISTANCE_SQR = 0.25D * 0.25D;
     private static final int DIRTY_BLOCK_RADIUS = 8;
     private static final int MAX_LIGHT = 15;
     private static final int FALLBACK_NODE_COUNT = 16;
@@ -323,8 +322,17 @@ public final class RopeDynamicLights {
         for (Map.Entry<BlockPos, Source> entry : desired.entrySet()) {
             Source old = ACTIVE.get(entry.getKey());
             Source next = entry.getValue();
-            if (old == null || old.blockLight != next.blockLight
-                    || old.distanceToSqr(next) > SOURCE_MOVE_DIRTY_DISTANCE_SQR) {
+            // Rebuild-dirtiness is quantized to the light's per-block quantity: a new
+            // source block or a changed emitted level. Sub-block movement keeps
+            // updating the continuous Source position (per-frame boosts read it live)
+            // but never marks chunk geometry dirty — vanilla light is per-block, so a
+            // sway inside one block shifts nearby light by at most one level. The old
+            // 0.25-block movement trigger let a swinging attachment on a breathing
+            // rope re-dirty an 8-block radius of sections every tick, and through
+            // StaticRopeChunkRegistry.requestLightRebuildNear that churn re-baked
+            // every claimed rope nearby — the feedback loop that made ropes with
+            // attachments cycle in and out of their meshes far more than bare ropes.
+            if (old == null || old.blockLight != next.blockLight) {
                 dirty.add(entry.getKey());
             }
             ACTIVE.put(entry.getKey(), next);
@@ -427,12 +435,6 @@ public final class RopeDynamicLights {
     }
 
     record Source(double x, double y, double z, int blockLight) {
-        double distanceToSqr(Source other) {
-            double dx = x - other.x;
-            double dy = y - other.y;
-            double dz = z - other.z;
-            return dx * dx + dy * dy + dz * dz;
-        }
     }
 
     private record LightCell(int x, int y, int z) {

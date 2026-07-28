@@ -179,6 +179,9 @@ public final class RopeStaticGeometry {
         return new Points3(outX, outY, outZ);
     }
 
+    static record Points3(double[] x, double[] y, double[] z) {
+    }
+
     private static Points3 densifyForVisualStripes(Points3 points, RopeTuning tuning) {
         return densifyForVisualStripes(points.x(), points.y(), points.z(), tuning);
     }
@@ -187,8 +190,9 @@ public final class RopeStaticGeometry {
         if (x.length < 2) {
             return new Points3(x, y, z);
         }
-        double stripeLength = Math.max(0.05D, tuning.visualSegmentLength());
-        double visualScale = visualArcScale(x, y, z, tuning);
+        RopeTuning effectiveTuning = tuning != null ? tuning : RopeTuning.localDefaults();
+        double stripeLength = Math.max(0.05D, effectiveTuning.visualSegmentLength());
+        double visualScale = visualArcScale(x, y, z, effectiveTuning);
         double geometryStripeLength = stripeLength / visualScale;
         int outCount = densifiedPointCount(x, y, z, geometryStripeLength);
         double[] outX = new double[outCount];
@@ -227,7 +231,13 @@ public final class RopeStaticGeometry {
             out++;
             arcStart = arcEnd;
         }
-        return new Points3(outX, outY, outZ);
+        if (out == outCount) {
+            return new Points3(outX, outY, outZ);
+        }
+        return new Points3(
+                java.util.Arrays.copyOf(outX, out),
+                java.util.Arrays.copyOf(outY, out),
+                java.util.Arrays.copyOf(outZ, out));
     }
 
     private static int densifiedPointCount(double[] x, double[] y, double[] z, double geometryStripeLength) {
@@ -255,9 +265,6 @@ public final class RopeStaticGeometry {
             arcStart = arcEnd;
         }
         return count;
-    }
-
-    static record Points3(double[] x, double[] y, double[] z) {
     }
 
     private static RopeStaticGeometryResult finalizeSnapshot(java.util.UUID id,
@@ -388,13 +395,6 @@ public final class RopeStaticGeometry {
         return new RopeStaticGeometryResult(relit, existing.sectionKeys);
     }
 
-    /**
-     * Maps every generated mesh segment back to the same world-length stripe used
-     * by the dynamic renderer. Static geometry inserts nodes both at stripe
-     * boundaries and at original simulation nodes, so using the generated segment
-     * index directly would introduce an extra color transition at every original
-     * node and make the pattern look compressed and uneven.
-     */
     static int[] buildSegmentStripeIndices(double[] x, double[] y, double[] z, double stripeLength) {
         return buildSegmentStripeIndices(x, y, z, stripeLength, 1.0D);
     }
@@ -419,9 +419,6 @@ public final class RopeStaticGeometry {
             double dy = y[i + 1] - y[i];
             double dz = z[i + 1] - z[i];
             double segmentLength = Math.sqrt(dx * dx + dy * dy + dz * dz);
-            // Densification already splits segments at visual stripe boundaries.
-            // Sampling the midpoint avoids assigning a boundary-adjacent segment to
-            // the previous stripe because of float-coordinate rounding.
             double arcMid = (arcStart + segmentLength * 0.5D) * safeVisualScale;
             stripes[i] = (int) Math.floor(Math.max(0.0D, arcMid) / safeStripeLength + 1.0e-6D);
             arcStart += segmentLength;

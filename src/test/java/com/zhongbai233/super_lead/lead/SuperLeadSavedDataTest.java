@@ -14,6 +14,48 @@ import org.junit.jupiter.api.Test;
 
 class SuperLeadSavedDataTest {
     @Test
+    void aeTopologyGenerationTracksOnlyLogicalTopology() {
+        SuperLeadSavedData data = new SuperLeadSavedData();
+        LeadConnection ae = connection("00000000-0000-0000-0000-000000000032",
+                new BlockPos(0, 64, 0), new BlockPos(8, 64, 0), LeadKind.AE_NETWORK);
+        data.add(ae);
+        long added = data.aeTopologyGeneration();
+
+        data.update(ae.id(), old -> old.withPower(5).withPhysicsPreset("soft"), true);
+        assertEquals(added, data.aeTopologyGeneration());
+        data.update(ae.id(), old -> old.withTier(1), true);
+        assertEquals(added + 1, data.aeTopologyGeneration());
+        data.update(ae.id(), old -> old.withTier(2), true);
+        assertEquals(added + 1, data.aeTopologyGeneration());
+        data.update(ae.id(), old -> new LeadConnection(old.id(),
+                new LeadAnchor(old.from().pos(), old.from().face(), new net.minecraft.world.phys.Vec3(0.2, 64.2, 0.2)),
+                old.to(), old.kind(), old.power(), old.tier(), old.extractAnchor(), old.lengthUnits(),
+                old.attachments(), old.physicsPreset(), old.manualPhysicsPreset(), old.adventureOwner()), true);
+        assertEquals(added + 1, data.aeTopologyGeneration());
+        data.update(ae.id(), old -> new LeadConnection(old.id(),
+                new LeadAnchor(old.from().pos(), Direction.NORTH), old.to(), old.kind(), old.power(), old.tier(),
+                old.extractAnchor(), old.lengthUnits(), old.attachments(), old.physicsPreset(),
+                old.manualPhysicsPreset(), old.adventureOwner()), true);
+        assertEquals(added + 2, data.aeTopologyGeneration());
+        data.update(ae.id(), old -> old.withKind(LeadKind.NORMAL), true);
+        assertEquals(added + 3, data.aeTopologyGeneration());
+    }
+
+        @Test
+        void directReplacementCountsAeTopologyOnce() {
+                SuperLeadSavedData data = new SuperLeadSavedData();
+                LeadConnection normal = connection("00000000-0000-0000-0000-000000000033",
+                                new BlockPos(0, 64, 0), new BlockPos(8, 64, 0), LeadKind.NORMAL);
+                data.add(normal);
+                data.add(normal.withKind(LeadKind.AE_NETWORK));
+                assertEquals(1L, data.aeTopologyGeneration());
+                data.add(normal.withKind(LeadKind.AE_NETWORK).withPower(7));
+                assertEquals(1L, data.aeTopologyGeneration());
+                data.add(normal);
+                assertEquals(2L, data.aeTopologyGeneration());
+        }
+
+    @Test
     void addTracksOwnedReferencedAndDirtyChunks() {
         SuperLeadSavedData data = new SuperLeadSavedData();
         LeadConnection connection = connection("00000000-0000-0000-0000-000000000001",

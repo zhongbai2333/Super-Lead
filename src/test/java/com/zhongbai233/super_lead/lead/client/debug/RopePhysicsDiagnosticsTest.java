@@ -60,4 +60,33 @@ class RopePhysicsDiagnosticsTest {
         assertEquals(10.0D, summary.physicsMaxMs(), 1.0e-9D);
         assertEquals(0.4D, summary.entityAverageMs(), 1.0e-9D);
     }
+
+    @Test
+    void asyncCompletionBeforeBeginIsMergedIntoNextSnapshot() {
+        RopePhysicsDiagnostics.recordAsyncWorker(100_000L, 800_000L, 300_000L, "cancelled");
+        RopePhysicsDiagnostics.recordAsyncWorker(200_000L, 900_000L, 0L, "stale");
+
+        RopePhysicsDiagnostics.begin(20L);
+        RopePhysicsDiagnostics.finishPhysics(1L, 0, 0, 0, false, 0, 0);
+        RopePhysicsDiagnostics.finishRelease(1L);
+
+        RopePhysicsDiagnostics.Snapshot snapshot = RopePhysicsDiagnostics.snapshot();
+        assertEquals(1, snapshot.asyncCancelled());
+        assertEquals(1, snapshot.asyncStaleDiscard());
+        assertEquals(0.3D, snapshot.asyncQueueWaitMs(), 1.0e-9D);
+        assertEquals(1.7D, snapshot.asyncSolveMs(), 1.0e-9D);
+        assertEquals(0.3D, snapshot.asyncCancelledRunningMs(), 1.0e-9D);
+    }
+
+    @Test
+    void everyDeferredPathCanIncrementSnapshotCount() {
+        RopePhysicsDiagnostics.begin(30L);
+        RopePhysicsDiagnostics.recordDeferredEntry();
+        RopePhysicsDiagnostics.recordDeferredEntry();
+        RopePhysicsDiagnostics.recordSolvePass(100L);
+        RopePhysicsDiagnostics.finishPhysics(1L, 2, 0, 2, true, 0, 0);
+        RopePhysicsDiagnostics.finishRelease(1L);
+
+        assertEquals(2, RopePhysicsDiagnostics.snapshot().deferredEntries());
+    }
 }

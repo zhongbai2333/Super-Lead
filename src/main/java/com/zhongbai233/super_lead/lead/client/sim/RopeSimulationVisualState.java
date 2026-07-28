@@ -152,6 +152,29 @@ abstract class RopeSimulationVisualState extends RopeSimulationRenderCache {
     }
 
     /**
+     * Freezes the hidden live simulation at the exact polyline accepted into the
+     * chunk mesh. Unlike a refinement restore this remains settled: no skipped time
+     * or stale velocity may accumulate while the baked pixels are visible.
+     */
+    public void freezeAtStaticMesh(
+            double[] sourceX, double[] sourceY, double[] sourceZ,
+            Vec3 a, Vec3 b, long currentTick) {
+        restoreShapeForRefinement(sourceX, sourceY, sourceZ, a, b);
+        settledTicks = settleThresholdTicks;
+        quietTicks = Math.max(quietTicks, settleThresholdTicks);
+        ropeStackQuietTicks = Math.max(ropeStackQuietTicks, settleThresholdTicks);
+        lastTouchTick = currentTick;
+        lastSteppedTick = currentTick;
+        endpointInit = true;
+        lastAx = a.x;
+        lastAy = a.y;
+        lastAz = a.z;
+        lastBx = b.x;
+        lastBy = b.y;
+        lastBz = b.z;
+    }
+
+    /**
      * Preserve the currently restored mesh shape as a cross-tick render origin.
      * Physics may advance immediately; rendering catches up over a few ticks instead
      * of relying on another frame occurring inside this same logical tick.

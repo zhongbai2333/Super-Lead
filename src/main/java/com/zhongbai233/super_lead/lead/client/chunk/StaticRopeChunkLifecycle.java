@@ -46,7 +46,8 @@ public final class StaticRopeChunkLifecycle {
                 SuperLeadClientEvents.disturbConnections(
                         level,
                     conns.stream().map(connection -> connection.id()).toList(),
-                        level.getGameTime() + 8L);
+                        level.getGameTime() + 8L,
+                        "client-tuning-change");
             }
         });
     }

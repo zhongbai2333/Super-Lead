@@ -45,6 +45,25 @@ class RopeStaticGeometryTest {
     }
 
     @Test
+    void coarsePhysicsSegmentsStillCrossEveryVisualStripe() {
+        RopeTuning tuning = RopeTuning.localDefaults();
+        double[] coarseX = { 0.0D, 1.0D, 2.0D };
+        double[] fineX = { 0.0D, 0.5D, 1.0D, 1.5D, 2.0D };
+        int[] coarseStripes = distinctStripes(coarseX, tuning.withTopology(1.0D, 2));
+        int[] fineStripes = distinctStripes(fineX, tuning.withTopology(0.5D, 4));
+
+        assertArrayEquals(fineStripes, coarseStripes);
+        assertEquals((int) Math.ceil(2.0D / tuning.visualSegmentLength()), coarseStripes.length);
+    }
+
+        private static int[] distinctStripes(double[] x, RopeTuning tuning) {
+        double[] flat = new double[x.length];
+        RopeStaticGeometry.Points3 dense = RopeStaticGeometry.densifyForVisualStripes(x, flat, flat, tuning);
+        return java.util.Arrays.stream(RopeStaticGeometry.buildSegmentStripeIndices(
+            dense.x(), dense.y(), dense.z(), tuning)).distinct().toArray();
+        }
+
+    @Test
     void stripePhaseFollowsThreeDimensionalArcLength() {
         double[] x = { 0.0D, 0.3D, 0.3D, 0.3D };
         double[] y = { 0.0D, 0.0D, 0.4D, 0.4D };

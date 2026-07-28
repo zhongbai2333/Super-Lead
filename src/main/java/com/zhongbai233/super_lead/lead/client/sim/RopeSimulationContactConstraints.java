@@ -1,6 +1,7 @@
 package com.zhongbai233.super_lead.lead.client.sim;
 
 import com.zhongbai233.super_lead.lead.client.geom.RopeMath;
+import com.zhongbai233.super_lead.lead.physics.RopeSolver;
 import java.util.List;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
@@ -31,13 +32,18 @@ abstract class RopeSimulationContactConstraints extends RopeSimulationTerrainCon
     // Constraint: distance (XPBD)
     // ============================================================================================
     protected double solveDistanceConstraints(double targetLen, double alphaTilde, boolean forward) {
+        return solveDistanceConstraints(targetLen, alphaTilde, forward, false);
+    }
+
+    protected double solveDistanceConstraints(
+            double targetLen, double alphaTilde, boolean forward, boolean tensileOnly) {
         double maxAbsError = 0.0D;
         if (forward) {
             for (int i = 0; i < segments; i++)
-                maxAbsError = Math.max(maxAbsError, solveDistance(i, targetLen, alphaTilde));
+                maxAbsError = Math.max(maxAbsError, solveDistance(i, targetLen, alphaTilde, tensileOnly));
         } else {
             for (int i = segments - 1; i >= 0; i--)
-                maxAbsError = Math.max(maxAbsError, solveDistance(i, targetLen, alphaTilde));
+                maxAbsError = Math.max(maxAbsError, solveDistance(i, targetLen, alphaTilde, tensileOnly));
         }
         return maxAbsError;
     }
@@ -50,11 +56,15 @@ abstract class RopeSimulationContactConstraints extends RopeSimulationTerrainCon
      * sweeps remove the small residual stretch without biasing either anchor.
      */
     protected void finalizeFreeDistanceConstraints(double targetLen) {
-        solveDistanceConstraints(targetLen, 0.0D, true);
-        solveDistanceConstraints(targetLen, 0.0D, false);
+        finalizeFreeDistanceConstraints(targetLen, false);
     }
 
-    private double solveDistance(int seg, double targetLen, double alphaTilde) {
+    protected void finalizeFreeDistanceConstraints(double targetLen, boolean tensileOnly) {
+        solveDistanceConstraints(targetLen, 0.0D, true, tensileOnly);
+        solveDistanceConstraints(targetLen, 0.0D, false, tensileOnly);
+    }
+
+    private double solveDistance(int seg, double targetLen, double alphaTilde, boolean tensileOnly) {
         int i = seg;
         int j = seg + 1;
         double dx = x[j] - x[i];
@@ -63,18 +73,15 @@ abstract class RopeSimulationContactConstraints extends RopeSimulationTerrainCon
         double len = Math.sqrt(dx * dx + dy * dy + dz * dz);
         if (len < 1e-9)
             return 0.0D;
-        double w1 = pinned[i] ? 0.0D : 1.0D;
-        double w2 = pinned[j] ? 0.0D : 1.0D;
-        double wsum = w1 + w2;
-        if (wsum == 0.0D)
-            return 0.0D;
         double C = len - targetLen;
-        double dlambda = (-C - alphaTilde * lambdaDistance[seg]) / (wsum + alphaTilde);
-        lambdaDistance[seg] += dlambda;
-        double nx = dx / len, ny = dy / len, nz = dz / len;
-        double cx = nx * dlambda, cy = ny * dlambda, cz = nz * dlambda;
-        applyCorrection(i, -cx * w1, -cy * w1, -cz * w1);
-        applyCorrection(j, cx * w2, cy * w2, cz * w2);
+        if (RopeSolver.computeDistanceCorrection(seg, targetLen, alphaTilde,
+                lambdaDistance, x, y, z, pinned[i], pinned[j], tensileOnly,
+                distanceCorrectionScratch)) {
+            applyCorrection(i, distanceCorrectionScratch[0], distanceCorrectionScratch[1],
+                    distanceCorrectionScratch[2]);
+            applyCorrection(j, distanceCorrectionScratch[3], distanceCorrectionScratch[4],
+                    distanceCorrectionScratch[5]);
+        }
         return Math.abs(C);
     }
 
@@ -82,12 +89,12 @@ abstract class RopeSimulationContactConstraints extends RopeSimulationTerrainCon
     // Constraint: rope-rope
     // ============================================================================================
     protected void solveRopeRopeConstraints(List<RopeSimulation> neighbors) {
-        final double m = ropeRepelDistance;
         refreshSegmentAabbs();
         final double[] amin = this.segAabb;
         final int aSegs = this.segments;
         for (int n = 0; n < neighbors.size(); n++) {
             RopeSimulation other = neighbors.get(n);
+            double m = ropeContactDistance(other);
             if (!prepareNeighborForRopeRopeSolve(other, m))
                 continue;
             solveNeighborSegmentPairs(other, amin, aSegs, m);
@@ -121,7 +128,7 @@ abstract class RopeSimulationContactConstraints extends RopeSimulationTerrainCon
         for (int j = 0; j < bSegs; j++) {
             int ob = j * 6;
             if (segmentAabbsOverlap(amin, offset, bmin, ob, margin)) {
-                solveSegmentPairNoCheck(other, segment, j);
+                solveSegmentPairNoCheck(other, segment, j, margin);
             }
         }
     }
@@ -156,27 +163,12 @@ abstract class RopeSimulationContactConstraints extends RopeSimulationTerrainCon
             double ax0 = x[i], ay0 = y[i], az0 = z[i];
             double ax1 = x[i + 1], ay1 = y[i + 1], az1 = z[i + 1];
             int o = i * 6;
-            if (ax0 < ax1) {
-                sa[o] = ax0;
-                sa[o + 3] = ax1;
-            } else {
-                sa[o] = ax1;
-                sa[o + 3] = ax0;
-            }
-            if (ay0 < ay1) {
-                sa[o + 1] = ay0;
-                sa[o + 4] = ay1;
-            } else {
-                sa[o + 1] = ay1;
-                sa[o + 4] = ay0;
-            }
-            if (az0 < az1) {
-                sa[o + 2] = az0;
-                sa[o + 5] = az1;
-            } else {
-                sa[o + 2] = az1;
-                sa[o + 5] = az0;
-            }
+            sa[o] = Math.min(ax0, ax1);
+            sa[o + 3] = Math.max(ax0, ax1);
+            sa[o + 1] = Math.min(ay0, ay1);
+            sa[o + 4] = Math.max(ay0, ay1);
+            sa[o + 2] = Math.min(az0, az1);
+            sa[o + 5] = Math.max(az0, az1);
         }
     }
 
@@ -446,7 +438,7 @@ abstract class RopeSimulationContactConstraints extends RopeSimulationTerrainCon
         }
     }
 
-    private void solveSegmentPairNoCheck(RopeSimulation other, int i, int j) {
+    private void solveSegmentPairNoCheck(RopeSimulation other, int i, int j, double contactDistance) {
         // In parallel mode every cross-rope read goes through the tick-start snapshot
         // the
         // driver published in preparePhysicsParallel. This downgrades inter-rope
@@ -463,24 +455,24 @@ abstract class RopeSimulationContactConstraints extends RopeSimulationTerrainCon
                 x[i], y[i], z[i], x[i + 1], y[i + 1], z[i + 1],
                 oX[j], oY[j], oZ[j], oX[j + 1], oY[j + 1], oZ[j + 1],
                 pairScratch);
-        if (pairScratch.distSqr >= ropeRepelDistance * ropeRepelDistance)
-            return;
-
         double s = pairScratch.s;
         double dist = Math.sqrt(pairScratch.distSqr);
         double nx, ny, nz;
-        if (dist < 1.0e-6D) {
+        double penetration;
+        if (dist >= contactDistance) {
+            return;
+        } else if (dist < 1.0e-6D) {
             Vec3 separation = pairStableSeparation(simulationSeed, other.simulationSeed);
             nx = separation.x;
             ny = separation.y;
             nz = separation.z;
+            penetration = contactDistance;
         } else {
             nx = pairScratch.dx / dist;
             ny = pairScratch.dy / dist;
             nz = pairScratch.dz / dist;
+            penetration = contactDistance - dist;
         }
-
-        double penetration = ropeRepelDistance - dist;
 
         // Inverse mass per contact point: w = (1-t)^2 * w_i + t^2 * w_{i+1}.
         // Important: this per-rope step must not mutate `other`. The client driver
@@ -512,14 +504,35 @@ abstract class RopeSimulationContactConstraints extends RopeSimulationTerrainCon
         if (parallelPhase())
             dlambda *= ropeRopeParallelRelax;
 
+        // Retain the actual contact-point correction, not the XPBD multiplier.
+        // applyContactPointVelocityDelta already accounts for effective mass, so
+        // storing dlambda directly would amplify friction by 1 / wA.
+        recordRopeContactPair(i, other, j, s, pairScratch.t, nx, ny, nz, dlambda * wA);
+
         double cx = nx * dlambda, cy = ny * dlambda, cz = nz * dlambda;
         applyRopeRopeCorrection(i, (1.0D - s) * (pinned[i] ? 0.0D : 1.0D),
-                cx, cy, cz);
+                cx, cy, cz, nx, ny, nz);
         applyRopeRopeCorrection(i + 1, s * (pinned[i + 1] ? 0.0D : 1.0D),
-                cx, cy, cz);
+                cx, cy, cz, nx, ny, nz);
     }
 
-    private void applyRopeRopeCorrection(int i, double weight, double cx, double cy, double cz) {
+    private void recordRopeContactPair(int segment, RopeSimulation other, int otherSegment,
+            double selfT, double otherT, double nx, double ny, double nz, double normalCorrection) {
+        if (normalCorrection <= ropeContactNormalCorrection[segment]) {
+            return;
+        }
+        ropeContactOther[segment] = other;
+        ropeContactOtherSegment[segment] = otherSegment;
+        ropeContactSelfT[segment] = selfT;
+        ropeContactOtherT[segment] = otherT;
+        ropeContactPairNormalX[segment] = nx;
+        ropeContactPairNormalY[segment] = ny;
+        ropeContactPairNormalZ[segment] = nz;
+        ropeContactNormalCorrection[segment] = normalCorrection;
+    }
+
+    private void applyRopeRopeCorrection(int i, double weight, double cx, double cy, double cz,
+            double nx, double ny, double nz) {
         if (weight == 0.0D)
             return;
         double dx = cx * weight, dy = cy * weight, dz = cz * weight;
@@ -543,7 +556,169 @@ abstract class RopeSimulationContactConstraints extends RopeSimulationTerrainCon
         yPrev[i] += dy;
         zPrev[i] += dz;
         contactNode[i] = true;
+        ropeContactNode[i] = true;
+        ropeContactNormalX[i] += nx * weight;
+        ropeContactNormalY[i] += ny * weight;
+        ropeContactNormalZ[i] += nz * weight;
         markBoundsDirty();
+    }
+
+    /**
+     * Removes only velocity that would re-enter a rope-rope contact manifold.
+     * Tangential motion and already-separating motion are preserved.
+     */
+    protected void projectRopeContactVelocities() {
+        for (int i = 1; i < nodes - 1; i++) {
+            if (!ropeContactNode[i]) {
+                continue;
+            }
+            double nx = ropeContactNormalX[i];
+            double ny = ropeContactNormalY[i];
+            double nz = ropeContactNormalZ[i];
+            double lenSqr = nx * nx + ny * ny + nz * nz;
+            if (lenSqr <= 1.0e-12D) {
+                // Opposing contacts do not define one valid projection plane. Freezing all
+                // components here destroyed legitimate motion along a stack, so leave this
+                // ambiguous node to the retained pair contacts instead.
+                continue;
+            }
+            double invLen = 1.0D / Math.sqrt(lenSqr);
+            nx *= invLen;
+            ny *= invLen;
+            nz *= invLen;
+            double inward = vx[i] * nx + vy[i] * ny + vz[i] * nz;
+            if (inward < 0.0D) {
+                vx[i] -= nx * inward;
+                vy[i] -= ny * inward;
+                vz[i] -= nz * inward;
+            }
+        }
+    }
+
+    /**
+     * Resolves rope-rope velocity at retained segment-pair contacts. The neighbour
+     * is read-only: each rope applies its own response when it is stepped, avoiding
+     * cross-rope writes after a neighbour has already reconstructed its velocity.
+     */
+    protected void solveRopeContactVelocities(double h) {
+        if (!(h > 0.0D)) {
+            return;
+        }
+        double staticFriction = tuning.ropeRopeStaticFriction();
+        double dynamicFriction = tuning.ropeRopeDynamicFriction();
+        for (int segment = 0; segment < segments; segment++) {
+            RopeSimulation other = ropeContactOther[segment];
+            if (other == null) {
+                continue;
+            }
+            int otherSegment = ropeContactOtherSegment[segment];
+            double selfT = ropeContactSelfT[segment];
+            double otherT = ropeContactOtherT[segment];
+            double selfA = 1.0D - selfT;
+            double selfB = selfT;
+            double otherA = 1.0D - otherT;
+            double otherB = otherT;
+
+            double[] otherVx = parallelPhase() ? other.snapVx : other.vx;
+            double[] otherVy = parallelPhase() ? other.snapVy : other.vy;
+            double[] otherVz = parallelPhase() ? other.snapVz : other.vz;
+            double selfVx = vx[segment] * selfA + vx[segment + 1] * selfB;
+            double selfVy = vy[segment] * selfA + vy[segment + 1] * selfB;
+            double selfVz = vz[segment] * selfA + vz[segment + 1] * selfB;
+            double relativeX = selfVx
+                    - (otherVx[otherSegment] * otherA + otherVx[otherSegment + 1] * otherB);
+            double relativeY = selfVy
+                    - (otherVy[otherSegment] * otherA + otherVy[otherSegment + 1] * otherB);
+            double relativeZ = selfVz
+                    - (otherVz[otherSegment] * otherA + otherVz[otherSegment + 1] * otherB);
+
+            double nx = ropeContactPairNormalX[segment];
+            double ny = ropeContactPairNormalY[segment];
+            double nz = ropeContactPairNormalZ[segment];
+            double normalSpeed = relativeX * nx + relativeY * ny + relativeZ * nz;
+            double normalDelta = normalSpeed < 0.0D ? -normalSpeed : 0.0D;
+            relativeX += nx * normalDelta;
+            relativeY += ny * normalDelta;
+            relativeZ += nz * normalDelta;
+
+            double tangentSpeed = Math.sqrt(
+                    relativeX * relativeX + relativeY * relativeY + relativeZ * relativeZ);
+            double normalBudget = Math.max(normalDelta, ropeContactNormalCorrection[segment] / h);
+            double frictionDelta = 0.0D;
+            if (tangentSpeed > 1.0e-12D && staticFriction > 0.0D) {
+                double staticLimit = staticFriction * normalBudget;
+                frictionDelta = tangentSpeed <= staticLimit
+                        ? tangentSpeed
+                        : Math.min(tangentSpeed, dynamicFriction * normalBudget);
+            }
+
+            double deltaX = nx * normalDelta;
+            double deltaY = ny * normalDelta;
+            double deltaZ = nz * normalDelta;
+            if (frictionDelta > 0.0D) {
+                double scale = -frictionDelta / tangentSpeed;
+                deltaX += relativeX * scale;
+                deltaY += relativeY * scale;
+                deltaZ += relativeZ * scale;
+            }
+            applyContactPointVelocityDelta(segment, selfT, deltaX, deltaY, deltaZ);
+            applyRopeContactRockingResistance(segment, nx, ny, nz, normalBudget);
+        }
+    }
+
+    /**
+     * Damps the contact-point-zero rocking mode: the two segment endpoints can
+     * move in opposite normal directions while their interpolated contact point
+     * stays still, so ordinary point friction cannot see the motion. Equal and
+     * opposite endpoint impulses preserve segment center velocity and affect only
+     * this seesaw-like differential normal speed.
+     */
+    private void applyRopeContactRockingResistance(int segment,
+            double nx, double ny, double nz, double normalBudget) {
+        double resistance = tuning.ropeRopeRockingResistance();
+        if (!(resistance > 0.0D) || !(normalBudget > 0.0D)
+                || pinned[segment] || pinned[segment + 1]) {
+            return;
+        }
+        double relativeEndpointSpeed = (vx[segment + 1] - vx[segment]) * nx
+                + (vy[segment + 1] - vy[segment]) * ny
+                + (vz[segment + 1] - vz[segment]) * nz;
+        double magnitude = Math.abs(relativeEndpointSpeed);
+        if (magnitude <= 1.0e-12D) {
+            return;
+        }
+        double removed = Math.min(magnitude, resistance * normalBudget);
+        double endpointDelta = 0.5D * Math.copySign(removed, relativeEndpointSpeed);
+        vx[segment] += nx * endpointDelta;
+        vy[segment] += ny * endpointDelta;
+        vz[segment] += nz * endpointDelta;
+        vx[segment + 1] -= nx * endpointDelta;
+        vy[segment + 1] -= ny * endpointDelta;
+        vz[segment + 1] -= nz * endpointDelta;
+    }
+
+    private void applyContactPointVelocityDelta(int segment, double t,
+            double dx, double dy, double dz) {
+        double a = 1.0D - t;
+        double b = t;
+        double wa = pinned[segment] ? 0.0D : a * a;
+        double wb = pinned[segment + 1] ? 0.0D : b * b;
+        double effectiveMass = wa + wb;
+        if (effectiveMass <= 1.0e-12D) {
+            return;
+        }
+        if (wa > 0.0D) {
+            double scale = a / effectiveMass;
+            vx[segment] += dx * scale;
+            vy[segment] += dy * scale;
+            vz[segment] += dz * scale;
+        }
+        if (wb > 0.0D) {
+            double scale = b / effectiveMass;
+            vx[segment + 1] += dx * scale;
+            vy[segment + 1] += dy * scale;
+            vz[segment + 1] += dz * scale;
+        }
     }
 
     static Vec3 pairStableSeparation(long selfSeed, long otherSeed) {

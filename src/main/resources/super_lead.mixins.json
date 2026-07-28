@@ -8,7 +8,9 @@
   ],
   "client": [
     "ClientLevelBlockUpdateMixin",
+    "LevelRendererAccessor",
     "LevelRendererLightCoordsMixin",
+    "ViewAreaAccessor",
     "EntityRendererBlockLightMixin",
     "ZiplineFirstPersonItemMixin",
     "ZiplineHeldItemLayerMixin",

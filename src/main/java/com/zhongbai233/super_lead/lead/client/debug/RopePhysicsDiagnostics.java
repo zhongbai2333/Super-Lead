@@ -11,6 +11,7 @@ public final class RopePhysicsDiagnostics {
     private static final int HISTORY_SIZE = 200;
     private static volatile Snapshot latest = Snapshot.EMPTY;
     private static Mutable current;
+    private static final PendingAsync pendingAsync = new PendingAsync();
     private static final long[] physicsHistory = new long[HISTORY_SIZE];
     private static final long[] entityHistory = new long[HISTORY_SIZE];
     private static int historyCursor;
@@ -21,6 +22,7 @@ public final class RopePhysicsDiagnostics {
 
     public static void begin(long tick) {
         current = new Mutable(tick);
+        pendingAsync.drainInto(current);
     }
 
     public static void recordNeighborBuild(long nanos, int candidates, int narrowPhase,
@@ -84,6 +86,16 @@ public final class RopePhysicsDiagnostics {
             value.asyncCapacity++;
     }
 
+    public static void recordAsyncWorker(long queueWaitNanos, long solveNanos,
+            long cancelledRunningNanos, String result) {
+        Mutable value = current;
+        if (value == null) {
+            pendingAsync.add(queueWaitNanos, solveNanos, cancelledRunningNanos, result);
+        } else {
+            addAsyncResult(value, queueWaitNanos, solveNanos, cancelledRunningNanos, result);
+        }
+    }
+
     public static void finishPhysics(long nanos, int entries, int budgetUsed, int budgetMax,
             boolean deadlineExhausted, int asyncRunning, int asyncRetained) {
         Mutable value = current;
@@ -96,6 +108,31 @@ public final class RopePhysicsDiagnostics {
         value.deadlineExhausted = deadlineExhausted;
         value.asyncRunning = asyncRunning;
         value.asyncRetained = asyncRetained;
+    }
+
+    public static void recordAsyncPendingAge(long nanos) {
+        Mutable value = current;
+        if (value != null) value.asyncOldestPendingNanos = Math.max(0L, nanos);
+    }
+
+    public static void recordMaintenance(long nanos, int entries) {
+        Mutable value = current;
+        if (value != null) {
+            value.maintenanceNanos += Math.max(0L, nanos);
+            value.maintenanceEntries = Math.max(0, entries);
+        }
+    }
+
+    public static void recordSolvePass(long nanos) {
+        Mutable value = current;
+        if (value != null) {
+            value.solvePassNanos += Math.max(0L, nanos);
+        }
+    }
+
+    public static void recordDeferredEntry() {
+        Mutable value = current;
+        if (value != null) value.deferredEntries++;
     }
 
     public static void finishRelease(long nanos) {
@@ -126,6 +163,54 @@ public final class RopePhysicsDiagnostics {
         Arrays.fill(entityHistory, 0L);
         historyCursor = 0;
         historyCount = 0;
+        pendingAsync.clear();
+    }
+
+    private static void addAsyncResult(Mutable value, long queueWaitNanos, long solveNanos,
+            long cancelledRunningNanos, String result) {
+        value.asyncQueueWaitNanos += Math.max(0L, queueWaitNanos);
+        value.asyncSolveNanos += Math.max(0L, solveNanos);
+        value.asyncCancelledRunningNanos += Math.max(0L, cancelledRunningNanos);
+        if ("completed".equals(result)) value.asyncCompleted++;
+        else if ("failed".equals(result)) value.asyncFailed++;
+        else if ("stale".equals(result)) value.asyncStaleDiscard++;
+        else if ("cancelled".equals(result)) value.asyncCancelled++;
+    }
+
+    private static final class PendingAsync {
+        long queueWaitNanos;
+        long solveNanos;
+        long cancelledRunningNanos;
+        int completed;
+        int failed;
+        int stale;
+        int cancelled;
+
+        void add(long queueWait, long solve, long cancelledRunning, String result) {
+            queueWaitNanos += Math.max(0L, queueWait);
+            solveNanos += Math.max(0L, solve);
+            cancelledRunningNanos += Math.max(0L, cancelledRunning);
+            if ("completed".equals(result)) completed++;
+            else if ("failed".equals(result)) failed++;
+            else if ("stale".equals(result)) stale++;
+            else if ("cancelled".equals(result)) cancelled++;
+        }
+
+        void drainInto(Mutable value) {
+            value.asyncQueueWaitNanos += queueWaitNanos;
+            value.asyncSolveNanos += solveNanos;
+            value.asyncCancelledRunningNanos += cancelledRunningNanos;
+            value.asyncCompleted += completed;
+            value.asyncFailed += failed;
+            value.asyncStaleDiscard += stale;
+            value.asyncCancelled += cancelled;
+            clear();
+        }
+
+        void clear() {
+            queueWaitNanos = solveNanos = cancelledRunningNanos = 0L;
+            completed = failed = stale = cancelled = 0;
+        }
     }
 
     static HistorySummary summarize(long[] physics, long[] entity, int count) {
@@ -156,8 +241,14 @@ public final class RopePhysicsDiagnostics {
         long syncSolveNanos;
         long slowestSyncNanos;
         long entityQueryNanos;
-        long asyncPrepareNanos;
+        long asyncQueueWaitNanos;
+        long asyncSolveNanos;
+        long asyncCancelledRunningNanos;
+        long asyncOldestPendingNanos;
+        long maintenanceNanos;
+        long solvePassNanos;
         long releaseNanos;
+        long asyncPrepareNanos;
         UUID slowestSyncId;
         int entries;
         int neighborCandidates;
@@ -173,6 +264,12 @@ public final class RopePhysicsDiagnostics {
         int asyncCapacity;
         int asyncRunning;
         int asyncRetained;
+        int asyncCompleted;
+        int asyncFailed;
+        int asyncStaleDiscard;
+        int asyncCancelled;
+        int maintenanceEntries;
+        int deferredEntries;
         int budgetUsed;
         int budgetMax;
         int budgetSkips;
@@ -189,9 +286,12 @@ public final class RopePhysicsDiagnostics {
                     entityQueryNanos, asyncPrepareNanos, releaseNanos, slowestSyncId, entries,
                     neighborCandidates, neighborNarrowPhase, neighborDroppedByCap, syncSolves, slowestSyncNodes,
                     entityQueries, entityRaw, entityContacts, asyncSubmitted, asyncPending,
-                    asyncCapacity, asyncRunning, asyncRetained, budgetUsed, budgetMax,
+                    asyncCapacity, asyncRunning, asyncRetained, asyncCompleted, asyncFailed,
+                    asyncStaleDiscard, asyncCancelled, budgetUsed, budgetMax,
                     budgetSkips, circuitBreakerSkips, neighborTruncated, deadlineExhausted,
-                    Map.copyOf(states));
+                    Map.copyOf(states), asyncQueueWaitNanos, asyncSolveNanos,
+                    asyncCancelledRunningNanos, asyncOldestPendingNanos,
+                    maintenanceNanos, solvePassNanos, maintenanceEntries, deferredEntries);
         }
     }
 
@@ -219,15 +319,31 @@ public final class RopePhysicsDiagnostics {
             int asyncCapacity,
             int asyncRunning,
             int asyncRetained,
+            int asyncCompleted,
+            int asyncFailed,
+            int asyncStaleDiscard,
+            int asyncCancelled,
             int budgetUsed,
             int budgetMax,
             int budgetSkips,
             int circuitBreakerSkips,
             boolean neighborTruncated,
             boolean deadlineExhausted,
-            Map<String, Integer> states) {
+            Map<String, Integer> states,
+            long asyncQueueWaitNanos,
+            long asyncSolveNanos,
+            long asyncCancelledRunningNanos,
+            long asyncOldestPendingNanos,
+            long maintenanceNanos,
+            long solvePassNanos,
+            int maintenanceEntries,
+            int deferredEntries) {
         static final Snapshot EMPTY = new Snapshot(Long.MIN_VALUE, 0L, 0L, 0L, 0L, 0L, 0L, 0L,
-            null, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, false, false, Map.of());
+                null,
+                0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0, 0, 0, 0,
+                false, false, Map.of(), 0L, 0L, 0L, 0L, 0L, 0L, 0, 0);
 
         public boolean available() {
             return tick != Long.MIN_VALUE;
@@ -252,6 +368,14 @@ public final class RopePhysicsDiagnostics {
         public double asyncPrepareMs() {
             return millis(asyncPrepareNanos);
         }
+
+
+        public double asyncQueueWaitMs() { return millis(asyncQueueWaitNanos); }
+        public double asyncSolveMs() { return millis(asyncSolveNanos); }
+        public double asyncCancelledRunningMs() { return millis(asyncCancelledRunningNanos); }
+        public double asyncOldestPendingMs() { return millis(asyncOldestPendingNanos); }
+        public double maintenanceMs() { return millis(maintenanceNanos); }
+        public double solvePassMs() { return millis(solvePassNanos); }
 
         public double releaseMs() {
             return millis(releaseNanos);

@@ -46,6 +46,27 @@ class LeashBuilderTest {
     }
 
     @Test
+    void coarsePhysicsSpanRetainsFineVisualStripeDensity() {
+        assertEquals(2, LeashBuilder.visualStripeSpanCount(0.0D, 1.0D, 0.5D));
+        assertEquals(2, LeashBuilder.visualStripeSpanCount(1.0D, 2.0D, 0.5D));
+    }
+
+    @Test
+    void visualStripePhaseComesFromArcLengthNotPhysicsSegmentIndex() {
+        assertEquals(0, LeashBuilder.visualStripeIndex(0.0D, 0.5D));
+        assertEquals(1, LeashBuilder.visualStripeIndex(0.5D, 0.5D));
+        assertEquals(7, LeashBuilder.visualStripeIndex(3.5D, 0.5D));
+    }
+
+    @Test
+    void stripeBoundaryFractionsSplitCoarseSpanInHalf() {
+        assertEquals(0.0D, LeashBuilder.visualStripeFraction(0.0D, 1.0D, 0.5D, 0, true), EPS);
+        assertEquals(0.5D, LeashBuilder.visualStripeFraction(0.0D, 1.0D, 0.5D, 0, false), EPS);
+        assertEquals(0.5D, LeashBuilder.visualStripeFraction(0.0D, 1.0D, 0.5D, 1, true), EPS);
+        assertEquals(1.0D, LeashBuilder.visualStripeFraction(0.0D, 1.0D, 0.5D, 1, false), EPS);
+    }
+
+    @Test
     void squareMidpointMatchesStaticHermiteSampling() {
         RopeSimulation sim = new RopeSimulation(
                 new Vec3(0.0D, 4.0D, 0.0D),

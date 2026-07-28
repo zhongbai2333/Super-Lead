@@ -123,7 +123,9 @@ public final class AE2NetworkBridge {
             return false;
         }
         if (terminalNode(level.dimension(), connection.id()) == null) {
-            reconcile(level, currentAeConnections(level));
+            if (!SuperLeadNetwork.allowAeUserEnsure(level, connection.id())) return false;
+            boolean ensured = ensureConnection(level, connection);
+            SuperLeadNetwork.recordAeEnsureResult(level, connection.id(), ensured);
         }
         if (terminalNode(level.dimension(), connection.id()) == null) {
             return false;
@@ -229,14 +231,39 @@ public final class AE2NetworkBridge {
         }
     }
 
-    private static List<LeadConnection> currentAeConnections(ServerLevel level) {
-        java.util.ArrayList<LeadConnection> aeConnections = new java.util.ArrayList<>();
-        for (LeadConnection connection : com.zhongbai233.super_lead.lead.SuperLeadSavedData.get(level).connections()) {
-            if (connection.kind() == LeadKind.AE_NETWORK) {
-                aeConnections.add(connection);
-            }
+    /** Ensures only this connection, without scanning the dimension. */
+    public static boolean ensureConnection(ServerLevel level, LeadConnection connection) {
+        if (connection == null || connection.kind() != LeadKind.AE_NETWORK) return false;
+        Map<UUID, BridgeLink> active = LINKS.computeIfAbsent(level.dimension(), ignored -> new HashMap<>());
+        BridgeLink link = active.get(connection.id());
+        if (validateConnection(level, connection)) return true;
+        if (link != null) {
+            link.destroy();
+            active.remove(connection.id());
         }
-        return aeConnections;
+        BridgeLink created = BridgeLink.tryCreate(level, connection);
+        if (created == null) return false;
+        active.put(connection.id(), created);
+        return true;
+    }
+
+    public static boolean validateConnection(ServerLevel level, LeadConnection connection) {
+        if (connection == null || connection.kind() != LeadKind.AE_NETWORK) return false;
+        Map<UUID, BridgeLink> active = LINKS.get(level.dimension());
+        BridgeLink link = active == null ? null : active.get(connection.id());
+        return link != null && link.matches(level, connection);
+    }
+
+    public static boolean hasConnection(ServerLevel level, UUID connectionId) {
+        return terminalNode(level.dimension(), connectionId) != null;
+    }
+
+    public static void destroyConnection(ServerLevel level, UUID connectionId) {
+        Map<UUID, BridgeLink> active = LINKS.get(level.dimension());
+        if (active == null) return;
+        BridgeLink link = active.remove(connectionId);
+        if (link != null) link.destroy();
+        if (active.isEmpty()) LINKS.remove(level.dimension());
     }
 
     private static IGridNode exposedNode(ServerLevel level, LeadAnchor anchor) {

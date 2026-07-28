@@ -67,10 +67,16 @@ abstract class RopeSimulationStepper extends RopeSimulationContactConstraints {
             snapX = new double[nodes];
             snapY = new double[nodes];
             snapZ = new double[nodes];
+            snapVx = new double[nodes];
+            snapVy = new double[nodes];
+            snapVz = new double[nodes];
         }
         System.arraycopy(x, 0, snapX, 0, nodes);
         System.arraycopy(y, 0, snapY, 0, nodes);
         System.arraycopy(z, 0, snapZ, 0, nodes);
+        System.arraycopy(vx, 0, snapVx, 0, nodes);
+        System.arraycopy(vy, 0, snapVy, 0, nodes);
+        System.arraycopy(vz, 0, snapVz, 0, nodes);
         // 2. terrainNearby: side-effect resets blockCache and fills it for the
         // proximity bbox.
         cachedTerrainNearby = hasTerrainNearby(level, a, b);
@@ -312,6 +318,7 @@ abstract class RopeSimulationStepper extends RopeSimulationContactConstraints {
         double chord = Math.sqrt(chordX * chordX + chordY * chordY + chordZ * chordZ);
         double targetLen = RopeSagModel.physicsTargetLength(chord, tuning.slack(), tuning.gravity()) / segments;
         double alphaTilde = tuning.compliance() / (h * h);
+        boolean ropeStackContact = !neighbors.isEmpty();
         int iterations;
         if (terrainEnabled || !entityContacts.isEmpty() || !forceFields.isEmpty()) {
             iterations = tuning.iterContact();
@@ -337,7 +344,12 @@ abstract class RopeSimulationStepper extends RopeSimulationContactConstraints {
                 && forceFields.isEmpty() && neighbors.isEmpty() && !hasExternalContact(tick);
         double distanceConvergedError = Math.max(1.0e-5D, targetLen * 2.0e-3D);
         for (int it = 0; it < iterations; it++) {
-            double maxDistanceError = solveDistanceConstraints(targetLen, alphaTilde, (it & 1) == 0);
+            // Rope-rope contact may locally compress a segment while separating two
+            // crossing curves. Treat length as a tensile inequality for that contact
+            // island; a bilateral distance constraint would immediately push the
+            // compressed segment back into its neighbour and pump the stack forever.
+            double maxDistanceError = solveDistanceConstraints(
+                    targetLen, alphaTilde, (it & 1) == 0, ropeStackContact);
             // Entity pushes run before terrain so blocks always win:
             // when a player pushes a rope against a wall the rope slides into the
             // player's collision box instead of clipping into the block.
@@ -354,7 +366,7 @@ abstract class RopeSimulationStepper extends RopeSimulationContactConstraints {
         }
 
         if (!terrainEnabled && entityContacts.isEmpty() && !hasExternalContact(tick)) {
-            finalizeFreeDistanceConstraints(targetLen);
+            finalizeFreeDistanceConstraints(targetLen, ropeStackContact);
             pinEndpoints(ax, ay, az, bx, by, bz);
         }
 
@@ -365,13 +377,20 @@ abstract class RopeSimulationStepper extends RopeSimulationContactConstraints {
             vx[i] = (x[i] - xPrev[i]) / h;
             vy[i] = (y[i] - yPrev[i]) / h;
             vz[i] = (z[i] - zPrev[i]) / h;
-            // Light contact damping: bleed off velocity along contact normal-ish at rest.
-            if (contactNode[i]) {
+            // Terrain/entity contacts retain the legacy damping. Rope-rope contacts use
+            // relative, load-limited Coulomb friction below instead of damping every
+            // world-space component (which incorrectly slowed co-moving ropes).
+            if (nonRopeContactNode[i]) {
                 vx[i] *= tuning.contactNodeDamping();
                 vy[i] *= tuning.contactNodeDamping();
                 vz[i] *= tuning.contactNodeDamping();
             }
         }
+        solveRopeContactVelocities(h);
+        // A segment can touch several neighbours while the retained pair stores only
+        // the strongest contact. Project against the accumulated node manifold as a
+        // conservative fallback for the remaining contact planes.
+        projectRopeContactVelocities();
         if (tautWeight > 0.0D) {
             applyTautProjection(ax, ay, az, bx, by, bz, tautWeight, true);
         }

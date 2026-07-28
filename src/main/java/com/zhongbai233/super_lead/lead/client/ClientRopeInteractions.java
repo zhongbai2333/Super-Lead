@@ -445,6 +445,46 @@ public final class ClientRopeInteractions {
      * parameter at the hit.
      */
     static AttachPick pickRopeAttachPoint(Minecraft mc, float partialTick) {
+        AttachPick indexed = pickRopeAttachPointIndexed(mc);
+        if (indexed != null || SuperLeadClientEvents.pickingIndex() != null) {
+            return indexed;
+        }
+        return pickRopeAttachPointLegacy(mc, partialTick);
+    }
+
+    private static AttachPick pickRopeAttachPointIndexed(Minecraft mc) {
+        RayPickContext context = RayPickContext.from(mc, ATTACH_PICK_RADIUS);
+        ClientRopePickingIndex index = SuperLeadClientEvents.pickingIndex();
+        if (context == null || index == null) {
+            return null;
+        }
+        double bestDistSqr = ATTACH_PICK_RADIUS * ATTACH_PICK_RADIUS;
+        AttachPick best = null;
+        for (ClientRopePickingIndex.Candidate candidate : index.queryRay(
+                context.cameraPos.x, context.cameraPos.y, context.cameraPos.z,
+                context.dirX, context.dirY, context.dirZ, context.maxDistance, ATTACH_PICK_RADIUS)) {
+            for (int sample = 0; sample <= 4; sample++) {
+                double frac = sample / 4.0D;
+                double px = lerp(candidate.ax(), candidate.bx(), frac);
+                double py = lerp(candidate.ay(), candidate.by(), frac);
+                double pz = lerp(candidate.az(), candidate.bz(), frac);
+                net.minecraft.core.BlockPos below = net.minecraft.core.BlockPos.containing(px, py - 0.35D, pz);
+                if (!context.level.getBlockState(below).isAir()) {
+                    continue;
+                }
+                double distance = RopePickMath.distancePointToRaySqr(px, py, pz,
+                        context.cameraPos.x, context.cameraPos.y, context.cameraPos.z,
+                        context.dirX, context.dirY, context.dirZ, context.maxDistance);
+                if (distance < bestDistSqr) {
+                    bestDistSqr = distance;
+                    best = candidatePick(candidate, frac, px, py, pz);
+                }
+            }
+        }
+        return best;
+    }
+
+    private static AttachPick pickRopeAttachPointLegacy(Minecraft mc, float partialTick) {
         Player player = mc.player;
         if (player == null) {
             return null;
@@ -522,6 +562,36 @@ public final class ClientRopeInteractions {
      * simulation or render geometry, but shears must still be able to target them.
      */
     static AttachPick pickInvisibleCutPoint(Minecraft mc, float partialTick) {
+        AttachPick indexed = pickInvisibleCutPointIndexed(mc);
+        if (indexed != null || SuperLeadClientEvents.pickingIndex() != null) {
+            return indexed;
+        }
+        return pickInvisibleCutPointLegacy(mc, partialTick);
+    }
+
+    private static AttachPick pickInvisibleCutPointIndexed(Minecraft mc) {
+        if (mc.player == null || !mc.player.getMainHandItem().is(net.minecraft.world.item.Items.SHEARS)) {
+            return null;
+        }
+        RayPickContext context = RayPickContext.from(mc, ATTACH_PICK_RADIUS);
+        ClientRopePickingIndex index = SuperLeadClientEvents.pickingIndex();
+        if (context == null || index == null) {
+            return null;
+        }
+        List<ClientRopePickingIndex.Candidate> candidates = index.queryRay(
+                context.cameraPos.x, context.cameraPos.y, context.cameraPos.z,
+                context.dirX, context.dirY, context.dirZ, context.maxDistance, ATTACH_PICK_RADIUS,
+                id -> true);
+        for (ClientRopePickingIndex.Candidate candidate : candidates) {
+            if (candidate.source() == RopePickingFrame.Source.TRANSPARENT_FALLBACK) {
+                return candidatePick(candidate, segmentFraction(candidate),
+                        candidate.x(), candidate.y(), candidate.z());
+            }
+        }
+        return null;
+    }
+
+    private static AttachPick pickInvisibleCutPointLegacy(Minecraft mc, float partialTick) {
         if (mc.player == null || mc.level == null) {
             return null;
         }
@@ -579,6 +649,46 @@ public final class ClientRopeInteractions {
         if (context == null)
             return null;
 
+        AttachPick indexed = pickZiplinePointIndexed(context);
+        if (indexed != null || SuperLeadClientEvents.pickingIndex() != null) {
+            return indexed;
+        }
+
+        return pickZiplinePointLegacy(context, partialTick);
+    }
+
+    private static AttachPick pickZiplinePointIndexed(ZiplinePickContext context) {
+        ClientRopePickingIndex index = SuperLeadClientEvents.pickingIndex();
+        if (index == null) {
+            return null;
+        }
+        java.util.Set<UUID> pickable = new java.util.HashSet<>();
+        for (LeadConnection connection : SuperLeadNetwork.connections(context.level)) {
+            if (isZiplinePickable(connection)) {
+                pickable.add(connection.id());
+            }
+        }
+        ZiplinePickSearch search = new ZiplinePickSearch();
+        for (ClientRopePickingIndex.Candidate candidate : index.queryRay(
+                context.cameraPos.x, context.cameraPos.y, context.cameraPos.z,
+                context.dirX, context.dirY, context.dirZ, context.maxDistance, ZIPLINE_PICK_RADIUS,
+                pickable::contains)) {
+            for (int sample = 0; sample <= 4; sample++) {
+                double frac = sample / 4.0D;
+                search.considerSegment(candidate.connectionId(), context,
+                        lerp(candidate.ax(), candidate.bx(), frac),
+                        lerp(candidate.ay(), candidate.by(), frac),
+                        lerp(candidate.az(), candidate.bz(), frac),
+                        clampRopeT(lerp(candidate.ropeT0(), candidate.ropeT1(), frac)),
+                        candidate.ax(), candidate.ay(), candidate.az(),
+                        candidate.bx(), candidate.by(), candidate.bz());
+            }
+        }
+        return search.result();
+    }
+
+    private static AttachPick pickZiplinePointLegacy(ZiplinePickContext context, float partialTick) {
+
         List<LeadConnection> connections = SuperLeadNetwork.connections(context.level);
         ZiplinePickSearch search = new ZiplinePickSearch();
         for (LeadConnection connection : connections) {
@@ -592,6 +702,77 @@ public final class ClientRopeInteractions {
             }
         }
         return search.result();
+    }
+
+    private static AttachPick candidatePick(ClientRopePickingIndex.Candidate candidate,
+            double segmentFraction, double px, double py, double pz) {
+        double t = clampRopeT(lerp(candidate.ropeT0(), candidate.ropeT1(), segmentFraction));
+        return new AttachPick(candidate.connectionId(), t, new Vec3(px, py, pz),
+                new Vec3(candidate.ax(), candidate.ay(), candidate.az()),
+                new Vec3(candidate.bx(), candidate.by(), candidate.bz()));
+    }
+
+    private static double segmentFraction(ClientRopePickingIndex.Candidate candidate) {
+        double dx = candidate.bx() - candidate.ax();
+        double dy = candidate.by() - candidate.ay();
+        double dz = candidate.bz() - candidate.az();
+        double lengthSqr = dx * dx + dy * dy + dz * dz;
+        if (lengthSqr <= 1.0e-12D) {
+            return 0.0D;
+        }
+        return Math.max(0.0D, Math.min(1.0D,
+                ((candidate.x() - candidate.ax()) * dx
+                        + (candidate.y() - candidate.ay()) * dy
+                        + (candidate.z() - candidate.az()) * dz) / lengthSqr));
+    }
+
+    private static double clampRopeT(double t) {
+        return Math.max(0.02D, Math.min(0.98D, t));
+    }
+
+    private static double lerp(double a, double b, double t) {
+        return a + (b - a) * t;
+    }
+
+    private static final class RayPickContext {
+        final ClientLevel level;
+        final Vec3 cameraPos;
+        final double dirX;
+        final double dirY;
+        final double dirZ;
+        final double maxDistance;
+
+        private RayPickContext(ClientLevel level, Vec3 cameraPos,
+                double dirX, double dirY, double dirZ, double maxDistance) {
+            this.level = level;
+            this.cameraPos = cameraPos;
+            this.dirX = dirX;
+            this.dirY = dirY;
+            this.dirZ = dirZ;
+            this.maxDistance = maxDistance;
+        }
+
+        static RayPickContext from(Minecraft mc, double radius) {
+            if (mc.player == null || mc.level == null) {
+                return null;
+            }
+            Camera camera = mc.gameRenderer.getMainCamera();
+            Vec3 cameraPos = camera.position();
+            var forward = camera.forwardVector();
+            double length = Math.sqrt(forward.x() * forward.x() + forward.y() * forward.y()
+                    + forward.z() * forward.z());
+            if (length <= 1.0e-9D) {
+                return null;
+            }
+            double maxDistance = SuperLeadNetwork.maxExtendedLeashDistance();
+            if (mc.hitResult != null && mc.hitResult.getType() != net.minecraft.world.phys.HitResult.Type.MISS) {
+                maxDistance = Math.min(maxDistance, mc.hitResult.getLocation().distanceTo(cameraPos) + radius);
+            } else {
+                maxDistance = Math.min(maxDistance, mc.player.blockInteractionRange() + 2.0D);
+            }
+            return new RayPickContext(mc.level, cameraPos,
+                    forward.x() / length, forward.y() / length, forward.z() / length, maxDistance);
+        }
     }
 
     private static boolean isZiplinePickable(LeadConnection connection) {

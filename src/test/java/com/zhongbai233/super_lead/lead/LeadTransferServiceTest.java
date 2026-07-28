@@ -13,6 +13,16 @@ import org.junit.jupiter.api.Test;
 
 class LeadTransferServiceTest {
     @Test
+    void aeEndpointChunksDeduplicateSameChunk() {
+        LeadConnection connection = LeadConnection.create(
+                new LeadAnchor(new BlockPos(0, 64, 0), Direction.UP),
+                new LeadAnchor(new BlockPos(8, 64, 8), Direction.NORTH), LeadKind.AE_NETWORK);
+
+        assertEquals(Set.of(SuperLeadSavedData.chunkKey(0, 0)),
+                LeadTransferService.aeEndpointChunks(connection));
+    }
+
+    @Test
     void unvisitedBranchesPreserveAdjacencyOrder() {
         LeadConnection first = connection("00000000-0000-0000-0000-000000000201", 1);
         LeadConnection visited = connection("00000000-0000-0000-0000-000000000202", 2);

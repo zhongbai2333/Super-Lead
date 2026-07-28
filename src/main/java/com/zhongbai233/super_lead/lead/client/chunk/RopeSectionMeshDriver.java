@@ -51,16 +51,6 @@ public final class RopeSectionMeshDriver {
         StaticRopeChunkRegistry.SectionBuild build = registry.captureSectionBuild(key);
         List<RopeSectionSnapshot> snaps = build.snapshots();
         if (snaps.isEmpty()) {
-            long directKey = SectionPos.asLong(origin.getX(), origin.getY(), origin.getZ());
-            StaticRopeChunkRegistry.SectionBuild directBuild = registry.captureSectionBuild(directKey);
-            List<RopeSectionSnapshot> directSnaps = directBuild.snapshots();
-            if (!directSnaps.isEmpty()) {
-                key = directKey;
-                build = directBuild;
-                snaps = directSnaps;
-            }
-        }
-        if (snaps.isEmpty()) {
             registry.markSectionBuildObserved(key, build.generation(), currentTick());
             return;
         }

@@ -109,6 +109,28 @@ class RopeSimulationTopologyTest {
     }
 
     @Test
+    void acceptedChunkMeshFreezesHiddenSimulationAtVisibleShape() {
+        RopeSimulation sim = new RopeSimulation(A, B, 33L,
+                RopeTuning.localDefaults().withTopology(0.5D, 64));
+        int middle = sim.nodeCount() / 2;
+        sim.y[middle] = 1.0D;
+        sim.vy[middle] = 3.0D;
+
+        double[] sourceX = { 0.0D, 4.0D, 8.0D };
+        double[] sourceY = { 4.0D, 2.6D, 4.0D };
+        double[] sourceZ = { 0.0D, 0.0D, 0.0D };
+        sim.freezeAtStaticMesh(sourceX, sourceY, sourceZ, A, B, 100L);
+
+        assertEquals(2.6D, sim.y[middle], 1.0e-6D);
+        assertEquals(sim.y[middle], sim.yLastTick[middle], 1.0e-9D);
+        assertEquals(0.0D, sim.vy[middle], 1.0e-9D);
+        assertEquals(100L, sim.lastSteppedTick());
+        assertTrue(sim.isSettled(), "a frozen static source must remain mesh-eligible");
+        assertFalse(sim.hasEndpointWakeMovement(A, B),
+                "unchanged anchors must not immediately wake the frozen simulation");
+    }
+
+    @Test
     void meshCollisionTransitionSurvivesAcrossLogicalTicks() {
         double initial = RopeSimulationRenderCache.meshCollisionTransitionProgress(
             100.60D, 100.60D, 3.0D, 0.18D);

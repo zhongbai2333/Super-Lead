@@ -35,7 +35,25 @@ public final class RopeMath {
             t = 0.0;
             s = clamp01(-dd / aa);
         } else {
-            s = denom < EPS ? 0.0 : clamp01((bb * ee - cc * dd) / denom);
+            // denom has units of length^4, so use a scale-relative parallel test.
+            // For parallel overlapping segments the closest point is not unique. Picking
+            // s=0 biases every correction toward one endpoint and lets tiny feature
+            // changes alternate torque on the two nodes (the rope-stack "seesaw").
+            // The midpoint of the projected overlap is deterministic, symmetric and
+            // continuous under small perturbations.
+            if (denom <= EPS * aa * cc) {
+                double q0OnP = -dd / aa;
+                double q1OnP = q0OnP + bb / aa;
+                double overlapMin = Math.max(0.0D, Math.min(q0OnP, q1OnP));
+                double overlapMax = Math.min(1.0D, Math.max(q0OnP, q1OnP));
+                if (overlapMin <= overlapMax) {
+                    s = (overlapMin + overlapMax) * 0.5D;
+                } else {
+                    s = q0OnP > 1.0D && q1OnP > 1.0D ? 1.0D : 0.0D;
+                }
+            } else {
+                s = clamp01((bb * ee - cc * dd) / denom);
+            }
             t = clamp01((bb * s + ee) / cc);
             s = clamp01((bb * t - dd) / aa);
             t = clamp01((bb * s + ee) / cc);

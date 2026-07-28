@@ -43,6 +43,7 @@ import net.neoforged.neoforge.transfer.transaction.Transaction;
  */
 final class LeadTransferService {
     private static final Map<ServerLevel, RuntimeState> RUNTIME_STATES = new HashMap<>();
+    private static final Map<ServerLevel, AeReconcileScheduler> AE_SCHEDULERS = new HashMap<>();
     private static final int MAX_TRANSFER_SEARCH_DEPTH = 64;
     private static final int ITEM_PULSE_DURATION_TICKS = 10;
     private static final int MUSIC_PLAYER_EXTRACT_COOLDOWN_TICKS = 200; // 绳子送入后完整保护（等待解码+播放完毕）
@@ -143,6 +144,7 @@ final class LeadTransferService {
         CACHED_ROPES_AT.clear();
         CACHED_STARTS_BY_SOURCE.clear();
         RUNTIME_STATES.clear();
+        AE_SCHEDULERS.clear();
     }
 
     /**
@@ -157,9 +159,32 @@ final class LeadTransferService {
     static void discardLevelState(ServerLevel level) {
         invalidateCachesFor(level);
         RUNTIME_STATES.remove(level);
+        AeReconcileScheduler scheduler = AE_SCHEDULERS.remove(level);
+        if (scheduler != null) scheduler.clear();
         if (isAe2Loaded()) {
             AE2NetworkBridge.clearDimension(level.dimension());
         }
+    }
+
+    static void markAeChunkDirty(ServerLevel level, long chunkKey) {
+        if (!isAe2Loaded()) return;
+        AE_SCHEDULERS.computeIfAbsent(level, ignored -> new AeReconcileScheduler())
+                .markDirtyChunk(chunkKey, level.getGameTime() + 1L);
+    }
+
+    static void recordAeEnsureResult(ServerLevel level, UUID connectionId, boolean success) {
+        AeReconcileScheduler scheduler = AE_SCHEDULERS.get(level);
+        if (scheduler == null) return;
+        if (success) {
+            scheduler.success(connectionId, level.getGameTime());
+        } else {
+            scheduler.failure(connectionId, level.getGameTime());
+        }
+    }
+
+    static boolean allowAeUserEnsure(ServerLevel level, UUID connectionId) {
+        AeReconcileScheduler scheduler = AE_SCHEDULERS.get(level);
+        return scheduler == null || scheduler.allowUserEnsure(connectionId, level.getGameTime());
     }
 
     static void tickThermal(ServerLevel level) {
@@ -222,8 +247,49 @@ final class LeadTransferService {
         if (!isAe2Loaded()) {
             return;
         }
-        List<LeadConnection> aeConnections = SuperLeadSavedData.get(level).connectionsOfKindFast(LeadKind.AE_NETWORK);
-        AE2NetworkBridge.reconcile(level, aeConnections);
+        SuperLeadSavedData data = SuperLeadSavedData.get(level);
+        AeReconcileScheduler scheduler = AE_SCHEDULERS.computeIfAbsent(level, ignored -> new AeReconcileScheduler());
+        long tick = level.getGameTime();
+        long generation = data.aeTopologyGeneration();
+        if (scheduler.observedGeneration() != generation) {
+            List<LeadConnection> connections = data.connectionsOfKindFast(LeadKind.AE_NETWORK);
+            List<AeReconcileScheduler.Connection> scheduled = new ArrayList<>(connections.size());
+            for (LeadConnection connection : connections) {
+                scheduled.add(new AeReconcileScheduler.Connection(connection.id(), aeEndpointChunks(connection)));
+            }
+            scheduler.observe(generation, scheduled, tick);
+            AE2NetworkBridge.reconcile(level, connections);
+            for (LeadConnection connection : connections) {
+                if (AE2NetworkBridge.hasConnection(level, connection.id())) {
+                    scheduler.success(connection.id(), tick);
+                } else {
+                    scheduler.failure(connection.id(), tick);
+                }
+            }
+            return;
+        }
+        boolean healthTick = tick % 100L == 0L;
+        for (UUID id : scheduler.due(tick, healthTick)) {
+            LeadConnection connection = data.find(id).orElse(null);
+            if (connection == null || connection.kind() != LeadKind.AE_NETWORK) {
+                AE2NetworkBridge.destroyConnection(level, id);
+                continue;
+            }
+            if (AE2NetworkBridge.ensureConnection(level, connection)) {
+                scheduler.success(id, tick);
+            } else {
+                scheduler.failure(id, tick);
+            }
+        }
+    }
+
+    static Set<Long> aeEndpointChunks(LeadConnection connection) {
+        Set<Long> chunks = new HashSet<>(2);
+        chunks.add(SuperLeadSavedData.chunkKey(connection.from().pos().getX() >> 4,
+                connection.from().pos().getZ() >> 4));
+        chunks.add(SuperLeadSavedData.chunkKey(connection.to().pos().getX() >> 4,
+                connection.to().pos().getZ() >> 4));
+        return Set.copyOf(chunks);
     }
 
     private static void tickPressurizedTransfer(ServerLevel level) {

@@ -75,15 +75,19 @@ public final class RopeDebugOverlay implements DebugScreenEntry {
                     + " capDrop=" + RopeDebugStats.neighborDroppedByCap
                         + " guard=" + (RopeDebugStats.neighborBuildTruncated ? "TRIPPED" : "ok"),
                 String.format(Locale.ROOT,
-                    "[SuperLead] phys %.2fms neighbor=%.2f sync=%.2f budget=%d/%d skip=%d/%d",
-                    physics.physicsMs(), physics.neighborMs(), physics.syncSolveMs(),
+                    "[SuperLead] phys %.2fms maint=%.2f solve=%.2f defer=%d neighbor=%.2f sync=%.2f budget=%d/%d skip=%d/%d",
+                    physics.physicsMs(), physics.maintenanceMs(), physics.solvePassMs(), physics.deferredEntries(), physics.neighborMs(), physics.syncSolveMs(),
                     physics.budgetUsed(), physics.budgetMax(),
                     physics.budgetSkips(), physics.circuitBreakerSkips()),
                 String.format(Locale.ROOT,
                     "[SuperLead] entity %.2fms q=%d hit=%d async prep=%.2f run=%d pend=%d cap=%d",
                     physics.entityQueryMs(), physics.entityQueries(), physics.entityContacts(),
                     physics.asyncPrepareMs(), physics.asyncRunning(),
-                    physics.asyncPending(), physics.asyncCapacity()),
+                    physics.asyncPending(), physics.asyncCapacity())
+                        + String.format(Locale.ROOT, " worker q=%.2f solve=%.2f age=%.2f cancel=%.2f done=%d stale=%d fail=%d cancelled=%d",
+                            physics.asyncQueueWaitMs(), physics.asyncSolveMs(),
+                            physics.asyncOldestPendingMs(), physics.asyncCancelledRunningMs(), physics.asyncCompleted(),
+                            physics.asyncStaleDiscard(), physics.asyncFailed(), physics.asyncCancelled()),
                 "[SuperLead] zones=" + PhysicsZonesClient.zones().size()
                         + " overrides=" + zoneOverrideCount()
                         + " zoneEpoch=" + PhysicsZonesClient.epoch(),

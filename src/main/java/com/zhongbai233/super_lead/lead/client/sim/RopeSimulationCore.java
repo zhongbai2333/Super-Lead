@@ -23,10 +23,17 @@ import net.minecraft.world.phys.Vec3;
  */
 abstract class RopeSimulationCore {
 
+    /**
+     * Calibrates prism/radius geometry to the perceived rope surface for rope-rope
+     * contact. Terrain and entity collision keep their dedicated physical radii.
+     */
+    static final double ROPE_ROPE_GEOMETRY_SCALE = 0.80D;
+
     // ============================================================================================
     // Topology / geometry — now resolved from RopeTuning
     // ============================================================================================
     protected final double ropeRadius;
+    protected final double halfThickness;
     protected final double terrainRadius;
     protected final double ropeRepelDistance;
     protected final double collisionEps;
@@ -218,6 +225,22 @@ abstract class RopeSimulationCore {
      * substep.
      */
     protected final boolean[] contactNode;
+    /** Terrain/entity contact, kept separate from rope-rope contact friction. */
+    protected final boolean[] nonRopeContactNode;
+    /** Rope-rope contact manifold accumulated during the current substep. */
+    protected final boolean[] ropeContactNode;
+    protected final double[] ropeContactNormalX;
+    protected final double[] ropeContactNormalY;
+    protected final double[] ropeContactNormalZ;
+    /** Strongest rope-rope contact retained for each segment during this substep. */
+    protected final RopeSimulation[] ropeContactOther;
+    protected final int[] ropeContactOtherSegment;
+    protected final double[] ropeContactSelfT;
+    protected final double[] ropeContactOtherT;
+    protected final double[] ropeContactPairNormalX;
+    protected final double[] ropeContactPairNormalY;
+    protected final double[] ropeContactPairNormalZ;
+    protected final double[] ropeContactNormalCorrection;
 
     // XPBD lambda accumulators (one per distance segment).
     protected final double[] lambdaDistance;
@@ -287,6 +310,7 @@ abstract class RopeSimulationCore {
     // in stacked ropes. Filled by preparePhysicsParallel; read by rope-rope
     // constraints.
     protected double[] snapX, snapY, snapZ;
+    protected double[] snapVx, snapVy, snapVz;
 
     // ============================================================================================
     // Bookkeeping
@@ -319,6 +343,7 @@ abstract class RopeSimulationCore {
 
         // Resolve all physics constants from tuning
         this.ropeRadius = this.tuning.ropeRadius();
+        this.halfThickness = this.tuning.halfThickness();
         this.terrainRadius = this.tuning.terrainRadius();
         this.ropeRepelDistance = this.tuning.ropeRepelDistance();
         this.collisionEps = this.tuning.collisionEps();
@@ -377,6 +402,19 @@ abstract class RopeSimulationCore {
         pinned = new boolean[nodes];
         supportNode = new boolean[nodes];
         contactNode = new boolean[nodes];
+        nonRopeContactNode = new boolean[nodes];
+        ropeContactNode = new boolean[nodes];
+        ropeContactNormalX = new double[nodes];
+        ropeContactNormalY = new double[nodes];
+        ropeContactNormalZ = new double[nodes];
+        ropeContactOther = new RopeSimulation[segments];
+        ropeContactOtherSegment = new int[segments];
+        ropeContactSelfT = new double[segments];
+        ropeContactOtherT = new double[segments];
+        ropeContactPairNormalX = new double[segments];
+        ropeContactPairNormalY = new double[segments];
+        ropeContactPairNormalZ = new double[segments];
+        ropeContactNormalCorrection = new double[segments];
         entityPushAccum = new double[nodes];
         lambdaDistance = new double[segments];
 
@@ -513,8 +551,12 @@ abstract class RopeSimulationCore {
             entityPushAccum[i] = 0.0D;
             supportNode[i] = false;
             contactNode[i] = false;
+            nonRopeContactNode[i] = false;
+            ropeContactNode[i] = false;
+            ropeContactNormalX[i] = ropeContactNormalY[i] = ropeContactNormalZ[i] = 0.0D;
         }
         java.util.Arrays.fill(lambdaDistance, 0.0D);
+        clearRopeContactPairs();
         markBoundsDirty();
     }
 
@@ -614,6 +656,12 @@ abstract class RopeSimulationCore {
         copy(other.pinned, pinned);
         copy(other.supportNode, supportNode);
         copy(other.contactNode, contactNode);
+        copy(other.nonRopeContactNode, nonRopeContactNode);
+        copy(other.ropeContactNode, ropeContactNode);
+        copy(other.ropeContactNormalX, ropeContactNormalX);
+        copy(other.ropeContactNormalY, ropeContactNormalY);
+        copy(other.ropeContactNormalZ, ropeContactNormalZ);
+        clearRopeContactPairs();
         copy(other.lambdaDistance, lambdaDistance);
 
         contactT = other.contactT;
@@ -706,6 +754,9 @@ abstract class RopeSimulationCore {
             entityPushAccum[i] = sampleScalarByIndex(other.entityPushAccum, t);
             supportNode[i] = false;
             contactNode[i] = false;
+            nonRopeContactNode[i] = false;
+            ropeContactNode[i] = false;
+            ropeContactNormalX[i] = ropeContactNormalY[i] = ropeContactNormalZ[i] = 0.0D;
             pinned[i] = i == 0 || i == nodes - 1;
         }
         x[0] = a.x;
@@ -746,6 +797,7 @@ abstract class RopeSimulationCore {
         precomputeReady = false;
         blockCache.reset();
         java.util.Arrays.fill(lambdaDistance, 0.0D);
+        clearRopeContactPairs();
         segAabb = null;
         markBoundsDirty();
     }
@@ -772,6 +824,9 @@ abstract class RopeSimulationCore {
             entityPushAccum[i] = 0.0D;
             supportNode[i] = false;
             contactNode[i] = false;
+            nonRopeContactNode[i] = false;
+            ropeContactNode[i] = false;
+            ropeContactNormalX[i] = ropeContactNormalY[i] = ropeContactNormalZ[i] = 0.0D;
             pinned[i] = i == 0 || i == nodes - 1;
         }
         pinRestoredEndpoints(a, b);
@@ -953,6 +1008,38 @@ abstract class RopeSimulationCore {
         return settledTicks >= settleThresholdTicks;
     }
 
+    // ------------------------------------------------------------------------------------
+    // Bench probe compatibility shims. The 2026-07-27 solver redesign (archived as a
+    // patch; see docs/physics_algorithm_technical.md banner) introduced a richer
+    // rest-state model; after rolling the solver back to the v0.3.11 baseline these
+    // map the probe surface onto the baseline's equivalents so the ModBench
+    // scenarios and registry keep compiling and measuring.
+    // ------------------------------------------------------------------------------------
+    /** Baseline alias for the settled state; see {@link #isSettled()}. */
+    public boolean isVisuallyAtRest() {
+        return isSettled();
+    }
+
+    /** Baseline approximation: consecutive quiet ticks stand in for rest-state age. */
+    public int restStateTicks() {
+        return settledTicks;
+    }
+
+    /** Baseline motion threshold for waking a resting neighbour (raw, un-normalized). */
+    public boolean isDisturbingNeighbors() {
+        return maxNodeMotionSqr() >= 4.0e-5D;
+    }
+
+    /** Read-only bench probe: whether terrain was near this rope on its last solve. */
+    public boolean probeTerrainNearby() {
+        return terrainNearbyLast;
+    }
+
+    /** Baseline has no interior-drape tracking; report none. */
+    public boolean probeInteriorTerrainContact() {
+        return false;
+    }
+
     public int quietTicks() {
         return quietTicks;
     }
@@ -1099,6 +1186,43 @@ abstract class RopeSimulationCore {
         return false;
     }
 
+    /** Symmetric center-line distance for one rope pair. */
+    public double ropeContactDistance(RopeSimulation other) {
+        return ropeContactDistance(halfThickness, ropeRadius, ropeRepelDistance,
+                other.halfThickness, other.ropeRadius, other.ropeRepelDistance);
+    }
+
+    static double ropeContactDistance(double halfThicknessA, double ropeRadiusA, double repelA,
+            double halfThicknessB, double ropeRadiusB, double repelB) {
+        double visibleDistance = (halfThicknessA + halfThicknessB) * ROPE_ROPE_GEOMETRY_SCALE;
+        double physicalDistance = (ropeRadiusA + ropeRadiusB) * ROPE_ROPE_GEOMETRY_SCALE;
+        return Math.max(Math.max(visibleDistance, physicalDistance),
+                Math.max(repelA, repelB));
+    }
+
+    /**
+     * Per-rope conservative inflation for the frame-level spatial hash. Pairwise
+     * narrow phase still uses {@link #ropeContactDistance(RopeSimulation)}.
+     */
+    public double ropeContactBroadPhaseReach() {
+        double geometryReach = Math.max(halfThickness, ropeRadius) * ROPE_ROPE_GEOMETRY_SCALE;
+        double physicalReach = Math.max(geometryReach, ropeRepelDistance);
+        return physicalReach + ropeContactMotionReach();
+    }
+
+    public double ropeContactMotionReach() {
+        return Math.min(0.50D, Math.sqrt(maxNodeVelocitySqr()));
+    }
+
+    private double maxNodeVelocitySqr() {
+        double max = 0.0D;
+        for (int i = 1; i < nodes - 1; i++) {
+            double speedSqr = vx[i] * vx[i] + vy[i] * vy[i] + vz[i] * vz[i];
+            max = Math.max(max, speedSqr);
+        }
+        return max;
+    }
+
     private boolean segmentsAabbOverlap(RopeSimulation other, int i, int j, double margin) {
         double ax0 = x[i], ay0 = y[i], az0 = z[i];
         double ax1 = x[i + 1], ay1 = y[i + 1], az1 = z[i + 1];
@@ -1136,6 +1260,7 @@ abstract class RopeSimulationCore {
         y[i] += dy;
         z[i] += dz;
         contactNode[i] = true;
+        nonRopeContactNode[i] = true;
         if (dy > 0.0D)
             supportNode[i] = true;
         markBoundsDirty();
@@ -1155,13 +1280,22 @@ abstract class RopeSimulationCore {
     }
 
     protected void clearContactState() {
+        clearRopeContactPairs();
         for (int i = 0; i < nodes; i++) {
             contactNode[i] = false;
+            nonRopeContactNode[i] = false;
+            ropeContactNode[i] = false;
+            ropeContactNormalX[i] = ropeContactNormalY[i] = ropeContactNormalZ[i] = 0.0D;
             supportNode[i] = false;
             entityPushAccum[i] *= 0.85D;
             if (entityPushAccum[i] < 1.0e-4D)
                 entityPushAccum[i] = 0.0D;
         }
+    }
+
+    private void clearRopeContactPairs() {
+        java.util.Arrays.fill(ropeContactOther, null);
+        java.util.Arrays.fill(ropeContactNormalCorrection, 0.0D);
     }
 
     // ============================================================================================
@@ -1199,7 +1333,7 @@ abstract class RopeSimulationCore {
             RopeSimulation n = neighbors.get(i);
             if (n == this)
                 continue;
-            if (!n.isSettled() && boundsOverlap(n, ropeRepelDistance))
+            if (!n.isSettled() && boundsOverlap(n, ropeContactDistance(n)))
                 return true;
         }
         return false;

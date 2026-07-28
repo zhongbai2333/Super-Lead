@@ -74,6 +74,8 @@ public final class SuperLeadSavedData extends SavedData {
      * when the network topology hasn't changed.
      */
     private long generation;
+    /** Runtime-only generation for the AE2 topology shape (not attachments/power). */
+    private long aeTopologyGeneration;
 
     public SuperLeadSavedData() {
     }
@@ -96,6 +98,9 @@ public final class SuperLeadSavedData extends SavedData {
                 ownedByChunk.computeIfAbsent(ownerChunk, key -> new ArrayList<>()).add(connection);
                 enqueueValidation(connection.id());
             }
+        }
+        if (byKind.containsKey(LeadKind.AE_NETWORK)) {
+            aeTopologyGeneration = 1L;
         }
         for (RopeChunkBucket bucket : buckets) {
             long chunk = bucket.chunkKey();
@@ -202,6 +207,14 @@ public final class SuperLeadSavedData extends SavedData {
      */
     long generation() {
         return generation;
+    }
+
+    /**
+     * Changes only when an AE connection id, logical endpoint, AE kind, or
+     * dense/non-dense tier changes.
+     */
+    long aeTopologyGeneration() {
+        return aeTopologyGeneration;
     }
 
     UUID syncEpoch() {
@@ -324,6 +337,9 @@ public final class SuperLeadSavedData extends SavedData {
         if (newConnection.id().equals(id)
                 && stored.ownerChunk == newOwner
                 && stored.coveredChunks.equals(newCovered)) {
+            if (!java.util.Objects.equals(aeTopologySignature(oldConnection), aeTopologySignature(newConnection))) {
+                aeTopologyGeneration++;
+            }
             replaceStoredConnection(stored, oldConnection, newConnection);
             markDirtyChunks(stored.coveredChunks);
             if (markDirty) {
@@ -331,8 +347,12 @@ public final class SuperLeadSavedData extends SavedData {
             }
             return true;
         }
+        long aeGenerationBeforeReplace = aeTopologyGeneration;
+        boolean aeTopologyChanged = !java.util.Objects.equals(aeTopologySignature(oldConnection),
+                aeTopologySignature(newConnection));
         remove(id);
         put(newConnection, false);
+        aeTopologyGeneration = aeGenerationBeforeReplace + (aeTopologyChanged ? 1L : 0L);
         if (markDirty) {
             setDirty();
         }
@@ -344,7 +364,13 @@ public final class SuperLeadSavedData extends SavedData {
     }
 
     private void put(LeadConnection connection, boolean markDirty) {
+        StoredRope previous = byId.get(connection.id());
+        AeTopologySignature oldTopology = previous == null ? null : aeTopologySignature(previous.connection);
+        AeTopologySignature newTopology = aeTopologySignature(connection);
+        long aeGenerationBeforeReplace = aeTopologyGeneration;
         remove(connection.id());
+        aeTopologyGeneration = aeGenerationBeforeReplace
+                + (java.util.Objects.equals(oldTopology, newTopology) ? 0L : 1L);
         bumpGeneration();
         long owner = ownerChunkKey(connection);
         LinkedHashSet<Long> covered = coveredChunkKeys(connection);
@@ -378,6 +404,9 @@ public final class SuperLeadSavedData extends SavedData {
         if (stored == null) {
             return;
         }
+        if (stored.connection.kind() == LeadKind.AE_NETWORK) {
+            aeTopologyGeneration++;
+        }
         bumpGeneration();
         unindexByKind(stored.connection);
         List<LeadConnection> owned = ownedByChunk.get(stored.ownerChunk);
@@ -397,6 +426,17 @@ public final class SuperLeadSavedData extends SavedData {
             }
         }
         markDirtyChunks(stored.coveredChunks);
+    }
+
+    private static AeTopologySignature aeTopologySignature(LeadConnection connection) {
+        if (connection == null || connection.kind() != LeadKind.AE_NETWORK) {
+            return null;
+        }
+        return new AeTopologySignature(connection.id(), connection.from().logicalPort(),
+                connection.to().logicalPort(), connection.tier() > 0);
+    }
+
+    private record AeTopologySignature(UUID id, LeadAnchor from, LeadAnchor to, boolean dense) {
     }
 
     private void markDirtyChunks(Set<Long> chunks) {

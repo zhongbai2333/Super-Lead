@@ -529,9 +529,10 @@ public final class LeashBuilder {
         // hidden.
         boolean filterByMask = bakeSim == null && !sim.segVisAllVisible();
         double stripeLength = visualStripeLength(activeColorTuning);
-        // Emit one visual stripe per original segment length, not per current physics
-        // node-step. Coarse dynamic LOD may double segmentLength, but the color/texture
-        // grid should keep the same density so LOD does not become visible.
+        // Visual stripes follow material arc length rather than physics nodes. Coarse
+        // LOD may halve the physical segment count, but it must not double texture
+        // scale. Each generated piece keeps its physical source segment for the baked
+        // visibility mask.
         for (int i = 0; i < last; i += stride) {
             int j = Math.min(i + stride, last);
             double spanStart = sim.visualRenderLength(i);
@@ -547,17 +548,17 @@ public final class LeashBuilder {
                 }
                 if (a < 0.5D && b > 0.5D) {
                     emitBoxStripSubSegment(buffer, pose, cameraPos, sim, last,
-                        sideX, sideY, sideZ, upX, upY, upZ, curveMidX, curveMidY, curveMidZ,
-                        i, j, a, 0.5D, blockA, blockB, skyA, skyB,
-                        currentStripe, sourceSegment, highlightColor, kind, powered, tier, bakeSim);
+                            sideX, sideY, sideZ, upX, upY, upZ, curveMidX, curveMidY, curveMidZ,
+                            i, j, a, 0.5D, blockA, blockB, skyA, skyB,
+                            currentStripe, sourceSegment, highlightColor, kind, powered, tier, bakeSim);
                     emitBoxStripSubSegment(buffer, pose, cameraPos, sim, last,
-                        sideX, sideY, sideZ, upX, upY, upZ, curveMidX, curveMidY, curveMidZ,
-                        i, j, 0.5D, b, blockA, blockB, skyA, skyB,
-                        currentStripe, sourceSegment, highlightColor, kind, powered, tier, bakeSim);
+                            sideX, sideY, sideZ, upX, upY, upZ, curveMidX, curveMidY, curveMidZ,
+                            i, j, 0.5D, b, blockA, blockB, skyA, skyB,
+                            currentStripe, sourceSegment, highlightColor, kind, powered, tier, bakeSim);
                     continue;
                 }
                 emitBoxStripSubSegment(buffer, pose, cameraPos, sim, last,
-                    sideX, sideY, sideZ, upX, upY, upZ, curveMidX, curveMidY, curveMidZ,
+                        sideX, sideY, sideZ, upX, upY, upZ, curveMidX, curveMidY, curveMidZ,
                         i, j, a, b, blockA, blockB, skyA, skyB,
                         currentStripe, sourceSegment, highlightColor, kind, powered, tier, bakeSim);
             }
@@ -565,9 +566,11 @@ public final class LeashBuilder {
         // End cap faces at both rope endpoints.
         int lightA = LightCoordsUtil.pack(blockA, skyA);
         int lightB = LightCoordsUtil.pack(blockB, skyB);
-        renderEndCap(buffer, pose, cameraPos, sim, 0, lightA, highlightColor, kind, powered, tier,
+        renderEndCap(buffer, pose, cameraPos, sim, 0, 0, lightA, highlightColor, kind, powered, tier,
                 sideX[0], sideY[0], sideZ[0], upX[0], upY[0], upZ[0], false);
-        renderEndCap(buffer, pose, cameraPos, sim, nodeCount - 1, lightB, highlightColor, kind, powered, tier,
+        renderEndCap(buffer, pose, cameraPos, sim, nodeCount - 1,
+            visualStripeIndex(visualTotalLength, stripeLength), lightB,
+            highlightColor, kind, powered, tier,
                 sideX[nodeCount - 1], sideY[nodeCount - 1], sideZ[nodeCount - 1],
                 upX[nodeCount - 1], upY[nodeCount - 1], upZ[nodeCount - 1], true);
     }
@@ -578,7 +581,7 @@ public final class LeashBuilder {
      */
     private static void renderEndCap(
             VertexConsumer buffer, PoseStack.Pose pose, Vec3 cameraPos,
-            RopeSimulation sim, int node, int light,
+            RopeSimulation sim, int node, int stripe, int light,
             int highlightColor, LeadKind kind, boolean powered, int tier,
             double sideX, double sideY, double sideZ,
             double upX, double upY, double upZ,
@@ -588,7 +591,7 @@ public final class LeashBuilder {
         double pz = sim.renderZ(node) - cameraPos.z;
         int color = highlightColor != NO_HIGHLIGHT
                 ? highlightOverlayColor(4, highlightColor)
-                : ropeColor(0, 4, kind, powered, tier, activeColorTuning);
+                : ropeColor(stripe, 4, kind, powered, tier, activeColorTuning);
         if (flipWinding) {
             vertex(buffer, pose, px + sideX + upX, py + sideY + upY, pz + sideZ + upZ, color, light); // P
             vertex(buffer, pose, px + sideX - upX, py + sideY - upY, pz + sideZ - upZ, color, light); // Q
@@ -1131,16 +1134,15 @@ public final class LeashBuilder {
         }
     }
 
-    private static double visualStripeLength(RopeTuning tuning) {
-        RopeTuning effective = effectiveTuning(tuning);
-        return Math.max(0.05D, effective.visualSegmentLength());
+    static double visualStripeLength(RopeTuning tuning) {
+        return Math.max(0.05D, effectiveTuning(tuning).visualSegmentLength());
     }
 
-    private static int visualStripeIndex(double arcLength, double stripeLength) {
-        return (int) Math.floor(Math.max(0.0D, arcLength) / stripeLength + 1.0e-6D);
+    static int visualStripeIndex(double arcLength, double stripeLength) {
+        return (int) Math.floor(Math.max(0.0D, arcLength) / Math.max(0.05D, stripeLength) + 1.0e-6D);
     }
 
-    private static int visualStripeSpanCount(double spanStart, double spanEnd, double stripeLength) {
+    static int visualStripeSpanCount(double spanStart, double spanEnd, double stripeLength) {
         double start = Math.max(0.0D, Math.min(spanStart, spanEnd));
         double end = Math.max(start, Math.max(spanStart, spanEnd));
         int first = visualStripeIndex(start, stripeLength);
@@ -1148,10 +1150,10 @@ public final class LeashBuilder {
         return Math.max(1, last - first + 1);
     }
 
-    private static double visualStripeFraction(double spanStart, double spanEnd, double stripeLength,
+    static double visualStripeFraction(double spanStart, double spanEnd, double stripeLength,
             int stripe, boolean start) {
         double spanLength = Math.max(1.0e-6D, spanEnd - spanStart);
-        double stripeBoundary = (stripe + (start ? 0 : 1)) * stripeLength;
+        double stripeBoundary = (stripe + (start ? 0 : 1)) * Math.max(0.05D, stripeLength);
         double clamped = Math.max(spanStart, Math.min(spanEnd, stripeBoundary));
         return (clamped - spanStart) / spanLength;
     }

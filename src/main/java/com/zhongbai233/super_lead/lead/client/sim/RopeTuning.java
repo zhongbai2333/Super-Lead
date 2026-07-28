@@ -63,6 +63,9 @@ public record RopeTuning(
         double contactPushGain,
         double entityPushGain,
         double ropeRopeParallelRelax,
+        double ropeRopeStaticFriction,
+        double ropeRopeDynamicFriction,
+        double ropeRopeRockingResistance,
         double contactNodeDamping,
         double initialVelocityKick,
         int settleThresholdTicks,
@@ -156,6 +159,9 @@ public record RopeTuning(
                 contactPushGain,
                 entityPushGain,
                 ropeRopeParallelRelax,
+                ropeRopeStaticFriction,
+                ropeRopeDynamicFriction,
+                ropeRopeRockingResistance,
                 contactNodeDamping,
                 initialVelocityKick,
                 settleThresholdTicks,
@@ -245,6 +251,9 @@ public record RopeTuning(
     }
 
     private static RopeTuning fromOverrides(Map<String, String> overrides) {
+        double staticFriction = resolve(overrides, ClientTuning.ROPE_ROPE_STATIC_FRICTION);
+        double dynamicFriction = Math.min(
+                resolve(overrides, ClientTuning.ROPE_ROPE_DYNAMIC_FRICTION), staticFriction);
         return new RopeTuning(
                 resolve(overrides, ClientTuning.SLACK),
                 resolve(overrides, ClientTuning.SEGMENT_LENGTH),
@@ -291,6 +300,9 @@ public record RopeTuning(
                 resolve(overrides, ClientTuning.CONTACT_PUSH_GAIN),
                 resolve(overrides, ClientTuning.ENTITY_PUSH_GAIN),
                 resolve(overrides, ClientTuning.ROPE_ROPE_PARALLEL_RELAX),
+                staticFriction,
+                dynamicFriction,
+                resolve(overrides, ClientTuning.ROPE_ROPE_ROCKING_RESISTANCE),
                 resolve(overrides, ClientTuning.CONTACT_NODE_DAMPING),
                 resolve(overrides, ClientTuning.INITIAL_VELOCITY_KICK),
                 resolve(overrides, ClientTuning.SETTLE_THRESHOLD_TICKS),

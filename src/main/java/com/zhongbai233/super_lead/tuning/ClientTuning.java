@@ -290,9 +290,18 @@ public final class ClientTuning {
     public static final TuningKey<Double> ROPE_ROPE_PARALLEL_RELAX = registerD(
             "ropeRopeParallelRelax", "physics.solverExt", 0.60D, 0.10D, 1.0D,
             "Under-relaxation for rope-rope corrections in parallel solve.");
+    public static final TuningKey<Double> ROPE_ROPE_STATIC_FRICTION = registerD(
+            "ropeRopeStaticFriction", "physics.solverExt", 0.55D, 0.0D, 2.0D,
+            "Static friction coefficient for low-speed relative sliding between contacting ropes.");
+    public static final TuningKey<Double> ROPE_ROPE_DYNAMIC_FRICTION = registerD(
+            "ropeRopeDynamicFriction", "physics.solverExt", 0.35D, 0.0D, 2.0D,
+            "Dynamic friction coefficient for ropes that are already sliding against each other.");
+    public static final TuningKey<Double> ROPE_ROPE_ROCKING_RESISTANCE = registerD(
+            "ropeRopeRockingResistance", "physics.solverExt", 0.35D, 0.0D, 1.0D,
+            "Load-limited resistance to opposite endpoint motion around a rope-rope contact point.");
     public static final TuningKey<Double> CONTACT_NODE_DAMPING = registerD(
             "contactNodeDamping", "physics.solverExt", 0.50D, 0.0D, 1.0D,
-            "Velocity damping applied to nodes that had terrain/rope contact in the current substep.");
+            "Velocity damping applied to nodes that had terrain or entity contact in the current substep.");
     public static final TuningKey<Double> INITIAL_VELOCITY_KICK = registerD(
             "initialVelocityKick", "physics.solverExt", 0.06D, 0.0D, 0.50D,
             "Initial lateral velocity kick to avoid perfectly straight ropes.");

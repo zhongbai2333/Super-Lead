@@ -1189,6 +1189,14 @@ public final class SuperLeadNetwork {
         LeadTransferService.tickAeNetwork(level);
     }
 
+    public static void recordAeEnsureResult(ServerLevel level, UUID connectionId, boolean success) {
+        LeadTransferService.recordAeEnsureResult(level, connectionId, success);
+    }
+
+    public static boolean allowAeUserEnsure(ServerLevel level, UUID connectionId) {
+        return LeadTransferService.allowAeUserEnsure(level, connectionId);
+    }
+
     public static int leadSignal(SignalGetter getter, BlockPos pos, Direction direction) {
         return LeadSignalService.leadSignal(getter, pos, direction);
     }

@@ -10,6 +10,7 @@ import java.util.UUID;
 
 public final class ItemFlowAnimator {
     private static final Map<UUID, Deque<ItemPulse>> PULSES = new HashMap<>();
+    private static final Map<UUID, ItemPulse> LAST_RECEIVED = new HashMap<>();
     private static final int MAX_PER_CONNECTION = 32;
 
     private ItemFlowAnimator() {
@@ -18,6 +19,7 @@ public final class ItemFlowAnimator {
     public static void queue(ItemPulse pulse) {
         Deque<ItemPulse> q = PULSES.computeIfAbsent(pulse.connectionId(), k -> new ArrayDeque<>());
         q.addLast(pulse);
+        LAST_RECEIVED.put(pulse.connectionId(), pulse);
         while (q.size() > MAX_PER_CONNECTION)
             q.pollFirst();
     }
@@ -44,13 +46,26 @@ public final class ItemFlowAnimator {
 
     public static void clear(UUID id) {
         PULSES.remove(id);
+        LAST_RECEIVED.remove(id);
     }
 
     public static void retainAll(Set<UUID> activeIds) {
         PULSES.keySet().retainAll(activeIds);
+        LAST_RECEIVED.keySet().retainAll(activeIds);
     }
 
     public static void clearAll() {
         PULSES.clear();
+        LAST_RECEIVED.clear();
+    }
+
+    /** Read-only persistent receipt used by BenchMod to verify client work feedback. */
+    public static ItemPulseBenchProbe probeForBench(UUID connectionId) {
+        ItemPulse pulse = LAST_RECEIVED.get(connectionId);
+        return pulse == null ? null : new ItemPulseBenchProbe(
+                pulse.startTick(), pulse.durationTicks(), pulse.reverse());
+    }
+
+    public record ItemPulseBenchProbe(long startTick, int durationTicks, boolean reverse) {
     }
 }
