@@ -11,6 +11,11 @@
   接触场景会导出逐 tick CSV，视觉场景会保留截图。
 3. **ModBench 服务端场景**（`runBenchServer`）：`super_lead.server-load` smoke。
 
+ModBench 当前只发布到本机 Maven 仓库，因此默认构建不会解析该插件。先在相邻的
+`BenchMod` 仓库执行 `gradlew publishToMavenLocal`，再用
+`gradlew -PenableModBench=true runBenchClient` 或
+`gradlew -PenableModBench=true runBenchServer` 显式启用场景。
+
 ## 已规划场景（优先级降序）
 
 | 场景 | 守护对象 | 关键断言 | 备注 |

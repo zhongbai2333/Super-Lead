@@ -1,10 +1,29 @@
+buildscript {
+    if (providers.gradleProperty('enableModBench').map { it.toBoolean() }.orElse(false).get()) {
+        repositories {
+            mavenLocal {
+                content {
+                    includeGroup 'com.zhongbai233.bench'
+                }
+            }
+        }
+        dependencies {
+            classpath "com.zhongbai233.bench:bench-gradle-plugin:${providers.gradleProperty('modbench_version').get()}"
+        }
+    }
+}
+
 plugins {
     id 'java-library'
     id 'maven-publish'
     id 'idea'
     id 'eclipse'
     id 'net.neoforged.moddev' version '2.0.141'
-    id 'com.zhongbai233.minecraft-bench'
+}
+
+def modBenchEnabled = providers.gradleProperty('enableModBench').map { it.toBoolean() }.orElse(false).get()
+if (modBenchEnabled) {
+    apply plugin: 'com.zhongbai233.minecraft-bench'
 }
 
 version = mod_version
@@ -222,19 +241,21 @@ dependencies {
     // http://www.gradle.org/docs/current/userguide/dependency_management.html
 }
 
-modBench {
-    targetMod = 'super_lead'
-    expectedProviderCount = 1
-    seed = 7
-    // World creation + connection sync can take a while on first run, and the
-    // interaction scenarios run multi-stage measurements inside a single phase.
-    phaseTimeoutTicks = 1200
-    // Flat world: deterministic terrain and lighting for physics scenarios, and
-    // ground-level sections stay non-empty so chunk-mesh handoff can be exercised.
-    clientWorldPreset = 'flat'
-    // Physics assertions do not need comparable frame timings; letting the run
-    // survive focus loss keeps unattended runs from ending INCONCLUSIVE.
-    clientRequireWindowFocus = false
+if (modBenchEnabled) {
+    modBench {
+        targetMod = 'super_lead'
+        expectedProviderCount = 1
+        seed = 7
+        // World creation + connection sync can take a while on first run, and the
+        // interaction scenarios run multi-stage measurements inside a single phase.
+        phaseTimeoutTicks = 1200
+        // Flat world: deterministic terrain and lighting for physics scenarios, and
+        // ground-level sections stay non-empty so chunk-mesh handoff can be exercised.
+        clientWorldPreset = 'flat'
+        // Physics assertions do not need comparable frame timings; letting the run
+        // survive focus loss keeps unattended runs from ending INCONCLUSIVE.
+        clientRequireWindowFocus = false
+    }
 }
 
 // This block of code expands all declared replace properties in the specified resource targets.
@@ -290,6 +311,8 @@ idea {
 // unless the Eclipse classpath model opts in explicitly.
 eclipse {
     classpath {
-        sourceSets += [sourceSets.bench]
+        if (modBenchEnabled) {
+            sourceSets += [sourceSets.bench]
+        }
     }
 }
