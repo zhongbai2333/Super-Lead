@@ -69,7 +69,11 @@ public final class RopeDebugOverlay implements DebugScreenEntry {
                     + " dirty=" + RopeDebugStats.meshDirtyFlushed + "/"
                     + RopeDebugStats.meshDirtyQueue,
                 "[SuperLead] vis far retest=" + RopeDebugStats.visibilityFarRetests
-                    + " defer=" + RopeDebugStats.visibilityFarDeferred,
+                    + " defer=" + RopeDebugStats.visibilityFarDeferred
+                        + String.format(Locale.ROOT, " cadence maxPubGap=%.1fms maxStale=%.1fms",
+                            RopeDebugStats.visualMaxPublicationGapMs, RopeDebugStats.visualMaxStaleMs)
+                    + " moving=" + RopeDebugStats.visualMovingSamples + "/"
+                    + RopeDebugStats.visualSamples,
                 "[SuperLead] neighbor candidates=" + RopeDebugStats.neighborCandidates
                         + " narrow=" + RopeDebugStats.neighborNarrowPhase
                     + " capDrop=" + RopeDebugStats.neighborDroppedByCap

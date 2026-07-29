@@ -64,6 +64,7 @@ import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
+import net.neoforged.neoforge.client.event.ClientTickEvent;
 import net.neoforged.neoforge.client.event.SubmitCustomGeometryEvent;
 import org.slf4j.Logger;
 
@@ -163,6 +164,8 @@ public final class SuperLeadClientEvents {
     private static RopeSimulation previewSim;
     private static LeadAnchor previewAnchor;
     private static long lastRepelTick = Long.MIN_VALUE;
+    private static long renderFrameSequence;
+    private static final Map<UUID, VisualCadenceState> VISUAL_CADENCE = new HashMap<>();
     private static long lastDebugStatsTick = Long.MIN_VALUE;
     private static long lastMaintainableSimIdsTick = Long.MIN_VALUE;
     private static int physicsRoundRobinCursor;
@@ -412,6 +415,84 @@ public final class SuperLeadClientEvents {
         }
     }
 
+    /**
+     * Advances rope physics from the client tick rather than relying on a geometry
+     * submission callback to happen during every game tick. The render callback
+     * keeps the same tick gate as a low-latency fallback, but can no longer be the
+     * only event that drains async completions or starts a solve.
+     */
+    @SubscribeEvent
+    public static void onClientTick(ClientTickEvent.Post event) {
+        Minecraft minecraft = Minecraft.getInstance();
+        ClientLevel level = minecraft.level;
+        if (level == null || minecraft.player == null) {
+            return;
+        }
+        driveClientPhysicsTick(minecraft, level);
+    }
+
+    private static void driveClientPhysicsTick(Minecraft minecraft, ClientLevel level) {
+        long tick = level.getGameTime();
+        if (!shouldDrivePhysicsTick(lastRepelTick, tick)) {
+            return;
+        }
+
+        StaticRopeChunkRegistry staticRopes = StaticRopeChunkRegistry.get();
+        syncTransparentEditingMode(minecraft);
+        SuperLeadNetwork.pruneInvalid(level);
+        float partialTick = minecraft.getDeltaTracker().getGameTimeDeltaPartialTick(false);
+        Camera camera = minecraft.gameRenderer.getMainCamera();
+        Vec3 cameraPos = camera.position();
+        Frustum frustum = camera.getCullFrustum();
+        RopeVisibility.beginFrame(cameraPos);
+
+        List<LeadConnection> connections = SuperLeadNetwork.connections(level);
+        Map<UUID, LeadEndpointLayout.Endpoints> endpointsByConnection = LeadEndpointLayout
+                .endpointsByConnection(level, connections);
+        Set<UUID> active = FRAME_ACTIVE;
+        Map<UUID, Double> lodDistanceByConnection = FRAME_LOD_DISTANCE;
+        List<RenderEntry> simEntries = FRAME_SIM_ENTRIES;
+        List<RenderEntry> staticCollisionEntries = FRAME_STATIC_COLLISION_ENTRIES;
+        List<RenderEntry> renderEntries = FRAME_RENDER_ENTRIES;
+        Set<UUID> staticSimIds = FRAME_STATIC_SIM_IDS;
+        Set<UUID> parrotWeightedRopes = FRAME_PARROT_WEIGHTED_ROPES;
+        Map<UUID, Long> physicsNanosByConnection = debugPhysicsNanosMap();
+        Map<UUID, String> physicsStateByConnection = debugPhysicsStateMap();
+        active.clear();
+        lodDistanceByConnection.clear();
+        simEntries.clear();
+        staticCollisionEntries.clear();
+        renderEntries.clear();
+        staticSimIds.clear();
+        parrotWeightedRopes.clear();
+
+        publishCompletedAsyncPhysics(active, physicsNanosByConnection, physicsStateByConnection,
+                tick, partialTick);
+        TransparentRevealContext revealContext = transparentRevealContext(minecraft.player);
+        for (LeadConnection connection : connections) {
+            addConnectionEntry(level, minecraft, staticRopes, endpointsByConnection, active,
+                    lodDistanceByConnection, simEntries, staticSimIds, renderEntries,
+                    staticCollisionEntries, connection, cameraPos, frustum, partialTick, tick, revealContext);
+        }
+
+        lastRepelTick = tick;
+        RopePhysicsDiagnostics.begin(tick);
+        stepFrameSimulations(level, minecraft.player, simEntries, staticCollisionEntries,
+                parrotWeightedRopes, active, physicsNanosByConnection, physicsStateByConnection,
+                tick, partialTick);
+        updateMaintainableSimIds(simEntries, staticSimIds, tick);
+
+        // Keep the simulation/worker lifetime independent from whether a geometry
+        // callback is emitted for this tick. Render-only caches are still retained by
+        // onSubmitCustomGeometry when a frame is submitted.
+        SIMS.keySet().retainAll(active);
+        LAST_DYNAMIC_STEP_TICK.keySet().retainAll(active);
+        ACTIVITY_STATES.keySet().retainAll(active);
+        ENTITY_CONTACT_SNAPSHOTS.keySet().retainAll(active);
+        PERCH_FORCE_SNAPSHOTS.keySet().retainAll(active);
+        retainAsyncPhysicsJobs(active);
+    }
+
     @SubscribeEvent
     public static void onSubmitCustomGeometry(SubmitCustomGeometryEvent event) {
         Minecraft minecraft = Minecraft.getInstance();
@@ -429,6 +510,7 @@ public final class SuperLeadClientEvents {
         syncTransparentEditingMode(minecraft);
         SuperLeadNetwork.pruneInvalid(level);
         long tick = level.getGameTime();
+        renderFrameSequence++;
         float partialTick = minecraft.getDeltaTracker().getGameTimeDeltaPartialTick(false);
         Camera camera = minecraft.gameRenderer.getMainCamera();
         Vec3 cameraPos = camera.position();
@@ -477,7 +559,7 @@ public final class SuperLeadClientEvents {
         // in the unified solver iteration (no more separate repel + settle phase).
         // Ropes past lod.physicsDistance skip expensive neighbour/entity interaction,
         // but still receive sparse terrain-only maintenance before static handoff.
-        if (tick != lastRepelTick) {
+        if (shouldDrivePhysicsTick(lastRepelTick, tick)) {
             lastRepelTick = tick;
             RopePhysicsDiagnostics.begin(tick);
             stepFrameSimulations(level, minecraft.player, simEntries, staticCollisionEntries,
@@ -558,6 +640,7 @@ public final class SuperLeadClientEvents {
         LAST_DYNAMIC_STEP_TICK.keySet().retainAll(active);
         ACTIVITY_STATES.keySet().retainAll(active);
         COLLISION_RENDER_PHASES.keySet().retainAll(active);
+        VISUAL_CADENCE.keySet().retainAll(active);
         LAST_PLAYER_CONTACT_TICK.keySet().retainAll(active);
         ACTIVE_PLAYER_CONTACTS.retainAll(active);
         PENDING_MESH_COLLISION_WAKE.keySet().retainAll(active);
@@ -679,6 +762,8 @@ public final class SuperLeadClientEvents {
         PERCH_FORCE_SNAPSHOTS.clear();
         maintainableSimIds = Set.of();
         lastRepelTick = Long.MIN_VALUE;
+        renderFrameSequence = 0L;
+        VISUAL_CADENCE.clear();
         lastDebugStatsTick = Long.MIN_VALUE;
         lastMaintainableSimIdsTick = Long.MIN_VALUE;
         physicsRoundRobinCursor = 0;
@@ -1664,6 +1749,10 @@ public final class SuperLeadClientEvents {
         return previousTick != currentTick;
     }
 
+    static boolean shouldDrivePhysicsTick(long previousTick, long currentTick) {
+        return previousTick != currentTick;
+    }
+
     private static void releaseDynamicActiveStaticRopes(ClientLevel level, List<RenderEntry> renderEntries,
             StaticRopeChunkRegistry staticRopes, Set<UUID> parrotWeightedRopes, long tick) {
         for (RenderEntry entry : renderEntries) {
@@ -1872,6 +1961,7 @@ public final class SuperLeadClientEvents {
                 : null;
         int extractEnd = extractEnd(entry.connection());
         recordRopeLabel(entry, partialTick, false, physicsNanosByConnection, physicsStateByConnection);
+        recordVisualCadence(connectionId, sim, renderPartialTick);
         ropeJobs.add(LeashBuilder.collect(sim, blockA, blockB, skyA, skyB, highlightColor,
                 entry.connection().kind(), entry.connection().powered(), entry.connection().tier(),
             pulses, extractEnd, chunkMeshActive, renderPartialTick));
@@ -2144,6 +2234,39 @@ public final class SuperLeadClientEvents {
     // ============================================================================================
     // Bench probe (read-only)
     // ============================================================================================
+    private static void recordVisualCadence(UUID connectionId, RopeSimulation sim, float partialTick) {
+        sim.prepareRender(partialTick);
+        int belly = sim.nodeCount() / 2;
+        VisualCadenceState state = VISUAL_CADENCE.computeIfAbsent(connectionId, ignored -> new VisualCadenceState());
+        state.sample(renderFrameSequence, System.nanoTime(), sim.lastSteppedTick(),
+                sim.renderX(belly), sim.renderY(belly), sim.renderZ(belly));
+    }
+
+    /** Per-render-frame visual continuity for one dynamically submitted rope. */
+    public record RopeVisualCadenceBenchProbe(
+            long renderSamples, long movingSamples, long physicsPublications,
+            int currentStaleFrames, int maxStaleFrames, int maxPublicationGapFrames,
+            double maxPublicationGapMs, double maxStaleMs,
+            double maxRenderedStep, double totalRenderedDistance) {
+    }
+
+    public static RopeVisualCadenceBenchProbe probeVisualCadenceForBench(UUID connectionId) {
+        VisualCadenceState state = connectionId == null ? null : VISUAL_CADENCE.get(connectionId);
+        return state == null ? null : state.snapshot();
+    }
+
+    /** Clears only bench cadence history; live simulation and render state are untouched. */
+    public static void resetVisualCadenceForBench(Iterable<UUID> connectionIds) {
+        if (connectionIds == null) {
+            return;
+        }
+        for (UUID connectionId : connectionIds) {
+            if (connectionId != null) {
+                VISUAL_CADENCE.remove(connectionId);
+            }
+        }
+    }
+
     /**
      * Immutable kinematic snapshot of one client rope simulation. This is the
      * read-only diagnostics facade BenchMod scenarios sample once per client tick;
@@ -2231,6 +2354,95 @@ public final class SuperLeadClientEvents {
                 meshAccepted,
                 sim.probeTerrainNearby(), sim.probeInteriorTerrainContact(),
                 sim.tuning().slack());
+    }
+
+    private static final class VisualCadenceState {
+        private static final double MOVEMENT_EPSILON_SQR = 1.0e-12D;
+        private long renderSamples;
+        private long movingSamples;
+        private long physicsPublications;
+        private long lastRenderFrame = Long.MIN_VALUE;
+        private long lastPublicationFrame = Long.MIN_VALUE;
+        private long lastPublicationNanos = Long.MIN_VALUE;
+        private long lastMovementNanos = Long.MIN_VALUE;
+        private long lastPhysicsTick = Long.MIN_VALUE;
+        private int currentStaleFrames;
+        private int maxStaleFrames;
+        private int maxPublicationGapFrames;
+        private long maxPublicationGapNanos;
+        private long maxStaleNanos;
+        private double lastX;
+        private double lastY;
+        private double lastZ;
+        private double maxRenderedStep;
+        private double totalRenderedDistance;
+
+        private void sample(long frame, long nowNanos, long physicsTick, double x, double y, double z) {
+            if (lastRenderFrame != Long.MIN_VALUE && frame != lastRenderFrame) {
+                double dx = x - lastX;
+                double dy = y - lastY;
+                double dz = z - lastZ;
+                double distanceSqr = dx * dx + dy * dy + dz * dz;
+                if (distanceSqr > MOVEMENT_EPSILON_SQR) {
+                    double distance = Math.sqrt(distanceSqr);
+                    movingSamples++;
+                    totalRenderedDistance += distance;
+                    maxRenderedStep = Math.max(maxRenderedStep, distance);
+                    currentStaleFrames = 0;
+                    lastMovementNanos = nowNanos;
+                } else {
+                    currentStaleFrames++;
+                    maxStaleFrames = Math.max(maxStaleFrames, currentStaleFrames);
+                    if (lastMovementNanos != Long.MIN_VALUE) {
+                        maxStaleNanos = Math.max(maxStaleNanos, nowNanos - lastMovementNanos);
+                    }
+                }
+            }
+            if (lastPhysicsTick != Long.MIN_VALUE && physicsTick != lastPhysicsTick) {
+                physicsPublications++;
+                if (lastPublicationFrame != Long.MIN_VALUE) {
+                    maxPublicationGapFrames = Math.max(maxPublicationGapFrames,
+                            (int) Math.min(Integer.MAX_VALUE, frame - lastPublicationFrame));
+                    maxPublicationGapNanos = Math.max(maxPublicationGapNanos,
+                            nowNanos - lastPublicationNanos);
+                }
+                lastPublicationFrame = frame;
+                lastPublicationNanos = nowNanos;
+            } else if (lastPhysicsTick == Long.MIN_VALUE) {
+                lastPublicationFrame = frame;
+                lastPublicationNanos = nowNanos;
+                lastMovementNanos = nowNanos;
+            }
+            renderSamples++;
+            lastRenderFrame = frame;
+            lastPhysicsTick = physicsTick;
+            lastX = x;
+            lastY = y;
+            lastZ = z;
+            RopeDebugStats.visualSamples++;
+            if (currentStaleFrames == 0 && renderSamples > 1) {
+                RopeDebugStats.visualMovingSamples++;
+            }
+            RopeDebugStats.visualMaxStaleFrames = Math.max(
+                    RopeDebugStats.visualMaxStaleFrames, currentStaleFrames);
+            RopeDebugStats.visualMaxPublicationGapFrames = Math.max(
+                    RopeDebugStats.visualMaxPublicationGapFrames, maxPublicationGapFrames);
+                RopeDebugStats.visualMaxPublicationGapMs = Math.max(
+                    RopeDebugStats.visualMaxPublicationGapMs, nanosToMs(maxPublicationGapNanos));
+                RopeDebugStats.visualMaxStaleMs = Math.max(
+                    RopeDebugStats.visualMaxStaleMs, nanosToMs(maxStaleNanos));
+        }
+
+        private RopeVisualCadenceBenchProbe snapshot() {
+            return new RopeVisualCadenceBenchProbe(renderSamples, movingSamples, physicsPublications,
+                    currentStaleFrames, maxStaleFrames, maxPublicationGapFrames,
+                    nanosToMs(maxPublicationGapNanos), nanosToMs(maxStaleNanos),
+                    maxRenderedStep, totalRenderedDistance);
+        }
+
+        private static double nanosToMs(long nanos) {
+            return nanos / 1_000_000.0D;
+        }
     }
 
     private static final class PhysicsBudget {

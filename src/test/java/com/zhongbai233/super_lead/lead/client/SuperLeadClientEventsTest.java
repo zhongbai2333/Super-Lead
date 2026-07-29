@@ -167,6 +167,22 @@ class SuperLeadClientEventsTest {
     }
 
     @Test
+    void clientTickDrivesPhysicsWhenNoRenderCallbackCoveredTheTick() {
+        assertTrue(SuperLeadClientEvents.shouldDrivePhysicsTick(99L, 100L));
+        assertTrue(SuperLeadClientEvents.shouldDrivePhysicsTick(Long.MIN_VALUE, 100L));
+    }
+
+    @Test
+    void renderFallbackDoesNotRepeatPhysicsAlreadyDrivenByClientTick() {
+        assertFalse(SuperLeadClientEvents.shouldDrivePhysicsTick(100L, 100L));
+    }
+
+    @Test
+    void physicsDriverRecoversAfterClientGameTimeRewinds() {
+        assertTrue(SuperLeadClientEvents.shouldDrivePhysicsTick(100L, 20L));
+    }
+
+    @Test
     void parrotForceSnapshotsAreReusedOnlyWithinSameGameTick() {
         assertTrue(SuperLeadClientEvents.canReusePerchForceSnapshot(100L, 100L));
         assertFalse(SuperLeadClientEvents.canReusePerchForceSnapshot(100L, 101L));

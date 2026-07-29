@@ -31,6 +31,12 @@ public final class RopeDebugStats {
     public static volatile int neighborNarrowPhase;
     public static volatile int neighborDroppedByCap;
     public static volatile boolean neighborBuildTruncated;
+    public static volatile int visualMaxPublicationGapFrames;
+    public static volatile int visualMaxStaleFrames;
+    public static volatile double visualMaxPublicationGapMs;
+    public static volatile double visualMaxStaleMs;
+    public static volatile int visualMovingSamples;
+    public static volatile int visualSamples;
 
     public static volatile int bakeCacheHits;
     public static volatile int bakeCacheMisses;
@@ -73,6 +79,12 @@ public final class RopeDebugStats {
         neighborNarrowPhase = 0;
         neighborDroppedByCap = 0;
         neighborBuildTruncated = false;
+        visualMaxPublicationGapFrames = 0;
+        visualMaxStaleFrames = 0;
+        visualMaxPublicationGapMs = 0.0D;
+        visualMaxStaleMs = 0.0D;
+        visualMovingSamples = 0;
+        visualSamples = 0;
         bakeCacheHits = 0;
         bakeCacheMisses = 0;
         verticesEmitted = 0;

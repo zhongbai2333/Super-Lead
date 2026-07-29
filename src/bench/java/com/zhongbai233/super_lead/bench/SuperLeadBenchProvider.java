@@ -32,10 +32,26 @@ public final class SuperLeadBenchProvider implements BenchServerProvider, BenchC
                 new ScenarioDescriptor("super_lead.server-load", "Super Lead Server Load", Set.of("super_lead", "smoke"),
                         Duration.ofSeconds(20)),
                 context -> new ServerLoadScenario());
+            registrar.register(
+                new ScenarioDescriptor("super_lead.paired-server-cadence", "Super Lead Paired Server Cadence Rig",
+                    Set.of("super_lead", "paired", "server", "cadence"), Duration.ofSeconds(30)),
+                context -> new ServerCadenceRigScenario());
     }
 
     @Override
     public void registerClient(BenchClientRegistrar registrar) {
+        registrar.register(
+            new ScenarioDescriptor("super_lead.paired-remote-cadence", "Super Lead Paired Remote Cadence",
+                Set.of("super_lead", "paired", "remote", "cadence"), Duration.ofSeconds(90)),
+            context -> new RemoteCadenceClientScenario());
+        registrar.register(
+            new ScenarioDescriptor("super_lead.remote-client-smoke", "Super Lead Remote Client Smoke",
+                Set.of("super_lead", "client", "remote", "smoke"), Duration.ofSeconds(30)),
+            context -> new RemoteClientSmokeScenario());
+        registrar.register(
+            new ScenarioDescriptor("super_lead.rope-animation-cadence", "Super Lead Rope Animation Cadence",
+                Set.of("super_lead", "client", "render", "cadence", "dense"), Duration.ofSeconds(90)),
+            context -> new RopeAnimationCadenceClientScenario());
         registrar.register(
                 new ScenarioDescriptor("super_lead.rope-air-rest", "Super Lead Rope Air Rest",
                         Set.of("super_lead", "client", "physics"), Duration.ofSeconds(60)),

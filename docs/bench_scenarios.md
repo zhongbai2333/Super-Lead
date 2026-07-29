@@ -7,19 +7,50 @@
   邻居图和活动调度。
 2. **ModBench 客户端场景**（`runBenchClient`，完整驱动栈：调度器 / 异步 /
   mesh / 渲染）：已上线空吊静止、长跨度、全绳种矩阵、多挂件、物品工作、
-  十字堆叠、堆叠创建顺序、玩家碰撞、松紧调整和三层堆叠场景。
+  十字堆叠、堆叠创建顺序、玩家碰撞、松紧调整、三层堆叠，以及 53 连接
+  建筑服规模的动画 cadence 场景。
   接触场景会导出逐 tick CSV，视觉场景会保留截图。
 3. **ModBench 服务端场景**（`runBenchServer`）：`super_lead.server-load` smoke。
+4. **ModBench paired 场景**（`runBenchPaired`）：独立 dedicated server + 独立 remote client，
+  使用真实 loopback TCP 连接验证启动、登录、世界就绪和客户端渲染采样。
 
 ModBench 当前只发布到本机 Maven 仓库，因此默认构建不会解析该插件。先在相邻的
 `BenchMod` 仓库执行 `gradlew publishToMavenLocal`，再用
 `gradlew -PenableModBench=true runBenchClient` 或
 `gradlew -PenableModBench=true runBenchServer` 显式启用场景。
 
+> 当前 `runBenchPaired` 是 passthrough MVP：已支持 dedicated server + separate client
+> 双 JVM 和真实 TCP 连接，但还没有 phase barrier、nonce handshake 或网络延迟/丢包模拟。
+> 已有大部分 rope 物理场景仍在 client scenario 内创建 rig，并要求 integrated server；
+> 但 53 绳 cadence 已提供 paired vertical slice：权威 rig 在 dedicated server 创建，
+> remote client 通过同步缓存观测物理发布与渲染采样。
+
+### Paired smoke
+
+SuperLead 的 `build.gradle` 已配置：
+
+- server：`super_lead.paired-server-cadence`
+- remote client：`super_lead.paired-remote-cadence`
+
+最近一次通过结果：服务端创建 53 条绳，remote client 记录 21,973 个渲染采样和
+3,261 次物理发布；两端 report 与 paired summary 均为 `PASSED`。
+
+执行前确保相邻 BenchMod 已发布到本机 Maven，然后运行：
+
+```text
+gradlew publishToMavenLocal
+gradlew -PenableModBench=true prepareBenchRemoteClientOptions runBenchPaired
+```
+
+结果位于 `build/modBench/paired/default/summary.json`，两端报告分别位于
+`build/modBench/raw-results/default/paired-server/summary.json` 和
+`build/modBench/raw-results/default/remote-client/summary.json`。
+
 ## 已规划场景（优先级降序）
 
 | 场景 | 守护对象 | 关键断言 | 备注 |
 |---|---|---|---|
+| rope-animation-cadence | 53 连接背景下物理发布到逐帧渲染的连续性 | 动态阶段有物理解发布和逐帧位移；记录最大发布间隔、连续静止帧和单帧跳变量 | integrated 版本：`super_lead.rope-animation-cadence`；paired 版本：`super_lead.paired-server-cadence` + `super_lead.paired-remote-cadence` |
 | rope-long-span | 多长度单位、跨区块同步和长绳物理 | 跨度超过单单位上限；连接全程存在；拓扑节点充分；尾振幅收敛 | 已上线：`super_lead.rope-long-span` |
 | rope-kind-matrix | 全部 8 种 `LeadKind` 的同步、物理和渲染 | kind 不串型；模拟坐标有限；所有绳均静止 | 已上线：`super_lead.rope-kind-matrix` |
 | rope-attachments | 多种方块/物品挂件同步和挂绳静止 | 灯笼、灵魂灯笼、悬挂告示牌、铁锭顺序与类型正确；挂绳静止 | 已上线：`super_lead.rope-attachments` |

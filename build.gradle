@@ -21,13 +21,16 @@ plugins {
     id 'net.neoforged.moddev' version '2.0.141'
 }
 
-def modBenchEnabled = providers.gradleProperty('enableModBench').map { it.toBoolean() }.orElse(false).get()
+version = mod_version
+group = mod_group_id
+
+def modBenchEnabled = providers.gradleProperty('enableModBench')
+        .map { it.toBoolean() }
+        .orElse(false)
+        .get()
 if (modBenchEnabled) {
     apply plugin: 'com.zhongbai233.minecraft-bench'
 }
-
-version = mod_version
-group = mod_group_id
 
 repositories {
     // ModBench artifacts (API + runtime mod, injected by its plugin) live only in
@@ -255,6 +258,10 @@ if (modBenchEnabled) {
         // Physics assertions do not need comparable frame timings; letting the run
         // survive focus loss keeps unattended runs from ending INCONCLUSIVE.
         clientRequireWindowFocus = false
+        pairedServerScenarios = 'super_lead.paired-server-cadence'
+        pairedClientScenarios = 'super_lead.paired-remote-cadence'
+        pairedStartupTimeoutSeconds = 90
+        pairedClientTimeoutSeconds = 180
     }
 }
 
