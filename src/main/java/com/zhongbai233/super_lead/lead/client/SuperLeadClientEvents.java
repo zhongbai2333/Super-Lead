@@ -436,7 +436,6 @@ public final class SuperLeadClientEvents {
         if (!shouldDrivePhysicsTick(lastRepelTick, tick)) {
             return;
         }
-
         StaticRopeChunkRegistry staticRopes = StaticRopeChunkRegistry.get();
         syncTransparentEditingMode(minecraft);
         SuperLeadNetwork.pruneInvalid(level);
@@ -1326,10 +1325,16 @@ public final class SuperLeadClientEvents {
         }
 
         cancelAsyncPhysics(id);
-        entry.sim().prepareScheduledRenderStep(tick, decision.interval());
+        int renderInterval = decision.interval();
+        if (renderInterval > 1) {
+            entry.sim().prepareScheduledRenderStep(tick, renderInterval);
+        } else {
+            entry.sim().prepareDirectRenderStep();
+        }
         long stepStart = System.nanoTime();
         boolean stepped = entry.sim().step(level, entry.a(), entry.b(), tick,
                 neighbors, forceFields, entityContacts);
+        entry.sim().publishMeshCollisionRenderTarget(tick, partialTick);
         LAST_DYNAMIC_STEP_TICK.put(id, tick);
         long stepNanos = System.nanoTime() - stepStart;
         RopePhysicsDiagnostics.recordSyncSolve(id, entry.sim().nodeCount(), stepNanos);
@@ -1574,8 +1579,9 @@ public final class SuperLeadClientEvents {
         double sample = activitySample(entry, collisionRisk, forceActive, synchronous, windActive);
         RopeActivityScheduler.State activity = RopeActivityScheduler.update(previous, tick, sample, forceHot);
         ACTIVITY_STATES.put(entry.connection().id(), activity);
-        int interval = scheduledPhysicsInterval(
-            activity, entry.lodDistSqr(), entry.sim().isSettled(), windActive);
+        boolean settled = entry.sim().isSettled();
+        int interval = visualPhysicsInterval(scheduledPhysicsInterval(
+            activity, entry.lodDistSqr(), settled, windActive), settled);
 
         if (windActive) {
             return physicsBudget.tryForceConsume()
@@ -1590,6 +1596,16 @@ public final class SuperLeadClientEvents {
                         : forceActive ? "force"
                             : synchronous ? "sync!" : endpointMoved ? "endpoint!" : "predict!",
                     1, windActive)
+                    : new StepDecision(false, "circuit-breaker", 1, windActive);
+        }
+        if (requiresContinuousVisualPhysics(settled)) {
+            // Sparse scheduling is visually safe only after the solver has reached its
+            // settled state. Slow residual motion often falls below isHighMotion(),
+            // but advancing it every 2/4/8 ticks produces the exact low-FPS staircase
+            // seen in production. Bypass only the rope-count budget here; the shared
+            // nanosecond deadline remains the hard dense-scene circuit breaker.
+            return physicsBudget.tryForceConsume()
+                    ? new StepDecision(true, "unsettled", 1, windActive)
                     : new StepDecision(false, "circuit-breaker", 1, windActive);
         }
         if (isHighMotion(entry)) {
@@ -1613,6 +1629,15 @@ public final class SuperLeadClientEvents {
             boolean forceActive, boolean stackContact, boolean synchronous,
             boolean endpointMoved, double collisionRisk) {
         return forceActive || stackContact || synchronous || endpointMoved || collisionRisk >= 0.80D;
+    }
+
+    static boolean requiresContinuousVisualPhysics(boolean settled) {
+        return !settled;
+    }
+
+    static int visualPhysicsInterval(int scheduledInterval, boolean settled) {
+        return requiresContinuousVisualPhysics(settled)
+                ? 1 : Math.max(1, scheduledInterval);
     }
 
     static int scheduledPhysicsInterval(RopeActivityScheduler.State activity,

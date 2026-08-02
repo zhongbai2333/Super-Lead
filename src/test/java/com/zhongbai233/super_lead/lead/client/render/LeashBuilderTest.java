@@ -2,11 +2,15 @@ package com.zhongbai233.super_lead.lead.client.render;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.zhongbai233.super_lead.lead.LeadKind;
 import com.zhongbai233.super_lead.lead.client.geom.BoundedHermiteCurve;
 import com.zhongbai233.super_lead.lead.client.sim.RopeSimulation;
 import com.zhongbai233.super_lead.lead.client.sim.RopeTuning;
+import java.util.ArrayList;
+import java.util.List;
 import net.minecraft.world.phys.Vec3;
 import org.junit.jupiter.api.Test;
 
@@ -156,4 +160,29 @@ class LeashBuilderTest {
         assertEquals(0x00563412, LeashBuilder.combineAlphaAndRgb(0x00ABCDEF, 0x563412));
         assertEquals(0xFF563412, LeashBuilder.combineAlphaAndRgb(0xFFABCDEF, 0x563412));
     }
+
+    @Test
+    void deferredJobSnapshotSurvivesCallerListReuse() {
+        RopeSimulation first = new RopeSimulation(
+                new Vec3(0.0D, 3.0D, 0.0D), new Vec3(4.0D, 1.0D, 0.0D),
+                91L, RopeTuning.localDefaults());
+        RopeSimulation second = new RopeSimulation(
+                new Vec3(0.0D, 4.0D, 0.0D), new Vec3(5.0D, 2.0D, 0.0D),
+                92L, RopeTuning.localDefaults());
+        RopeJob firstJob = new RopeJob(first, 0, 0, 0, 0, 0,
+                LeadKind.NORMAL, false, 0, null, 0);
+        RopeJob secondJob = new RopeJob(second, 0, 0, 0, 0, 0,
+                LeadKind.NORMAL, false, 0, null, 0);
+        ArrayList<RopeJob> reusable = new ArrayList<>();
+        reusable.add(firstJob);
+
+        List<RopeJob> submitted = LeashBuilder.deferredJobSnapshot(reusable);
+        reusable.clear();
+        reusable.add(secondJob);
+
+        assertEquals(1, submitted.size());
+        assertSame(firstJob, submitted.getFirst());
+        assertSame(secondJob, reusable.getFirst());
+    }
+
 }

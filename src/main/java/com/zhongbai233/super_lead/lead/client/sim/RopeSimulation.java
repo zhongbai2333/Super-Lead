@@ -24,6 +24,17 @@ public final class RopeSimulation extends RopeSimulationStepper {
     private final PlayerContactAccumulator playerContactAccumulatorScratch = new PlayerContactAccumulator();
     private final double[] normalScratch = new double[3];
     private final double[] smoothNormalScratch = new double[3];
+    private long playerContactCacheGeneration = Long.MIN_VALUE;
+    private long playerContactCacheBoxMinX;
+    private long playerContactCacheBoxMinY;
+    private long playerContactCacheBoxMinZ;
+    private long playerContactCacheBoxMaxX;
+    private long playerContactCacheBoxMaxY;
+    private long playerContactCacheBoxMaxZ;
+    private long playerContactCacheRadius;
+    private long playerContactCacheTopPadding;
+    private boolean playerContactCacheValid;
+    private ContactSample playerContactCacheResult;
 
     public RopeSimulation(Vec3 a, Vec3 b) {
         this(a, b, 0L, RopeTuning.forMidpoint(a, b));
@@ -55,7 +66,12 @@ public final class RopeSimulation extends RopeSimulationStepper {
      * Enable/disable the smoothed proxy curve for rendering and contact sampling.
      */
     public void setUseCollisionProxy(boolean use) {
+        if (this.useCollisionProxy == use) {
+            return;
+        }
         this.useCollisionProxy = use;
+        collisionProxyValid = false;
+        invalidateRenderCacheState();
     }
 
     public ContactSample findPlayerContact(AABB box, double radius) {
@@ -63,9 +79,48 @@ public final class RopeSimulation extends RopeSimulationStepper {
     }
 
     public ContactSample findPlayerContact(AABB box, double radius, double topPadding) {
-        PlayerContactCurve curve = preparePlayerContactCurve(playerContactCurveScratch);
-        if (curve.totalLen < 1.0e-6D)
+        if (box == null) {
             return null;
+        }
+        long minXBits = Double.doubleToLongBits(box.minX);
+        long minYBits = Double.doubleToLongBits(box.minY);
+        long minZBits = Double.doubleToLongBits(box.minZ);
+        long maxXBits = Double.doubleToLongBits(box.maxX);
+        long maxYBits = Double.doubleToLongBits(box.maxY);
+        long maxZBits = Double.doubleToLongBits(box.maxZ);
+        long radiusBits = Double.doubleToLongBits(radius);
+        long topPaddingBits = Double.doubleToLongBits(topPadding);
+        if (playerContactCacheValid
+                && playerContactCacheGeneration == renderStateGeneration
+                && playerContactCacheBoxMinX == minXBits
+                && playerContactCacheBoxMinY == minYBits
+                && playerContactCacheBoxMinZ == minZBits
+                && playerContactCacheBoxMaxX == maxXBits
+                && playerContactCacheBoxMaxY == maxYBits
+                && playerContactCacheBoxMaxZ == maxZBits
+                && playerContactCacheRadius == radiusBits
+                && playerContactCacheTopPadding == topPaddingBits) {
+            return playerContactCacheResult;
+        }
+        if (!useCollisionProxy) {
+            double broadPhasePadding = Math.max(
+                    TOP_SUPPORT_SNAP, Math.min(Math.max(0.0D, topPadding) * 0.25D, 0.045D));
+            double broadPhaseRadius = Math.max(0.0D, radius) + broadPhasePadding;
+            updateBounds();
+            if (box.maxX < minX - broadPhaseRadius || box.minX > maxX + broadPhaseRadius
+                    || box.maxY < minY - broadPhaseRadius || box.minY > maxY + broadPhaseRadius
+                    || box.maxZ < minZ - broadPhaseRadius || box.minZ > maxZ + broadPhaseRadius) {
+                cachePlayerContactQuery(minXBits, minYBits, minZBits, maxXBits, maxYBits, maxZBits,
+                        radiusBits, topPaddingBits, null);
+                return null;
+            }
+        }
+        PlayerContactCurve curve = preparePlayerContactCurve(playerContactCurveScratch);
+        if (curve.totalLen < 1.0e-6D) {
+            cachePlayerContactQuery(minXBits, minYBits, minZBits, maxXBits, maxYBits, maxZBits,
+                    radiusBits, topPaddingBits, null);
+            return null;
+        }
 
         PlayerContactContext context = playerContactContextScratch.set(
                 box, radius, Math.max(0.0D, topPadding),
@@ -77,7 +132,27 @@ public final class RopeSimulation extends RopeSimulationStepper {
         for (int s = 0; s < segments; s++) {
             walked += samplePlayerContactSegment(curve, context, s, walked, accumulator);
         }
-        return accumulator.result();
+        ContactSample result = accumulator.result();
+        cachePlayerContactQuery(minXBits, minYBits, minZBits, maxXBits, maxYBits, maxZBits,
+                radiusBits, topPaddingBits, result);
+        return result;
+    }
+
+    private void cachePlayerContactQuery(
+            long minXBits, long minYBits, long minZBits,
+            long maxXBits, long maxYBits, long maxZBits,
+            long radiusBits, long topPaddingBits, ContactSample result) {
+        playerContactCacheGeneration = renderStateGeneration;
+        playerContactCacheBoxMinX = minXBits;
+        playerContactCacheBoxMinY = minYBits;
+        playerContactCacheBoxMinZ = minZBits;
+        playerContactCacheBoxMaxX = maxXBits;
+        playerContactCacheBoxMaxY = maxYBits;
+        playerContactCacheBoxMaxZ = maxZBits;
+        playerContactCacheRadius = radiusBits;
+        playerContactCacheTopPadding = topPaddingBits;
+        playerContactCacheResult = result;
+        playerContactCacheValid = true;
     }
 
     /**

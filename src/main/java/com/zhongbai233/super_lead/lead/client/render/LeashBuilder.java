@@ -155,21 +155,21 @@ public final class LeashBuilder {
                 kind, powered, tier, pulsePositions, extractEnd, chunkMeshActive);
     }
 
-            public static RopeJob collect(
-                RopeSimulation sim,
-                int blockA, int blockB,
-                int skyA, int skyB,
-                int highlightColor,
-                LeadKind kind,
-                boolean powered,
-                int tier,
-                float[] pulsePositions,
-                int extractEnd,
-                boolean chunkMeshActive,
-                float renderPartialTick) {
-            return new RopeJob(sim, blockA, blockB, skyA, skyB, highlightColor,
+    public static RopeJob collect(
+            RopeSimulation sim,
+            int blockA, int blockB,
+            int skyA, int skyB,
+            int highlightColor,
+            LeadKind kind,
+            boolean powered,
+            int tier,
+            float[] pulsePositions,
+            int extractEnd,
+            boolean chunkMeshActive,
+            float renderPartialTick) {
+        return new RopeJob(sim, blockA, blockB, skyA, skyB, highlightColor,
                 kind, powered, tier, pulsePositions, extractEnd, chunkMeshActive, renderPartialTick);
-            }
+    }
 
     private static final PoseStack BATCH_POSE = new PoseStack();
     /**
@@ -209,19 +209,32 @@ public final class LeashBuilder {
             java.util.List<RopeJob> jobs) {
         if (jobs.isEmpty())
             return;
-        int count = jobs.size();
+        // SubmitCustomGeometry callbacks execute later than collection. The caller
+        // deliberately reuses FRAME_ROPE_JOBS and clears it on the next geometry
+        // event, so freeze list membership before the reusable caller list is cleared.
+        java.util.List<RopeJob> submittedJobs = deferredJobSnapshot(jobs);
+        int count = submittedJobs.size();
         collector.submitCustomGeometry(BATCH_POSE, RopeRenderTypes.dynamicRope(), (poseState, buffer) -> {
             for (int i = 0; i < count; i++) {
-                RopeJob job = jobs.get(i);
-                float jobPartialTick = Float.isNaN(job.renderPartialTick) ? partialTick : job.renderPartialTick;
-                // Custom geometry executes later than collection. Other passes may
-                // have prepared the same sim at a different partial tick meanwhile,
-                // so establish this job's snapshot immediately before reading it.
+                RopeJob job = submittedJobs.get(i);
+                float jobPartialTick = resolvedPartialTick(job.renderPartialTick, partialTick);
                 double totalLength = Math.max(1.0e-6D, job.sim.prepareRender(jobPartialTick));
                 double visualTotalLength = Math.max(1.0e-6D, job.sim.visualRenderTotalLength());
                 renderJob(buffer, poseState, cameraPos, job, totalLength, visualTotalLength);
             }
         });
+    }
+
+    static java.util.List<RopeJob> deferredJobSnapshot(java.util.List<RopeJob> jobs) {
+        return java.util.List.copyOf(jobs);
+    }
+
+    private static float resolvedPartialTick(float jobPartialTick, float framePartialTick) {
+        float resolved = Float.isFinite(jobPartialTick) ? jobPartialTick : framePartialTick;
+        if (!Float.isFinite(resolved)) {
+            return 0.0F;
+        }
+        return Math.max(0.0F, Math.min(1.0F, resolved));
     }
 
     private static void renderJob(VertexConsumer buffer, PoseStack.Pose poseState, Vec3 cameraPos, RopeJob job,

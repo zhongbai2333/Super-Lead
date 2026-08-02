@@ -74,11 +74,22 @@ abstract class RopeSimulationVisualState extends RopeSimulationRenderCache {
         double progress = scheduledVisualProgress(
                 currentTick, scheduledRenderStartTick, scheduledRenderDurationTicks);
         for (int i = 0; i < nodes; i++) {
-            if (scheduledRenderActive) {
-            double nodeProgress = nodeVisualProgressForHandoff(i, progress);
-            scheduledRenderX[i] += (x[i] - scheduledRenderX[i]) * nodeProgress;
-            scheduledRenderY[i] += (y[i] - scheduledRenderY[i]) * nodeProgress;
-            scheduledRenderZ[i] += (z[i] - scheduledRenderZ[i]) * nodeProgress;
+            if (renderCacheValid) {
+                // Continue from pixels that were actually submitted. Advancing the old
+                // interval to integer currentTick can skip its unseen remainder when
+                // the previous display frame occurred at partialTick 0.1-0.3, which
+                // makes each new solve appear as a 50-150ms freeze followed by a jump.
+                scheduledRenderX[i] = renderX[i];
+                scheduledRenderY[i] = renderY[i];
+                scheduledRenderZ[i] = renderZ[i];
+            } else if (scheduledRenderActive) {
+                // No frame has consumed this state yet (headless test, hidden rope or
+                // delayed first render). Generate a bounded theoretical handoff so the
+                // interval still progresses instead of restarting from stale nodes.
+                double nodeProgress = nodeVisualProgressForHandoff(i, progress);
+                scheduledRenderX[i] += (x[i] - scheduledRenderX[i]) * nodeProgress;
+                scheduledRenderY[i] += (y[i] - scheduledRenderY[i]) * nodeProgress;
+                scheduledRenderZ[i] += (z[i] - scheduledRenderZ[i]) * nodeProgress;
             } else {
                 scheduledRenderX[i] = x[i];
                 scheduledRenderY[i] = y[i];
@@ -89,7 +100,22 @@ abstract class RopeSimulationVisualState extends RopeSimulationRenderCache {
         scheduledRenderDurationTicks = Math.max(1, interval);
         scheduledRenderActive = true;
         renderStable = false;
-        renderCacheValid = false;
+        invalidateRenderCacheState();
+    }
+
+    /**
+     * Returns rendering to the ordinary previous-tick/current-tick interpolation
+     * used when physics publishes every client tick.
+     */
+    public void prepareDirectRenderStep() {
+        scheduledRenderActive = false;
+        scheduledRenderStartTick = UNINIT;
+        scheduledRenderDurationTicks = 1;
+        renderStable = false;
+        // A direct solve can legitimately early-out after snapshotting xLastTick to x.
+        // Always invalidate here, even when we were already in direct mode, so that
+        // the resulting stable frame cannot reuse an older partial-tick snapshot.
+        invalidateRenderCacheState();
     }
 
     private double nodeVisualProgressForHandoff(int node, double progress) {
@@ -115,6 +141,10 @@ abstract class RopeSimulationVisualState extends RopeSimulationRenderCache {
      * available here as the visual origin for the newly published target.
      */
     public void beginAsyncPublishedRenderStep(long currentTick, int interval) {
+        if (interval <= 1) {
+            prepareDirectRenderStep();
+            return;
+        }
         for (int i = 0; i < nodes; i++) {
             scheduledRenderX[i] = renderX[i];
             scheduledRenderY[i] = renderY[i];
@@ -124,13 +154,17 @@ abstract class RopeSimulationVisualState extends RopeSimulationRenderCache {
         scheduledRenderDurationTicks = Math.max(1, interval);
         scheduledRenderActive = true;
         renderStable = false;
-        renderCacheValid = false;
+        invalidateRenderCacheState();
     }
 
     public void setRenderFrameTick(long currentTick) {
-        if (renderFrameTick != currentTick && scheduledRenderActive) {
-            renderCacheValid = false;
-        }
+        // Keep the last prepared visual nodes available as the handoff origin for a
+        // scheduled solve later in this client tick. Production discovers visible
+        // ropes (and calls this method) before stepConnectionEntry calls
+        // prepareScheduledRenderStep; invalidating here discarded the last pixels
+        // and made each interval restart from a theoretical integer-tick position.
+        // prepareRender cannot incorrectly reuse this cache across ticks because its
+        // cache key also requires renderCacheFrameTick == renderFrameTick.
         renderFrameTick = currentTick;
     }
 
@@ -185,11 +219,28 @@ abstract class RopeSimulationVisualState extends RopeSimulationRenderCache {
             transitionY[i] = y[i];
             transitionZ[i] = z[i];
         }
-        renderTransitionStartTime = currentTick + Math.max(0.0F, Math.min(1.0F, partialTick));
+        // Merely leaving the mesh does not provide a dynamic target yet. The solve
+        // may be deferred by the shared physics deadline; consuming the visual
+        // interval now would finish it against an unchanged target and make the
+        // eventual publication teleport. Keep the visible mesh frozen until the
+        // driver explicitly publishes the first completed dynamic solve.
+        renderTransitionStartTime = UNINIT;
         renderTransitionActive = true;
+        renderTransitionTargetReady = false;
         scheduledRenderActive = false;
         renderStable = false;
-        renderCacheValid = false;
+        invalidateRenderCacheState();
+    }
+
+    /** Starts the mesh-to-dynamic interpolation after its first target is solved. */
+    public void publishMeshCollisionRenderTarget(long currentTick, float partialTick) {
+        if (!renderTransitionActive || renderTransitionTargetReady) {
+            return;
+        }
+        renderTransitionStartTime = currentTick + Math.max(0.0F, Math.min(1.0F, partialTick));
+        renderTransitionTargetReady = true;
+        renderStable = false;
+        invalidateRenderCacheState();
     }
 
     public boolean hasMeshCollisionRenderTransition() {

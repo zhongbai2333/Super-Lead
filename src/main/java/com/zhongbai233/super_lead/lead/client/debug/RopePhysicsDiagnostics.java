@@ -11,6 +11,7 @@ public final class RopePhysicsDiagnostics {
     private static final int HISTORY_SIZE = 200;
     private static volatile Snapshot latest = Snapshot.EMPTY;
     private static Mutable current;
+    private static Mutable publishedAwaitingRelease;
     private static final PendingAsync pendingAsync = new PendingAsync();
     private static final long[] physicsHistory = new long[HISTORY_SIZE];
     private static final long[] entityHistory = new long[HISTORY_SIZE];
@@ -21,6 +22,7 @@ public final class RopePhysicsDiagnostics {
     }
 
     public static void begin(long tick) {
+        publishedAwaitingRelease = null;
         current = new Mutable(tick);
         pendingAsync.drainInto(current);
     }
@@ -108,6 +110,16 @@ public final class RopePhysicsDiagnostics {
         value.deadlineExhausted = deadlineExhausted;
         value.asyncRunning = asyncRunning;
         value.asyncRetained = asyncRetained;
+        // Publish the physics tick immediately. Geometry submission can be absent or
+        // irregular, and diagnostics must be able to prove that physics continued
+        // independently rather than freezing on the previous render snapshot.
+        latest = value.snapshot();
+        physicsHistory[historyCursor] = value.physicsNanos;
+        entityHistory[historyCursor] = value.entityQueryNanos;
+        historyCursor = (historyCursor + 1) % HISTORY_SIZE;
+        historyCount = Math.min(HISTORY_SIZE, historyCount + 1);
+        publishedAwaitingRelease = value;
+        current = null;
     }
 
     public static void recordAsyncPendingAge(long nanos) {
@@ -136,16 +148,12 @@ public final class RopePhysicsDiagnostics {
     }
 
     public static void finishRelease(long nanos) {
-        Mutable value = current;
+        Mutable value = publishedAwaitingRelease;
         if (value == null)
             return;
         value.releaseNanos = Math.max(0L, nanos);
         latest = value.snapshot();
-        physicsHistory[historyCursor] = value.physicsNanos;
-        entityHistory[historyCursor] = value.entityQueryNanos;
-        historyCursor = (historyCursor + 1) % HISTORY_SIZE;
-        historyCount = Math.min(HISTORY_SIZE, historyCount + 1);
-        current = null;
+        publishedAwaitingRelease = null;
     }
 
     public static Snapshot snapshot() {
@@ -158,6 +166,7 @@ public final class RopePhysicsDiagnostics {
 
     public static void clear() {
         current = null;
+        publishedAwaitingRelease = null;
         latest = Snapshot.EMPTY;
         Arrays.fill(physicsHistory, 0L);
         Arrays.fill(entityHistory, 0L);

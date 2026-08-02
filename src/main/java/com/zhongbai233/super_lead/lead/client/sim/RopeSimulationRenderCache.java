@@ -12,7 +12,7 @@ import net.minecraft.world.phys.Vec3;
  * so they do not have to traverse or allocate simulation objects every frame.
  */
 abstract class RopeSimulationRenderCache extends RopeSimulationCore {
-    private static final double MESH_COLLISION_TRANSITION_TICKS = 3.0D;
+    private static final double MESH_COLLISION_TRANSITION_TICKS = 1.0D;
     private static final double MESH_COLLISION_INITIAL_PROGRESS = 0.18D;
     private static final double SCHEDULED_MAX_EXTRAPOLATION_TICKS = 1.5D;
     private static final double SCHEDULED_MAX_NODE_EXTRAPOLATION = 0.08D;
@@ -25,8 +25,15 @@ abstract class RopeSimulationRenderCache extends RopeSimulationCore {
      * Prepare and cache interpolated render nodes. Returns cumulative rope length.
      */
     public double prepareRender(float partialTick) {
+        boolean visuallyStable = renderStable
+                && !scheduledRenderActive
+                && !renderTransitionActive;
         if (renderCacheValid
-                && (renderStable || Float.floatToIntBits(renderCachePartialTick) == Float.floatToIntBits(partialTick))) {
+                && renderCacheGeneration == renderStateGeneration
+                && (visuallyStable
+                    || (renderCacheFrameTick == renderFrameTick
+                        && Float.floatToIntBits(renderCachePartialTick)
+                            == Float.floatToIntBits(partialTick)))) {
             return renderTotalLength;
         }
         // During a mesh handoff the transition itself is the interpolator. Use the
@@ -70,16 +77,27 @@ abstract class RopeSimulationRenderCache extends RopeSimulationCore {
             renderTotalLength = renderLengths[nodes - 1];
         }
         if (renderTransitionActive) {
-            double renderTime = lastSteppedTick + Math.max(0.0F, Math.min(1.0F, partialTick));
-            double progress = meshCollisionTransitionProgress(
-                    renderTime, renderTransitionStartTime,
-                    MESH_COLLISION_TRANSITION_TICKS, MESH_COLLISION_INITIAL_PROGRESS);
+            // Before the first dynamic solve is published, target and origin are the
+            // same mesh shape. Do not consume the one-tick interpolation window in
+            // that waiting period; otherwise a deadline-deferred solve appears later
+            // as an unblended teleport.
+            double progress = 0.0D;
+            if (renderTransitionTargetReady) {
+                double renderTime = renderFrameTick + Math.max(0.0F, Math.min(1.0F, partialTick));
+                progress = meshCollisionTransitionProgress(
+                        renderTime, renderTransitionStartTime,
+                        MESH_COLLISION_TRANSITION_TICKS, MESH_COLLISION_INITIAL_PROGRESS);
+            }
             blendRenderTransition(progress);
             if (progress >= 1.0D) {
                 renderTransitionActive = false;
+                renderTransitionTargetReady = false;
+                renderStateGeneration++;
             }
         }
         renderCachePartialTick = partialTick;
+        renderCacheFrameTick = renderFrameTick;
+        renderCacheGeneration = renderStateGeneration;
         renderCacheValid = true;
         // Render positions just changed; basis-vector scratch and occlusion cache are
         // stale.

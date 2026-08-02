@@ -40,6 +40,49 @@ class RopePhysicsDiagnosticsTest {
     }
 
     @Test
+    void publishesPhysicsWithoutGeometryReleaseCallback() {
+        RopePhysicsDiagnostics.begin(101L);
+        RopePhysicsDiagnostics.recordDeferredEntry();
+        RopePhysicsDiagnostics.finishPhysics(2_500_000L, 3, 2, 8, false, 1, 1);
+
+        RopePhysicsDiagnostics.Snapshot snapshot = RopePhysicsDiagnostics.snapshot();
+        assertTrue(snapshot.available());
+        assertEquals(101L, snapshot.tick());
+        assertEquals(2.5D, snapshot.physicsMs(), 1.0e-9D);
+        assertEquals(1, snapshot.deferredEntries());
+        assertEquals(0.0D, snapshot.releaseMs(), 1.0e-9D);
+        assertEquals(1, RopePhysicsDiagnostics.historySummary().samples());
+    }
+
+    @Test
+    void releaseTimingUpdatesSnapshotWithoutPublishingHistoryTwice() {
+        RopePhysicsDiagnostics.begin(102L);
+        RopePhysicsDiagnostics.finishPhysics(2_000_000L, 1, 1, 8, false, 0, 0);
+        assertEquals(1, RopePhysicsDiagnostics.historySummary().samples());
+
+        RopePhysicsDiagnostics.finishRelease(400_000L);
+
+        assertEquals(0.4D, RopePhysicsDiagnostics.snapshot().releaseMs(), 1.0e-9D);
+        assertEquals(1, RopePhysicsDiagnostics.historySummary().samples());
+    }
+
+    @Test
+    void asyncCompletionAfterPhysicsPublishFlowsIntoNextTick() {
+        RopePhysicsDiagnostics.begin(103L);
+        RopePhysicsDiagnostics.finishPhysics(1_000_000L, 1, 1, 8, false, 1, 1);
+
+        RopePhysicsDiagnostics.recordAsyncWorker(200_000L, 900_000L, 0L, "completed");
+        RopePhysicsDiagnostics.begin(104L);
+        RopePhysicsDiagnostics.finishPhysics(1_500_000L, 1, 1, 8, false, 0, 1);
+
+        RopePhysicsDiagnostics.Snapshot snapshot = RopePhysicsDiagnostics.snapshot();
+        assertEquals(104L, snapshot.tick());
+        assertEquals(1, snapshot.asyncCompleted());
+        assertEquals(0.2D, snapshot.asyncQueueWaitMs(), 1.0e-9D);
+        assertEquals(0.9D, snapshot.asyncSolveMs(), 1.0e-9D);
+    }
+
+    @Test
     void clearRemovesStaleSnapshot() {
         RopePhysicsDiagnostics.begin(1L);
         RopePhysicsDiagnostics.finishPhysics(1L, 0, 0, 0, false, 0, 0);

@@ -98,6 +98,7 @@ abstract class RopeSimulationCore {
     protected final double[] transitionY;
     protected final double[] transitionZ;
     protected boolean renderTransitionActive;
+    protected boolean renderTransitionTargetReady;
     protected double renderTransitionStartTime;
     // Visual origin for adaptive 1/2/4/8-tick scheduling. Physics still advances
     // by one fixed step; rendering distributes that result over the selected solve
@@ -133,6 +134,10 @@ abstract class RopeSimulationCore {
     protected boolean useCollisionProxy;
     protected boolean renderCacheValid;
     protected float renderCachePartialTick;
+    /** Increments whenever data that can affect renderX/Y/Z changes. */
+    protected long renderStateGeneration;
+    protected long renderCacheGeneration = Long.MIN_VALUE;
+    protected long renderCacheFrameTick = UNINIT;
     protected double renderTotalLength;
     protected boolean renderStable = true;
     // Reusable per-render-frame scratch for LeashBuilder.renderSquare (side / up
@@ -692,6 +697,7 @@ abstract class RopeSimulationCore {
         ropeStackQuietTicks = other.ropeStackQuietTicks;
         renderStable = other.renderStable;
         renderTransitionActive = other.renderTransitionActive;
+        renderTransitionTargetReady = other.renderTransitionTargetReady;
         renderTransitionStartTime = other.renderTransitionStartTime;
         copy(other.scheduledRenderX, scheduledRenderX);
         copy(other.scheduledRenderY, scheduledRenderY);
@@ -788,6 +794,7 @@ abstract class RopeSimulationCore {
         ropeStackQuietTicks = other.ropeStackQuietTicks;
         renderStable = other.renderStable;
         renderTransitionActive = other.renderTransitionActive;
+        renderTransitionTargetReady = other.renderTransitionTargetReady;
         renderTransitionStartTime = other.renderTransitionStartTime;
         scheduledRenderActive = other.scheduledRenderActive;
         scheduledRenderStartTick = other.scheduledRenderStartTick;
@@ -1412,13 +1419,19 @@ abstract class RopeSimulationCore {
     protected void markBoundsDirty() {
         boundsDirty = true;
         collisionProxyValid = false;
-        renderCacheValid = false;
+        invalidateRenderCacheState();
         frameScratchValid = false;
         curveMidScratchValid = false;
         visOcclusionFrame = Long.MIN_VALUE;
         segVisAllVisible = true;
         segVisBitCount = 0;
         bakedValid = false;
+    }
+
+    /** Invalidates render nodes and gives the new state a distinct cache identity. */
+    protected void invalidateRenderCacheState() {
+        renderStateGeneration++;
+        renderCacheValid = false;
     }
 
     protected void updateBounds() {

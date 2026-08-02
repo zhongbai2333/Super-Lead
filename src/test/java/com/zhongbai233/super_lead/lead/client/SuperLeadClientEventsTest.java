@@ -449,6 +449,16 @@ class SuperLeadClientEventsTest {
     }
 
     @Test
+    void unsettledRopesCannotEnterSparseVisualPhysicsScheduling() {
+        assertTrue(SuperLeadClientEvents.requiresContinuousVisualPhysics(false));
+        assertFalse(SuperLeadClientEvents.requiresContinuousVisualPhysics(true));
+        assertEquals(1, SuperLeadClientEvents.visualPhysicsInterval(2, false));
+        assertEquals(1, SuperLeadClientEvents.visualPhysicsInterval(4, false));
+        assertEquals(1, SuperLeadClientEvents.visualPhysicsInterval(8, false));
+        assertEquals(4, SuperLeadClientEvents.visualPhysicsInterval(4, true));
+    }
+
+    @Test
     void overloadSkipsDiscardPhysicsDebtButPlannedPacingDoesNot() {
         assertTrue(SuperLeadClientEvents.isOverloadSkipState("budget"));
         assertTrue(SuperLeadClientEvents.isOverloadSkipState("wind-budget"));

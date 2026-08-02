@@ -33,7 +33,7 @@ public final class RopeJob {
             float[] pulsePositions,
             int extractEnd) {
         this(sim, blockA, blockB, skyA, skyB, highlightColor, kind, powered, tier,
-            pulsePositions, extractEnd, false, Float.NaN);
+                pulsePositions, extractEnd, false, Float.NaN);
     }
 
     public RopeJob(
@@ -49,22 +49,22 @@ public final class RopeJob {
             float[] pulsePositions,
             int extractEnd,
             boolean chunkMeshActive) {
-            this(sim, blockA, blockB, skyA, skyB, highlightColor, kind, powered, tier,
+        this(sim, blockA, blockB, skyA, skyB, highlightColor, kind, powered, tier,
                 pulsePositions, extractEnd, chunkMeshActive, Float.NaN);
-            }
+    }
 
-            public RopeJob(
-                RopeSimulation sim,
-                int blockA, int blockB,
-                int skyA, int skyB,
-                int highlightColor,
-                LeadKind kind,
-                boolean powered,
-                int tier,
-                float[] pulsePositions,
-                int extractEnd,
-                boolean chunkMeshActive,
-                float renderPartialTick) {
+    public RopeJob(
+            RopeSimulation sim,
+            int blockA, int blockB,
+            int skyA, int skyB,
+            int highlightColor,
+            LeadKind kind,
+            boolean powered,
+            int tier,
+            float[] pulsePositions,
+            int extractEnd,
+            boolean chunkMeshActive,
+            float renderPartialTick) {
         this.sim = sim;
         this.blockA = blockA;
         this.blockB = blockB;
