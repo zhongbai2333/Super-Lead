@@ -119,13 +119,8 @@ final class LeadTransferService {
             return;
         }
         tickTransfer(level, LeadKind.FLUID, Capabilities.Fluid.BLOCK, runtimeState(level).fluidRrCursor,
-                rope -> Config.fluidBucketAmount() * (1 << Math.min(Config.fluidTierMax(), rope.tier())));
-
-        // Also try Mekanism's fluid capability for tanks that don't expose
-        // NeoForge's Capabilities.Fluid.BLOCK (e.g. Mekanism Fluid Tank).
-        if (isMekanismLoaded()) {
-            tickMekanismFluidTransfer(level);
-        }
+            rope -> Config.fluidBucketAmount() * (1 << Math.min(Config.fluidTierMax(), rope.tier())),
+            LeadTransferService::fluidHandler);
     }
 
     static void tickPressurized(ServerLevel level) {
@@ -379,148 +374,6 @@ final class LeadTransferService {
         return Math.max(1L, Math.min(Integer.MAX_VALUE, (long) Config.pressurizedBatchAmount() * multiplier));
     }
 
-    /**
-     * Fluid transfer for Mekanism tanks. Mirrors {@link #tickPressurizedTransfer}
-     * but uses Mekanism's {@code IFluidHandler} capability instead of NeoForge's
-     * {@code ResourceHandler<FluidResource>}.
-     */
-    private static void tickMekanismFluidTransfer(ServerLevel level) {
-        Map<BlockPos, Integer> rrCursor = runtimeState(level).fluidRrCursor;
-        SuperLeadSavedData data = SuperLeadSavedData.get(level);
-        List<LeadConnection> fluidConnections = data.connectionsOfKindFast(LeadKind.FLUID);
-        if (fluidConnections.isEmpty()) {
-            return;
-        }
-
-        MekanismFluidBridge.HandlerCache fluidHandlers = new MekanismFluidBridge.HandlerCache();
-        Map<BlockPos, List<LeadConnection>> ropesAt;
-        Map<BlockPos, List<LeadConnection>> startsBySource;
-        long currentGen = data.generation();
-        LeadKind kind = LeadKind.FLUID;
-        Long cachedGen = cachedGeneration(level, kind);
-        if (cachedGen != null && cachedGen.longValue() == currentGen) {
-            ropesAt = cachedRopesAt(level, kind);
-            startsBySource = cachedStartsBySource(level, kind);
-        } else {
-            int size = fluidConnections.size();
-            ropesAt = new HashMap<>(size * 2);
-            startsBySource = new HashMap<>(Math.max(16, size / 4));
-            for (LeadConnection c : fluidConnections) {
-                BlockPos a = c.from().pos().immutable();
-                BlockPos b = c.to().pos().immutable();
-                ropesAt.computeIfAbsent(a, k -> new ArrayList<>(2)).add(c);
-                if (!a.equals(b)) {
-                    ropesAt.computeIfAbsent(b, k -> new ArrayList<>(2)).add(c);
-                }
-
-                LeadAnchor src = c.extractSource();
-                if (src != null && fluidHandlers.has(level, src)) {
-                    startsBySource.computeIfAbsent(src.pos().immutable(), k -> new ArrayList<>(2)).add(c);
-                }
-            }
-            cacheGenerationAndIndexes(level, kind, currentGen, ropesAt, startsBySource);
-        }
-
-        for (Map.Entry<BlockPos, List<LeadConnection>> entry : startsBySource.entrySet()) {
-            BlockPos sourcePos = entry.getKey();
-            List<LeadConnection> ropes = entry.getValue();
-            if (ropes.isEmpty()) {
-                continue;
-            }
-
-            int n = ropes.size();
-            int start = rrCursor.getOrDefault(sourcePos, 0) % n;
-            TransferSearchContext search = new TransferSearchContext();
-
-            for (int step = 0; step < n; step++) {
-                int idx = (start + step) % n;
-                LeadConnection rope = ropes.get(idx);
-                LeadAnchor sourceAnchor = rope.extractSource();
-                LeadAnchor firstFar = rope.extractTarget();
-                if (sourceAnchor == null || firstFar == null
-                        || !fluidHandlers.has(level, sourceAnchor)) {
-                    continue;
-                }
-
-                long batch = Config.fluidBucketAmount() * (1L << Math.min(Config.fluidTierMax(), rope.tier()));
-
-                search.reset(rope, rope.extractAnchor() == 2);
-
-                if (walkAndTransferMekFluid(level, sourceAnchor, batch, firstFar, ropesAt,
-                        rrCursor, fluidHandlers, search.visited, search.path, search.rrChoices, 1)) {
-                    long now = level.getGameTime();
-                    for (int i = 0; i < search.path.size(); i++) {
-                        PathStep s = search.path.get(i);
-                        long startTick = now + (long) i * ITEM_PULSE_DURATION_TICKS;
-                        SuperLeadPayloads.sendItemPulse(level,
-                                new ItemPulse(s.rope.id(), s.reverse, startTick, ITEM_PULSE_DURATION_TICKS));
-                    }
-                    rrCursor.put(sourcePos, (idx + 1) % n);
-                    for (RrChoice rc : search.rrChoices) {
-                        rrCursor.put(rc.knot, (rc.idx + 1) % rc.n);
-                    }
-                    break;
-                }
-            }
-        }
-    }
-
-    private static boolean walkAndTransferMekFluid(
-            ServerLevel level,
-            LeadAnchor sourceAnchor,
-            long batch,
-            LeadAnchor current,
-            Map<BlockPos, List<LeadConnection>> ropesAt,
-            Map<BlockPos, Integer> rrCursor,
-            MekanismFluidBridge.HandlerCache fluidHandlers,
-            Set<UUID> visited,
-            List<PathStep> path,
-            List<RrChoice> rrChoices,
-            int depth) {
-        if (depth > MAX_TRANSFER_SEARCH_DEPTH) {
-            return false;
-        }
-        if (fluidHandlers.has(level, current)) {
-            return fluidHandlers.transferOne(level, sourceAnchor, current, batch,
-                    MekanismFluidBridge.ANY, pathConnections(path)) > 0L;
-        }
-        ResourceHandler<FluidResource> neoTarget = handler(level, current, Capabilities.Fluid.BLOCK);
-        if (neoTarget != null) {
-            return fluidHandlers.transferOne(level, sourceAnchor, neoTarget, batch,
-                    MekanismFluidBridge.ANY, pathConnections(path)) > 0L;
-        }
-
-        BlockPos knot = current.pos().immutable();
-        List<LeadConnection> branches = unvisitedBranches(ropesAt.getOrDefault(knot, List.of()), visited);
-        int n = branches.size();
-        if (n == 0) {
-            return false;
-        }
-
-        int rrStart = rrCursor.getOrDefault(knot, 0) % n;
-        for (int step = 0; step < n; step++) {
-            int idx = (rrStart + step) % n;
-            LeadConnection branch = branches.get(idx);
-            boolean enteredFromSide = branch.from().pos().equals(knot);
-            LeadAnchor far = enteredFromSide ? branch.to() : branch.from();
-            boolean reverse = !enteredFromSide;
-
-            visited.add(branch.id());
-            path.add(new PathStep(branch, reverse));
-            rrChoices.add(new RrChoice(knot, idx, n));
-
-            if (walkAndTransferMekFluid(level, sourceAnchor, batch, far, ropesAt, rrCursor,
-                    fluidHandlers, visited, path, rrChoices, depth + 1)) {
-                return true;
-            }
-
-            path.remove(path.size() - 1);
-            rrChoices.remove(rrChoices.size() - 1);
-            visited.remove(branch.id());
-        }
-        return false;
-    }
-
     private static void balanceThermalComponent(ServerLevel level, List<Integer> component,
             List<LeadConnection> thermalConnections, MekanismHeatBridge.HandlerCache heatHandlers,
             Map<UUID, ThermalPairCursor> pairCursors, ThermalTickBudget tickBudget) {
@@ -762,6 +615,17 @@ final class LeadTransferService {
             BlockCapability<ResourceHandler<R>, Direction> cap,
             Map<BlockPos, Integer> rrCursor,
             java.util.function.ToIntFunction<LeadConnection> batchOf) {
+        tickTransfer(level, kind, cap, rrCursor, batchOf,
+            (currentLevel, anchor) -> handler(currentLevel, anchor, cap));
+        }
+
+        private static <R extends Resource> void tickTransfer(
+            ServerLevel level,
+            LeadKind kind,
+            BlockCapability<ResourceHandler<R>, Direction> cap,
+            Map<BlockPos, Integer> rrCursor,
+            java.util.function.ToIntFunction<LeadConnection> batchOf,
+            EndpointResolver<R> resolver) {
         SuperLeadSavedData data = SuperLeadSavedData.get(level);
         List<LeadConnection> transferConnections = data.connectionsOfKindFast(kind);
         if (transferConnections.isEmpty()) {
@@ -823,7 +687,7 @@ final class LeadTransferService {
                     continue;
                 }
 
-                ResourceHandler<R> sourceHandler = handlers.get(level, sourceAnchor, cap);
+                ResourceHandler<R> sourceHandler = handlers.get(level, sourceAnchor, resolver);
                 if (sourceHandler == null) {
                     continue;
                 }
@@ -836,7 +700,7 @@ final class LeadTransferService {
 
                 search.reset(rope, rope.extractAnchor() == 2);
 
-                if (walkAndTransfer(level, cap, handlers, sourceHandler, batch, firstFar, ropesAt, rrCursor,
+                if (walkAndTransfer(level, cap, resolver, handlers, sourceHandler, batch, firstFar, ropesAt, rrCursor,
                         search.visited, search.path, search.rrChoices, 1)) {
                     long now = level.getGameTime();
                     for (int i = 0; i < search.path.size(); i++) {
@@ -884,6 +748,7 @@ final class LeadTransferService {
     private static <R extends Resource> boolean walkAndTransfer(
             ServerLevel level,
             BlockCapability<ResourceHandler<R>, Direction> cap,
+            EndpointResolver<R> resolver,
             ResourceHandlerCache<R> handlers,
             ResourceHandler<R> sourceHandler,
             int batch,
@@ -897,7 +762,7 @@ final class LeadTransferService {
         if (depth > MAX_TRANSFER_SEARCH_DEPTH) {
             return false;
         }
-        ResourceHandler<R> h = handlers.get(level, current, cap);
+        ResourceHandler<R> h = handlers.get(level, current, resolver);
         if (h != null) {
             boolean transferred = transferOne(sourceHandler, h, batch,
                     resource -> pathAllowsResource(path, resource));
@@ -906,15 +771,6 @@ final class LeadTransferService {
             }
             return transferred;
         }
-        if (cap.equals(Capabilities.Fluid.BLOCK) && isMekanismLoaded()
-                && MekanismFluidBridge.hasHandler(level, current)) {
-            @SuppressWarnings("unchecked")
-            ResourceHandler<FluidResource> fluidSource = (ResourceHandler<FluidResource>) sourceHandler;
-            return MekanismFluidBridge.transferResourceOne(fluidSource, MekanismFluidBridge.handler(level, current),
-                    batch,
-                    resource -> pathAllowsResource(path, resource), pathConnections(path)) > 0L;
-        }
-
         BlockPos knot = current.pos().immutable();
         List<LeadConnection> branches = unvisitedBranches(ropesAt.getOrDefault(knot, List.of()), visited);
         int n = branches.size();
@@ -934,8 +790,8 @@ final class LeadTransferService {
             path.add(new PathStep(branch, reverse));
             rrChoices.add(new RrChoice(knot, idx, n));
 
-            if (walkAndTransfer(level, cap, handlers, sourceHandler, batch, far, ropesAt, rrCursor, visited, path,
-                    rrChoices, depth + 1)) {
+            if (walkAndTransfer(level, cap, resolver, handlers, sourceHandler, batch, far, ropesAt, rrCursor,
+                    visited, path, rrChoices, depth + 1)) {
                 return true;
             }
 
@@ -1017,6 +873,14 @@ final class LeadTransferService {
             h = level.getCapability(cap, anchor.pos(), null);
         }
         return h;
+    }
+
+    private static ResourceHandler<FluidResource> fluidHandler(ServerLevel level, LeadAnchor anchor) {
+        ResourceHandler<FluidResource> handler = handler(level, anchor, Capabilities.Fluid.BLOCK);
+        if (handler == null && isMekanismLoaded()) {
+            handler = MekanismFluidBridge.handler(level, anchor);
+        }
+        return handler;
     }
 
     private static LeadAnchor cacheKey(LeadAnchor anchor) {
@@ -1164,8 +1028,7 @@ final class LeadTransferService {
         private final Map<LeadAnchor, ResourceHandler<R>> hits = new HashMap<>();
         private final Set<LeadAnchor> misses = new HashSet<>();
 
-        private ResourceHandler<R> get(ServerLevel level, LeadAnchor anchor,
-                BlockCapability<ResourceHandler<R>, Direction> cap) {
+        private ResourceHandler<R> get(ServerLevel level, LeadAnchor anchor, EndpointResolver<R> resolver) {
             if (anchor == null) {
                 return null;
             }
@@ -1174,7 +1037,7 @@ final class LeadTransferService {
             if (cached != null || misses.contains(key)) {
                 return cached;
             }
-            ResourceHandler<R> found = handler(level, key, cap);
+            ResourceHandler<R> found = resolver.get(level, key);
             if (found == null) {
                 misses.add(key);
             } else {
@@ -1182,6 +1045,11 @@ final class LeadTransferService {
             }
             return found;
         }
+    }
+
+    @FunctionalInterface
+    private interface EndpointResolver<R extends Resource> {
+        ResourceHandler<R> get(ServerLevel level, LeadAnchor anchor);
     }
 
     private static final class RuntimeState {

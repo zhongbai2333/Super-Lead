@@ -8,6 +8,7 @@ import java.util.Set;
 import mekanism.api.heat.IHeatHandler;
 import mekanism.common.capabilities.Capabilities;
 import net.minecraft.server.level.ServerLevel;
+import net.neoforged.neoforge.transfer.transaction.Transaction;
 
 /**
  * Small facade over Mekanism's heat capability for thermal leads.
@@ -37,10 +38,10 @@ public final class MekanismHeatBridge {
             return 0.0D;
         }
 
-        double tempA = first.getTotalTemperature();
-        double tempB = second.getTotalTemperature();
-        double capA = first.getTotalHeatCapacity();
-        double capB = second.getTotalHeatCapacity();
+        double tempA = first.getTemperature();
+        double tempB = second.getTemperature();
+        double capA = first.getHeatCapacity();
+        double capB = second.getHeatCapacity();
         if (!finitePositive(capA) || !finitePositive(capB)
                 || !Double.isFinite(tempA) || !Double.isFinite(tempB)
                 || Math.abs(tempA - tempB) <= 1.0e-6D) {
@@ -62,8 +63,11 @@ public final class MekanismHeatBridge {
             return 0.0D;
         }
 
-        hot.handleHeat(-transfer);
-        cold.handleHeat(transfer);
+        try (Transaction transaction = Transaction.openRoot()) {
+            hot.handleHeat(-transfer, transaction);
+            cold.handleHeat(transfer, transaction);
+            transaction.commit();
+        }
         return transfer;
     }
 
@@ -99,7 +103,8 @@ public final class MekanismHeatBridge {
     }
 
     private static boolean usable(IHeatHandler handler) {
-        return handler != null && handler.getHeatCapacitorCount() > 0;
+        return handler != null && finitePositive(handler.getHeatCapacity())
+                && Double.isFinite(handler.getTemperature());
     }
 
     private static LeadAnchor cacheKey(LeadAnchor anchor) {

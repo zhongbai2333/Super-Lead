@@ -203,17 +203,13 @@ dependencies {
     // the optional rope-terminal bridge because AE2's public API does not expose its menu opener/types.
     compileOnly "org.appliedenergistics:appliedenergistics2:${ae2_version}:api"
     compileOnly "org.appliedenergistics:appliedenergistics2:${ae2_version}"
-    // Prefer a pinned Mekanism 26.1 jar committed under ./gradle/libs for CI/release verification.
-    // The JitPack coordinate below remains as the local-dev fallback while the
-    // 26.1 line is not available from Mekanism's official ModMaven coordinates.
-    def localMekanismJars = fileTree(dir: 'gradle/libs', include: ['Mekanism-*.jar', 'mekanism-*.jar'])
-    compileOnly localMekanismJars
-    if (localMekanismJars.files.empty) {
-        compileOnly "com.github.QiuYe-123:Mekanism:${mekanism_version}"
-    }
+    // Compile against the same current 26.1 API used by the development runtime.
+    // Do not prefer gradle/libs here: an older home-baked jar exposes the removed
+    // multi-capacitor heat API and can otherwise hide binary incompatibilities.
+    compileOnly "com.github.QiuYe-123:Mekanism:${mekanism_version}"
     // TEMPORARY: runtime access for bug testing — remove after debugging
-    // localRuntimeOnly fileTree(dir: 'libs', include: ['Mekanism-*.jar', 'mekanism-*.jar'])
-    // localRuntimeOnly "com.github.QiuYe-123:Mekanism:${mekanism_version}"
+    localRuntimeOnly fileTree(dir: 'libs', include: ['Mekanism-*.jar', 'mekanism-*.jar'])
+    localRuntimeOnly "com.github.QiuYe-123:Mekanism:${mekanism_version}"
     compileOnly "mezz.jei:jei-${jei_minecraft_version}-common-api:${jei_version}"
     compileOnly "mezz.jei:jei-${jei_minecraft_version}-neoforge-api:${jei_version}"
 
