@@ -13,6 +13,97 @@ import net.minecraft.core.Direction;
 import org.junit.jupiter.api.Test;
 
 class SuperLeadSavedDataTest {
+        @Test
+        void kindGenerationsDoNotInvalidateUnrelatedRopeCaches() {
+                SuperLeadSavedData data = new SuperLeadSavedData();
+                LeadConnection item = connection("00000000-0000-0000-0000-000000000030",
+                                new BlockPos(0, 64, 0), new BlockPos(4, 64, 0), LeadKind.ITEM);
+                LeadConnection energy = connection("00000000-0000-0000-0000-000000000029",
+                                new BlockPos(8, 64, 0), new BlockPos(12, 64, 0), LeadKind.ENERGY);
+                data.add(item);
+                data.add(energy);
+                long itemRevision = data.kindGeneration(LeadKind.ITEM);
+                long redstoneRevision = data.kindGeneration(LeadKind.REDSTONE);
+
+                data.update(energy.id(), old -> old.withPower(1).withTier(2), false);
+
+                assertEquals(itemRevision, data.kindGeneration(LeadKind.ITEM));
+                assertEquals(redstoneRevision, data.kindGeneration(LeadKind.REDSTONE));
+                assertTrue(data.kindGeneration(LeadKind.ENERGY) > 0L);
+        }
+
+    @Test
+    void energyTopologyGenerationTracksOnlyLogicalGraphShape() {
+        SuperLeadSavedData data = new SuperLeadSavedData();
+        LeadConnection energy = connection("00000000-0000-0000-0000-000000000031",
+                new BlockPos(0, 64, 0), new BlockPos(8, 64, 0), LeadKind.ENERGY);
+        data.add(energy);
+        long added = data.energyTopologyGeneration();
+
+        data.update(energy.id(), old -> old.withPower(1).withTier(3).withExtractAnchor(1)
+                .withPhysicsPreset("soft"), true);
+        assertEquals(added, data.energyTopologyGeneration());
+        data.update(energy.id(), old -> new LeadConnection(old.id(),
+                new LeadAnchor(old.from().pos(), old.from().face(), new net.minecraft.world.phys.Vec3(0.2, 64.2, 0.2)),
+                old.to(), old.kind(), old.power(), old.tier(), old.extractAnchor(), old.lengthUnits(),
+                old.attachments(), old.physicsPreset(), old.manualPhysicsPreset(), old.adventureOwner()), true);
+        assertEquals(added, data.energyTopologyGeneration());
+        data.update(energy.id(), old -> new LeadConnection(old.id(),
+                new LeadAnchor(old.from().pos(), Direction.NORTH), old.to(), old.kind(), old.power(), old.tier(),
+                old.extractAnchor(), old.lengthUnits(), old.attachments(), old.physicsPreset(),
+                old.manualPhysicsPreset(), old.adventureOwner()), true);
+        assertEquals(added + 1, data.energyTopologyGeneration());
+        data.update(energy.id(), old -> old.withKind(LeadKind.NORMAL), true);
+        assertEquals(added + 2, data.energyTopologyGeneration());
+    }
+
+    @Test
+    void redstoneTopologyGenerationIgnoresPowerAndPreciseHitPoint() {
+        SuperLeadSavedData data = new SuperLeadSavedData();
+        LeadConnection redstone = connection("00000000-0000-0000-0000-000000000034",
+                new BlockPos(0, 64, 0), new BlockPos(8, 64, 0), LeadKind.REDSTONE);
+        data.add(redstone);
+        long added = data.redstoneTopologyGeneration();
+
+        data.update(redstone.id(), old -> old.withPower(15).withTier(3).withPhysicsPreset("soft"), true);
+        assertEquals(added, data.redstoneTopologyGeneration());
+        data.update(redstone.id(), old -> new LeadConnection(old.id(),
+                new LeadAnchor(old.from().pos(), old.from().face(), new net.minecraft.world.phys.Vec3(0.2, 64.2, 0.2)),
+                old.to(), old.kind(), old.power(), old.tier(), old.extractAnchor(), old.lengthUnits(),
+                old.attachments(), old.physicsPreset(), old.manualPhysicsPreset(), old.adventureOwner()), true);
+        assertEquals(added, data.redstoneTopologyGeneration());
+        data.update(redstone.id(), old -> new LeadConnection(old.id(),
+                new LeadAnchor(old.from().pos(), Direction.NORTH), old.to(), old.kind(), old.power(), old.tier(),
+                old.extractAnchor(), old.lengthUnits(), old.attachments(), old.physicsPreset(),
+                old.manualPhysicsPreset(), old.adventureOwner()), true);
+        assertEquals(added + 1, data.redstoneTopologyGeneration());
+        data.update(redstone.id(), old -> old.withKind(LeadKind.NORMAL), true);
+        assertEquals(added + 2, data.redstoneTopologyGeneration());
+    }
+
+        @Test
+        void redstonePowerBatchUsesSingleRuntimeRevision() {
+                SuperLeadSavedData data = new SuperLeadSavedData();
+                LeadConnection first = connection("00000000-0000-0000-0000-000000000035",
+                                new BlockPos(0, 64, 0), new BlockPos(8, 64, 0), LeadKind.REDSTONE);
+                LeadConnection second = connection("00000000-0000-0000-0000-000000000036",
+                                new BlockPos(1, 64, 0), new BlockPos(9, 64, 0), LeadKind.REDSTONE);
+                data.add(first);
+                data.add(second);
+                long generation = data.generation();
+                long kindGeneration = data.kindGeneration(LeadKind.REDSTONE);
+                long topologyGeneration = data.redstoneTopologyGeneration();
+
+                assertTrue(data.updateRedstonePowers(java.util.Map.of(first.id(), 15, second.id(), 12)));
+
+                assertEquals(generation + 1, data.generation());
+                assertEquals(kindGeneration + 1, data.kindGeneration(LeadKind.REDSTONE));
+                assertEquals(topologyGeneration, data.redstoneTopologyGeneration());
+                assertEquals(15, data.find(first.id()).orElseThrow().power());
+                assertEquals(12, data.find(second.id()).orElseThrow().power());
+                assertFalse(data.updateRedstonePowers(java.util.Map.of(first.id(), 15, second.id(), 12)));
+        }
+
     @Test
     void aeTopologyGenerationTracksOnlyLogicalTopology() {
         SuperLeadSavedData data = new SuperLeadSavedData();

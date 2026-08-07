@@ -206,11 +206,14 @@ final class LeadTransferService {
             List<Integer> component = new ArrayList<>();
             component.add(i);
             visited[i] = true;
+                Set<BlockPos> expandedPositions = new HashSet<>();
 
             for (int cursor = 0; cursor < component.size(); cursor++) {
                 LeadConnection current = thermalConnections.get(component.get(cursor));
-                addUnvisitedNeighborsByPos(current.from().pos(), connectionsByPos, visited, component);
-                addUnvisitedNeighborsByPos(current.to().pos(), connectionsByPos, visited, component);
+                addUnvisitedNeighborsByPos(current.from().pos(), connectionsByPos, visited, component,
+                    expandedPositions);
+                addUnvisitedNeighborsByPos(current.to().pos(), connectionsByPos, visited, component,
+                    expandedPositions);
             }
             components.add(component);
         }
@@ -299,8 +302,8 @@ final class LeadTransferService {
         MekanismChemicalBridge.HandlerCache chemicalHandlers = new MekanismChemicalBridge.HandlerCache();
         Map<BlockPos, List<LeadConnection>> ropesAt;
         Map<BlockPos, List<LeadConnection>> startsBySource;
-        long currentGen = data.generation();
         LeadKind kind = LeadKind.PRESSURIZED;
+        long currentGen = data.kindGeneration(kind);
         Long cachedGen = cachedGeneration(level, kind);
         if (cachedGen != null && cachedGen.longValue() == currentGen) {
             ropesAt = cachedRopesAt(level, kind);
@@ -638,7 +641,7 @@ final class LeadTransferService {
         ResourceHandlerCache<R> handlers = new ResourceHandlerCache<>();
         Map<BlockPos, List<LeadConnection>> ropesAt;
         Map<BlockPos, List<LeadConnection>> startsBySource;
-        long currentGen = data.generation();
+        long currentGen = data.kindGeneration(kind);
         Long cachedGen = cachedGeneration(level, kind);
         if (cachedGen != null && cachedGen.longValue() == currentGen) {
             ropesAt = cachedRopesAt(level, kind);
@@ -1011,9 +1014,13 @@ final class LeadTransferService {
         byPos.computeIfAbsent(pos.immutable(), key -> new ArrayList<>()).add(index);
     }
 
-    private static void addUnvisitedNeighborsByPos(BlockPos pos, Map<BlockPos, List<Integer>> byPos,
-            boolean[] visited, List<Integer> component) {
-        List<Integer> neighbors = byPos.get(pos);
+    static int addUnvisitedNeighborsByPos(BlockPos pos, Map<BlockPos, List<Integer>> byPos,
+            boolean[] visited, List<Integer> component, Set<BlockPos> expandedPositions) {
+        BlockPos key = pos.immutable();
+        if (!expandedPositions.add(key)) {
+            return 0;
+        }
+        List<Integer> neighbors = byPos.get(key);
         if (neighbors != null) {
             for (int index : neighbors) {
                 if (!visited[index]) {
@@ -1021,7 +1028,9 @@ final class LeadTransferService {
                     component.add(index);
                 }
             }
+            return neighbors.size();
         }
+        return 0;
     }
 
     private static final class ResourceHandlerCache<R extends Resource> {

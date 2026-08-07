@@ -3,8 +3,12 @@ package com.zhongbai233.super_lead.lead;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
 
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import net.minecraft.core.BlockPos;
@@ -66,6 +70,31 @@ class LeadTransferServiceTest {
         assertEquals(LeadTransferService.ThermalPairCursor.START,
                 LeadTransferService.normalizeThermalPairCursor(stale, 3));
         assertEquals(0L, LeadTransferService.thermalPairCount(1));
+    }
+
+    @Test
+    void thermalSharedPositionBucketIsExpandedOnlyOnce() {
+        int connectionCount = 64;
+        BlockPos shared = new BlockPos(3, 64, 5);
+        List<Integer> neighbors = new ArrayList<>(connectionCount);
+        for (int i = 0; i < connectionCount; i++) {
+            neighbors.add(i);
+        }
+        Map<BlockPos, List<Integer>> byPosition = new HashMap<>();
+        byPosition.put(shared, neighbors);
+        boolean[] visited = new boolean[connectionCount];
+        List<Integer> component = new ArrayList<>();
+        Set<BlockPos> expanded = new HashSet<>();
+
+        int inspected = 0;
+        for (int i = 0; i < connectionCount; i++) {
+            inspected += LeadTransferService.addUnvisitedNeighborsByPos(shared, byPosition, visited, component,
+                    expanded);
+        }
+
+        assertEquals(connectionCount, inspected);
+        assertEquals(connectionCount, component.size());
+        assertEquals(Set.of(shared), expanded);
     }
 
     private static LeadConnection connection(String id, int x) {

@@ -8,6 +8,7 @@ import java.util.Collection;
 import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -39,11 +40,20 @@ final class LeadSignalService {
     private static final long ENERGY_BREAKER_LOG_INTERVAL_TICKS = 1200L;
     private static final Map<ServerLevel, Map<LeadAnchor, Long>> ENERGY_BREAKER_UNTIL = new HashMap<>();
     private static final Map<ServerLevel, Map<LeadAnchor, Long>> ENERGY_BREAKER_LAST_LOG = new HashMap<>();
+    private static final Map<ServerLevel, CachedEnergyTopology> ENERGY_TOPOLOGIES = new HashMap<>();
     private static final ThreadLocal<Boolean> ENERGY_TICK_ACTIVE = ThreadLocal.withInitial(() -> false);
     private static final ThreadLocal<Boolean> SUPPRESS_LEAD_SIGNALS = ThreadLocal.withInitial(() -> false);
     private static final ThreadLocal<Boolean> REDSTONE_UPDATE_ACTIVE = ThreadLocal.withInitial(() -> false);
+    /**
+     * True while this service synchronously emits vanilla neighbor notifications.
+     * Those notifications must still reach vanilla redstone, but they do not
+     * represent a block topology change and therefore must not re-scan nearby
+     * rope connections for structural invalidation.
+     */
+    private static final ThreadLocal<Boolean> REDSTONE_NOTIFICATION_ACTIVE = ThreadLocal.withInitial(() -> false);
     private static final Set<ServerLevel> REDSTONE_DIRTY_LEVELS = new HashSet<>();
     private static final Set<ServerLevel> REDSTONE_INITIALIZED_LEVELS = new HashSet<>();
+    private static final Map<ServerLevel, CachedRedstoneTopology> REDSTONE_TOPOLOGIES = new HashMap<>();
     private static final Map<Level, CachedSignalIndex> SIGNAL_INDEXES = new ConcurrentHashMap<>();
 
     private LeadSignalService() {
@@ -71,29 +81,17 @@ final class LeadSignalService {
 
     private static void updateRedstoneNetworks(ServerLevel level, SuperLeadSavedData data,
             List<LeadConnection> redstoneConnections) {
-        int size = redstoneConnections.size();
         boolean changed = false;
         List<LeadConnection> changedConnections = new ArrayList<>();
-        boolean[] visited = new boolean[size];
-        Map<LeadAnchor, List<Integer>> connectionsByAnchor = indexConnectionsByAnchor(redstoneConnections, size);
+        Map<UUID, Integer> changedPowers = new HashMap<>();
+        CachedRedstoneTopology topology = redstoneTopology(level, data, redstoneConnections);
         RedstoneTraversalCache redstoneCache = new RedstoneTraversalCache(level);
-        for (int i = 0; i < redstoneConnections.size(); i++) {
-            if (visited[i]) {
-                continue;
-            }
-
-            List<Integer> component = new ArrayList<>();
-            component.add(i);
-            visited[i] = true;
+        for (List<Integer> component : topology.components()) {
             int power = 0;
-
-            for (int cursor = 0; cursor < component.size(); cursor++) {
-                LeadConnection current = redstoneConnections.get(component.get(cursor));
+            for (int index : component) {
+                LeadConnection current = redstoneConnections.get(index);
                 power = Math.max(power, redstoneCache.externalSignalAt(current.from()));
                 power = Math.max(power, redstoneCache.externalSignalAt(current.to()));
-
-                addUnvisitedNeighborsBridge(redstoneCache, current.from(), connectionsByAnchor, visited, component);
-                addUnvisitedNeighborsBridge(redstoneCache, current.to(), connectionsByAnchor, visited, component);
             }
 
             final int componentPower = power;
@@ -104,21 +102,51 @@ final class LeadSignalService {
                 }
 
                 LeadConnection updated = connection.withPower(componentPower);
-                changed |= data.update(connection.id(), oldConnection -> oldConnection.withPower(componentPower),
-                        false);
+                changedPowers.put(connection.id(), Integer.valueOf(componentPower));
                 changedConnections.add(updated);
             }
         }
+
+            changed = data.updateRedstonePowers(changedPowers);
 
         if (changed) {
             // Notify only after all power mutations are visible. The first signal query
             // rebuilds one index for the final generation instead of rebuilding after
             // every changed connection in the component.
-            for (LeadConnection connection : changedConnections) {
-                notifyRedstoneChange(level, connection);
+            for (LeadAnchor anchor : changedLogicalPorts(changedConnections)) {
+                notifyRedstoneAnchor(level, anchor);
             }
             SuperLeadPayloads.sendDirtyToDimension(level);
         }
+    }
+
+    private static CachedRedstoneTopology redstoneTopology(ServerLevel level, SuperLeadSavedData data,
+            List<LeadConnection> redstoneConnections) {
+        long generation = data.redstoneTopologyGeneration();
+        long propertyEpoch = BlockPropertyRegistry.epoch();
+        CachedRedstoneTopology cached = REDSTONE_TOPOLOGIES.get(level);
+        if (cached != null && cached.generation() == generation && cached.propertyEpoch() == propertyEpoch
+                && cached.connectionCount() == redstoneConnections.size()) {
+            return cached;
+        }
+        CachedRedstoneTopology rebuilt = new CachedRedstoneTopology(generation, propertyEpoch,
+                redstoneConnections.size(), buildRedstoneComponents(level, redstoneConnections));
+        REDSTONE_TOPOLOGIES.put(level, rebuilt);
+        return rebuilt;
+    }
+
+    private static List<List<Integer>> buildRedstoneComponents(ServerLevel level,
+            List<LeadConnection> redstoneConnections) {
+        return buildComponents(level, redstoneConnections);
+    }
+
+    static Set<LeadAnchor> changedLogicalPorts(Iterable<LeadConnection> changedConnections) {
+        Set<LeadAnchor> ports = new HashSet<>();
+        for (LeadConnection connection : changedConnections) {
+            ports.add(connection.from().logicalPort());
+            ports.add(connection.to().logicalPort());
+        }
+        return ports;
     }
 
     static void markRedstoneDirty(ServerLevel level) {
@@ -152,30 +180,23 @@ final class LeadSignalService {
     private static void tickEnergyGuarded(ServerLevel level, SuperLeadSavedData data,
             List<LeadConnection> energyConnections) {
         long now = level.getGameTime();
-        int size = energyConnections.size();
         EnergyTickBudget budget = new EnergyTickBudget(Config.energyMaxHandlerCallsPerLevelTick(),
                 Config.energyTickBudgetMicros());
         EnergyHandlerCache energyHandlers = new EnergyHandlerCache(budget);
-        Set<UUID> transferredIds = HashSet.newHashSet(size / 2);
-        boolean[] visited = new boolean[size];
-        Map<LeadAnchor, List<Integer>> connectionsByAnchor = indexConnectionsByAnchor(energyConnections, size);
-        RedstoneTraversalCache bridgeCache = new RedstoneTraversalCache(level);
-        for (int i = 0; i < energyConnections.size() && budget.canStartCall(); i++) {
-            if (visited[i]) {
+        Set<UUID> transferredIds = HashSet.newHashSet(energyConnections.size() / 2);
+        CachedEnergyTopology topology = energyTopology(level, data, energyConnections);
+        for (int componentIndex = 0; componentIndex < topology.components().size(); componentIndex++) {
+            EnergyCadenceState cadence = topology.cadenceStates().get(componentIndex);
+            if (!cadence.isDue(now)) {
                 continue;
             }
-
-            List<Integer> component = new ArrayList<>();
-            component.add(i);
-            visited[i] = true;
-
-            for (int cursor = 0; cursor < component.size() && budget.canStartCall(); cursor++) {
-                LeadConnection current = energyConnections.get(component.get(cursor));
-                addUnvisitedNeighborsBridge(bridgeCache, current.from(), connectionsByAnchor, visited, component);
-                addUnvisitedNeighborsBridge(bridgeCache, current.to(), connectionsByAnchor, visited, component);
+            if (!budget.canStartCall()) {
+                break;
             }
-
-            transferEnergyComponent(level, component, energyConnections, transferredIds, energyHandlers, budget);
+            int elapsedTicks = cadence.elapsedTicks(now);
+            boolean moved = transferEnergyComponent(level, topology.components().get(componentIndex),
+                    energyConnections, transferredIds, energyHandlers, budget, elapsedTicks);
+            cadence.recordRun(now, moved, budget.canStartCall());
         }
 
         // Refresh sticky deadlines for connections that actually moved energy this
@@ -206,9 +227,67 @@ final class LeadSignalService {
         ENERGY_BREAKER_UNTIL.remove(level);
         ENERGY_BREAKER_LAST_LOG.remove(level);
         ENERGY_ACTIVE_UNTIL.remove(level);
+        ENERGY_TOPOLOGIES.remove(level);
         REDSTONE_DIRTY_LEVELS.remove(level);
         REDSTONE_INITIALIZED_LEVELS.remove(level);
         SIGNAL_INDEXES.remove(level);
+        REDSTONE_TOPOLOGIES.remove(level);
+    }
+
+    static void invalidateEnergyTopology(ServerLevel level) {
+        ENERGY_TOPOLOGIES.remove(level);
+    }
+
+    private static CachedEnergyTopology energyTopology(ServerLevel level, SuperLeadSavedData data,
+            List<LeadConnection> energyConnections) {
+        long generation = data.energyTopologyGeneration();
+        long propertyEpoch = BlockPropertyRegistry.epoch();
+        CachedEnergyTopology cached = ENERGY_TOPOLOGIES.get(level);
+        if (cached != null && cached.generation() == generation && cached.propertyEpoch() == propertyEpoch
+                && cached.connectionCount() == energyConnections.size()) {
+            return cached;
+        }
+
+        List<List<Integer>> components = buildEnergyComponents(level, energyConnections);
+        List<EnergyCadenceState> cadenceStates = new ArrayList<>(components.size());
+        for (int i = 0; i < components.size(); i++) {
+            cadenceStates.add(new EnergyCadenceState());
+        }
+        CachedEnergyTopology rebuilt = new CachedEnergyTopology(generation, propertyEpoch, energyConnections.size(),
+                components, cadenceStates);
+        ENERGY_TOPOLOGIES.put(level, rebuilt);
+        return rebuilt;
+    }
+
+    private static List<List<Integer>> buildEnergyComponents(ServerLevel level,
+            List<LeadConnection> energyConnections) {
+        return buildComponents(level, energyConnections);
+    }
+
+    private static List<List<Integer>> buildComponents(ServerLevel level, List<LeadConnection> connections) {
+        int size = connections.size();
+        boolean[] visited = new boolean[size];
+        Map<LeadAnchor, List<Integer>> connectionsByAnchor = indexConnectionsByAnchor(connections, size);
+        RedstoneTraversalCache bridgeCache = new RedstoneTraversalCache(level);
+        List<List<Integer>> components = new ArrayList<>();
+        for (int i = 0; i < size; i++) {
+            if (visited[i]) {
+                continue;
+            }
+            List<Integer> component = new ArrayList<>();
+            component.add(i);
+            visited[i] = true;
+            Set<LeadAnchor> expandedPorts = new HashSet<>();
+            for (int cursor = 0; cursor < component.size(); cursor++) {
+                LeadConnection current = connections.get(component.get(cursor));
+                addUnvisitedNeighborsBridge(bridgeCache, current.from(), connectionsByAnchor, visited, component,
+                        expandedPorts);
+                addUnvisitedNeighborsBridge(bridgeCache, current.to(), connectionsByAnchor, visited, component,
+                        expandedPorts);
+            }
+            components.add(List.copyOf(component));
+        }
+        return List.copyOf(components);
     }
 
     static int leadSignal(SignalGetter getter, BlockPos pos, Direction direction) {
@@ -247,7 +326,7 @@ final class LeadSignalService {
 
     private static long signalVersion(Level level) {
         if (level instanceof ServerLevel serverLevel) {
-            return SuperLeadSavedData.get(serverLevel).generation();
+            return SuperLeadSavedData.get(serverLevel).kindGeneration(LeadKind.REDSTONE);
         }
         return LeadClientConnectionCache.revision(level);
     }
@@ -272,9 +351,13 @@ final class LeadSignalService {
         notifyRedstoneAnchor(level, connection.to());
     }
 
-    private static void transferEnergyComponent(ServerLevel level, List<Integer> component,
+    static boolean isRedstoneNotificationActive() {
+        return REDSTONE_NOTIFICATION_ACTIVE.get();
+    }
+
+        private static boolean transferEnergyComponent(ServerLevel level, List<Integer> component,
             List<LeadConnection> energyConnections, Set<UUID> transferredIds, EnergyHandlerCache energyHandlers,
-            EnergyTickBudget budget) {
+            EnergyTickBudget budget, int elapsedTicks) {
         // --- determine mode and build endpoint lists ---
         // Directional mode: at least one connection has extractAnchor != 0.
         // In that mode energy only flows from extractSource -> extractTarget.
@@ -290,42 +373,43 @@ final class LeadSignalService {
 
         List<EnergyEndpoint> sources = new ArrayList<>();
         List<EnergyEndpoint> targets = new ArrayList<>();
-        Set<LeadAnchor> seenAnchors = new HashSet<>();
+        // Physical ropes contribute bandwidth independently, while capability ports
+        // are queried once per role. Keep source and target identities separate: in a
+        // multi-rope network the same machine face may legitimately be the target of
+        // one rope and the source of another.
+        Set<LeadAnchor> seenSources = new HashSet<>();
+        Set<LeadAnchor> seenTargets = new HashSet<>();
+        Map<EnergyHandler, EnergyMachineState> machineStates = new IdentityHashMap<>();
 
-        long componentRate = 0;
-        long base = Config.energyBaseTransfer();
+        long componentRate = energyComponentRate(component, energyConnections, elapsedTicks);
         for (int index : component) {
             LeadConnection connection = energyConnections.get(index);
-            int tier = Math.min(Config.energyTierMaxLevel(), Math.min(30, connection.tier()));
-            long rate = base << tier;
-            componentRate = Math.min(Integer.MAX_VALUE, componentRate + rate);
-
             if (directional) {
                 LeadAnchor src = connection.extractSource();
-                if (src != null && seenAnchors.add(src)) {
+                if (src != null && markLogicalPortSeen(seenSources, src)) {
                     EnergyHandler handler = energyHandlers.get(level, src);
-                    EnergyEndpoint endpoint = snapshotEnergyEndpoint(level, src, handler, budget);
+                    EnergyEndpoint endpoint = snapshotEnergyEndpoint(level, src, handler, budget, machineStates);
                     if (endpoint != null) {
                         sources.add(endpoint);
                     }
                 }
                 LeadAnchor tgt = connection.extractTarget();
-                if (tgt != null && seenAnchors.add(tgt)) {
+                if (tgt != null && markLogicalPortSeen(seenTargets, tgt)) {
                     EnergyHandler handler = energyHandlers.get(level, tgt);
-                    EnergyEndpoint endpoint = snapshotEnergyEndpoint(level, tgt, handler, budget);
+                    EnergyEndpoint endpoint = snapshotEnergyEndpoint(level, tgt, handler, budget, machineStates);
                     if (endpoint != null) {
                         targets.add(endpoint);
                     }
                 }
             } else {
-                addEnergyEndpoint(level, connection.from(), targets, seenAnchors, energyHandlers);
-                addEnergyEndpoint(level, connection.to(), targets, seenAnchors, energyHandlers);
+                addEnergyEndpoint(level, connection.from(), targets, seenTargets, energyHandlers, machineStates);
+                addEnergyEndpoint(level, connection.to(), targets, seenTargets, energyHandlers, machineStates);
             }
         }
 
         long remaining = componentRate;
         if (remaining <= 0) {
-            return;
+            return false;
         }
 
         boolean componentMoved;
@@ -340,6 +424,24 @@ final class LeadSignalService {
                 transferredIds.add(energyConnections.get(index).id());
             }
         }
+        return componentMoved;
+    }
+
+    static long energyComponentRate(List<Integer> component, List<LeadConnection> energyConnections) {
+        return energyComponentRate(component, energyConnections, 1);
+    }
+
+    static long energyComponentRate(List<Integer> component, List<LeadConnection> energyConnections,
+            int elapsedTicks) {
+        long total = 0L;
+        long base = Config.energyBaseTransfer();
+        for (int index : component) {
+            LeadConnection connection = energyConnections.get(index);
+            int tier = Math.min(Config.energyTierMaxLevel(), Math.min(30, connection.tier()));
+            total = Math.min(Integer.MAX_VALUE, total + (base << tier));
+        }
+        int cadence = Math.max(1, Math.min(EnergyCadenceState.MAX_INTERVAL_TICKS, elapsedTicks));
+        return Math.min(Integer.MAX_VALUE, total * cadence);
     }
 
     /**
@@ -381,8 +483,13 @@ final class LeadSignalService {
             }
 
             if (source.handler() == target.handler()) {
-                si++;
-                ti++;
+                int alternative = findDifferentHandler(targets, ti + 1, source.handler());
+                if (alternative < 0) {
+                    si++;
+                    continue;
+                }
+                targets.set(ti, targets.get(alternative));
+                targets.set(alternative, target);
                 continue;
             }
             int maxAmount = boundedEnergyRequest(remaining);
@@ -442,11 +549,23 @@ final class LeadSignalService {
                 break;
             }
             if (full.handler() == empty.handler()) {
+                int alternative = findDifferentHandlerReverse(endpoints, hi - 1, lo, full.handler());
+                if (alternative < lo) {
+                    lo++;
+                    continue;
+                }
+                endpoints.set(hi, endpoints.get(alternative));
+                endpoints.set(alternative, empty);
+                continue;
+            }
+            long balanceAmount = equalizingTransferLimit(full.amount(), full.capacity(), empty.amount(),
+                    empty.capacity());
+            int maxAmount = boundedEnergyRequest(Math.min(remaining, balanceAmount));
+            if (maxAmount <= 0) {
                 lo++;
                 hi--;
                 continue;
             }
-            int maxAmount = boundedEnergyRequest(remaining);
             int transferred = transferEnergy(level, full, empty, maxAmount, budget);
             attempts++;
             if (transferred > 0) {
@@ -468,16 +587,22 @@ final class LeadSignalService {
     }
 
     private static void addEnergyEndpoint(ServerLevel level, LeadAnchor anchor, List<EnergyEndpoint> endpoints,
-            Set<LeadAnchor> seenAnchors, EnergyHandlerCache energyHandlers) {
-        if (!seenAnchors.add(anchor)) {
+            Set<LeadAnchor> seenAnchors, EnergyHandlerCache energyHandlers,
+            Map<EnergyHandler, EnergyMachineState> machineStates) {
+        if (!markLogicalPortSeen(seenAnchors, anchor)) {
             return;
         }
 
         EnergyHandler handler = energyHandlers.get(level, anchor);
-        EnergyEndpoint endpoint = snapshotEnergyEndpoint(level, anchor, handler, energyHandlers.budget());
+        EnergyEndpoint endpoint = snapshotEnergyEndpoint(level, anchor, handler, energyHandlers.budget(),
+            machineStates);
         if (endpoint != null) {
             endpoints.add(endpoint);
         }
+    }
+
+    static boolean markLogicalPortSeen(Set<LeadAnchor> seenPorts, LeadAnchor anchor) {
+        return seenPorts.add(anchor.logicalPort());
     }
 
     static int boundedEnergyRequest(long remaining) {
@@ -485,6 +610,40 @@ final class LeadSignalService {
             return 0;
         }
         return (int) Math.min(remaining, Config.energyMaxRequestPerCall());
+    }
+
+    static long equalizingTransferLimit(long sourceAmount, long sourceCapacity, long targetAmount,
+            long targetCapacity) {
+        if (sourceCapacity <= 0L || targetCapacity <= 0L || sourceAmount <= 0L
+                || targetAmount >= targetCapacity) {
+            return 0L;
+        }
+        double numerator = sourceAmount * (double) targetCapacity - targetAmount * (double) sourceCapacity;
+        if (!(numerator > 0.0D)) {
+            return 0L;
+        }
+        double balanced = numerator / (sourceCapacity + (double) targetCapacity);
+        long limit = balanced >= Long.MAX_VALUE ? Long.MAX_VALUE : (long) Math.floor(balanced);
+        return Math.min(limit, Math.min(sourceAmount, targetCapacity - targetAmount));
+    }
+
+    private static int findDifferentHandler(List<EnergyEndpoint> endpoints, int start, EnergyHandler handler) {
+        for (int i = start; i < endpoints.size(); i++) {
+            if (endpoints.get(i).handler() != handler) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    private static int findDifferentHandlerReverse(List<EnergyEndpoint> endpoints, int start, int minimum,
+            EnergyHandler handler) {
+        for (int i = start; i >= minimum; i--) {
+            if (endpoints.get(i).handler() != handler) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     private static int transferEnergy(ServerLevel level, EnergyEndpoint source, EnergyEndpoint target, int maxAmount,
@@ -606,9 +765,13 @@ final class LeadSignalService {
     }
 
     private static EnergyEndpoint snapshotEnergyEndpoint(ServerLevel level, LeadAnchor anchor, EnergyHandler handler,
-            EnergyTickBudget budget) {
+            EnergyTickBudget budget, Map<EnergyHandler, EnergyMachineState> machineStates) {
         if (handler == null || isEnergyCircuitOpen(level, anchor)) {
             return null;
+        }
+        EnergyMachineState cached = machineStates.get(handler);
+        if (cached != null) {
+            return new EnergyEndpoint(anchor, handler, cached);
         }
         Long capacityValue = callEnergyLong(level, anchor, budget, "energy capacity snapshot",
                 handler::getCapacityAsLong);
@@ -626,7 +789,9 @@ final class LeadSignalService {
                 openEnergyCircuit(level, anchor, "invalid energy amount/capacity", null);
                 return null;
             }
-            return new EnergyEndpoint(anchor, handler, amount, capacity);
+            EnergyMachineState state = new EnergyMachineState(amount, capacity);
+            machineStates.put(handler, state);
+            return new EnergyEndpoint(anchor, handler, state);
         } catch (RuntimeException | LinkageError error) {
             openEnergyCircuit(level, anchor, "energy snapshot failed", error);
             return null;
@@ -699,9 +864,13 @@ final class LeadSignalService {
         byAnchor.computeIfAbsent(anchor.logicalPort(), key -> new ArrayList<>()).add(index);
     }
 
-    private static void addUnvisitedNeighbors(LeadAnchor anchor, Map<LeadAnchor, List<Integer>> byAnchor,
-            boolean[] visited, List<Integer> component) {
-        List<Integer> neighbors = byAnchor.get(anchor.logicalPort());
+    static int addUnvisitedNeighbors(LeadAnchor anchor, Map<LeadAnchor, List<Integer>> byAnchor,
+            boolean[] visited, List<Integer> component, Set<LeadAnchor> expandedPorts) {
+        LeadAnchor port = anchor.logicalPort();
+        if (!expandedPorts.add(port)) {
+            return 0;
+        }
+        List<Integer> neighbors = byAnchor.get(port);
         if (neighbors != null) {
             for (int index : neighbors) {
                 if (!visited[index]) {
@@ -709,12 +878,15 @@ final class LeadSignalService {
                     component.add(index);
                 }
             }
+            return neighbors.size();
         }
+        return 0;
     }
 
     private static void addUnvisitedNeighborsBridge(RedstoneTraversalCache cache, LeadAnchor anchor,
-            Map<LeadAnchor, List<Integer>> byAnchor, boolean[] visited, List<Integer> component) {
-        addUnvisitedNeighbors(anchor, byAnchor, visited, component);
+            Map<LeadAnchor, List<Integer>> byAnchor, boolean[] visited, List<Integer> component,
+            Set<LeadAnchor> expandedPorts) {
+        addUnvisitedNeighbors(anchor, byAnchor, visited, component, expandedPorts);
         if (!cache.signalBridgeEnabled(anchor.pos())) {
             return;
         }
@@ -723,7 +895,7 @@ final class LeadSignalService {
                 continue;
             }
             LeadAnchor otherFace = new LeadAnchor(anchor.pos(), face);
-            addUnvisitedNeighbors(otherFace, byAnchor, visited, component);
+            addUnvisitedNeighbors(otherFace, byAnchor, visited, component, expandedPorts);
         }
     }
 
@@ -755,10 +927,16 @@ final class LeadSignalService {
             return;
         }
 
-        level.neighborChanged(attachedPos, level.getBlockState(outputPos).getBlock(), null);
+        boolean wasActive = REDSTONE_NOTIFICATION_ACTIVE.get();
+        REDSTONE_NOTIFICATION_ACTIVE.set(true);
+        try {
+            level.neighborChanged(attachedPos, level.getBlockState(outputPos).getBlock(), null);
 
-        level.updateNeighborsAt(outputPos, level.getBlockState(outputPos).getBlock());
-        level.updateNeighborsAt(attachedPos, level.getBlockState(attachedPos).getBlock());
+            level.updateNeighborsAt(outputPos, level.getBlockState(outputPos).getBlock());
+            level.updateNeighborsAt(attachedPos, level.getBlockState(attachedPos).getBlock());
+        } finally {
+            REDSTONE_NOTIFICATION_ACTIVE.set(wasActive);
+        }
     }
 
     private static boolean isChunkAvailableNow(ServerLevel level, BlockPos pos) {
@@ -891,6 +1069,57 @@ final class LeadSignalService {
     private record CachedSignalIndex(long version, SignalIndex index) {
     }
 
+        private record CachedRedstoneTopology(long generation, long propertyEpoch, int connectionCount,
+            List<List<Integer>> components) {
+        }
+
+        private record CachedEnergyTopology(long generation, long propertyEpoch, int connectionCount,
+                List<List<Integer>> components, List<EnergyCadenceState> cadenceStates) {
+        }
+
+        static final class EnergyCadenceState {
+            static final int MAX_INTERVAL_TICKS = 4;
+            private boolean hasOutcome;
+            private boolean lastMoved;
+            private int stableRuns;
+            private int intervalTicks = 1;
+            private long lastRunTick = Long.MIN_VALUE;
+            private long nextRunTick = Long.MIN_VALUE;
+
+            boolean isDue(long gameTime) {
+                return gameTime >= nextRunTick;
+            }
+
+            int elapsedTicks(long gameTime) {
+                if (lastRunTick == Long.MIN_VALUE || gameTime <= lastRunTick) {
+                    return 1;
+                }
+                return (int) Math.min(MAX_INTERVAL_TICKS, gameTime - lastRunTick);
+            }
+
+            void recordRun(long gameTime, boolean moved, boolean completedWithinBudget) {
+                lastRunTick = gameTime;
+                if (!completedWithinBudget) {
+                    hasOutcome = false;
+                    stableRuns = 0;
+                    intervalTicks = 1;
+                } else if (!hasOutcome || moved != lastMoved) {
+                    hasOutcome = true;
+                    lastMoved = moved;
+                    stableRuns = 0;
+                    intervalTicks = 1;
+                } else {
+                    stableRuns++;
+                    intervalTicks = stableRuns >= 4 ? MAX_INTERVAL_TICKS : stableRuns >= 2 ? 2 : 1;
+                }
+                nextRunTick = gameTime > Long.MAX_VALUE - intervalTicks ? Long.MAX_VALUE : gameTime + intervalTicks;
+            }
+
+            int intervalTicks() {
+                return intervalTicks;
+            }
+        }
+
     static final class SignalIndex {
         private static final SignalIndex EMPTY = new SignalIndex(Map.of(), new EnumMap<>(Direction.class));
 
@@ -948,14 +1177,12 @@ final class LeadSignalService {
     private static final class EnergyEndpoint {
         private final LeadAnchor anchor;
         private final EnergyHandler handler;
-        private final long capacity;
-        private long amount;
+        private final EnergyMachineState state;
 
-        private EnergyEndpoint(LeadAnchor anchor, EnergyHandler handler, long amount, long capacity) {
+        private EnergyEndpoint(LeadAnchor anchor, EnergyHandler handler, EnergyMachineState state) {
             this.anchor = anchor;
             this.handler = handler;
-            this.amount = amount;
-            this.capacity = capacity;
+            this.state = state;
         }
 
         private LeadAnchor anchor() {
@@ -966,17 +1193,35 @@ final class LeadSignalService {
             return handler;
         }
 
+        private long amount() {
+            return state.amount;
+        }
+
+        private long capacity() {
+            return state.capacity;
+        }
+
         private double fillRatio() {
-            return capacity <= 0L ? 0.0D : amount / (double) capacity;
+            return state.capacity <= 0L ? 0.0D : state.amount / (double) state.capacity;
         }
 
         private void add(int value) {
             long added = Math.max(0, value);
-            amount = added >= capacity - amount ? capacity : amount + added;
+            state.amount = added >= state.capacity - state.amount ? state.capacity : state.amount + added;
         }
 
         private void remove(int value) {
-            amount = Math.max(0L, amount - Math.max(0, value));
+            state.amount = Math.max(0L, state.amount - Math.max(0, value));
+        }
+    }
+
+    private static final class EnergyMachineState {
+        private long amount;
+        private final long capacity;
+
+        private EnergyMachineState(long amount, long capacity) {
+            this.amount = amount;
+            this.capacity = capacity;
         }
     }
 }

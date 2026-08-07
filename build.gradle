@@ -254,10 +254,21 @@ if (modBenchEnabled) {
         // Physics assertions do not need comparable frame timings; letting the run
         // survive focus loss keeps unattended runs from ending INCONCLUSIVE.
         clientRequireWindowFocus = false
+        // Record each executed scenario separately so control/workload profiles can
+        // be compared without mixing their samples into one run-level recording.
+        jfrEnabled = true
         pairedServerScenarios = 'super_lead.paired-server-cadence'
         pairedClientScenarios = 'super_lead.paired-remote-cadence'
         pairedStartupTimeoutSeconds = 90
         pairedClientTimeoutSeconds = 180
+    }
+
+    // Optional integration mods used by dedicated-server workload scenarios.
+    // localRuntimeOnly configures normal userdev runs; ModBench launches from its
+    // own runtime-mod bucket and therefore needs the dependency explicitly.
+    dependencies {
+        benchRuntimeMod "com.github.QiuYe-123:Mekanism:${mekanism_version}"
+        benchRuntimeMod fileTree(dir: 'libs', include: ['Mekanism-*.jar', 'mekanism-*.jar'])
     }
 }
 

@@ -635,6 +635,7 @@ public final class SuperLeadEvents {
         if (!(event.getLevel() instanceof net.minecraft.server.level.ServerLevel level))
             return;
         LeadSignalService.markRedstoneDirty(level);
+        LeadSignalService.invalidateEnergyTopology(level);
         ServerRopeCurve.invalidateTerrain(level);
         SuperLeadNetwork.pruneInvalidNearBlock(level, event.getPos());
         LeadTransferService.markAeChunkDirty(level, SuperLeadSavedData.chunkKey(event.getPos().getX() >> 4,
@@ -644,6 +645,7 @@ public final class SuperLeadEvents {
     @SubscribeEvent
     public static void onBlockBreak(BreakBlockEvent event) {
         if (event.getLevel() instanceof net.minecraft.server.level.ServerLevel level) {
+            LeadSignalService.invalidateEnergyTopology(level);
             LeadTransferService.markAeChunkDirty(level, SuperLeadSavedData.chunkKey(event.getPos().getX() >> 4,
                     event.getPos().getZ() >> 4));
         }
@@ -653,7 +655,9 @@ public final class SuperLeadEvents {
     public static void onNeighborNotified(BlockEvent.NeighborNotifyEvent event) {
         if (event.getLevel() instanceof net.minecraft.server.level.ServerLevel level) {
             LeadSignalService.markRedstoneDirty(level);
-            SuperLeadNetwork.pruneInvalidNearBlock(level, event.getPos());
+            if (!LeadSignalService.isRedstoneNotificationActive()) {
+                SuperLeadNetwork.pruneInvalidNearBlock(level, event.getPos());
+            }
             LeadTransferService.markAeChunkDirty(level, SuperLeadSavedData.chunkKey(event.getPos().getX() >> 4,
                     event.getPos().getZ() >> 4));
         }
@@ -662,6 +666,7 @@ public final class SuperLeadEvents {
     @SubscribeEvent
     public static void onChunkLoad(ChunkEvent.Load event) {
         if (event.getLevel() instanceof net.minecraft.server.level.ServerLevel level) {
+            LeadSignalService.invalidateEnergyTopology(level);
             LeadTransferService.markAeChunkDirty(level, SuperLeadSavedData.chunkKey(event.getChunk().getPos()));
         }
     }
@@ -669,6 +674,7 @@ public final class SuperLeadEvents {
     @SubscribeEvent
     public static void onChunkUnload(ChunkEvent.Unload event) {
         if (event.getLevel() instanceof net.minecraft.server.level.ServerLevel level) {
+            LeadSignalService.invalidateEnergyTopology(level);
             LeadTransferService.markAeChunkDirty(level, SuperLeadSavedData.chunkKey(event.getChunk().getPos()));
         }
     }

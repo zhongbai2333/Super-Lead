@@ -21,6 +21,10 @@ final class RopeBenchSupport {
     private RopeBenchSupport() {
     }
 
+    static BlockPos serverSpawn(ServerLevel level) {
+        return level.getLevelData().getRespawnData().pos();
+    }
+
     /** Places a fence pillar and returns the top (anchor) block position. */
     static BlockPos fencePillar(ServerLevel level, BlockPos base, int height, List<BlockPos> placed) {
         BlockPos top = base;

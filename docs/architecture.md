@@ -395,6 +395,11 @@
 `SuperLeadNetwork` 内部实现资源网络和路径遍历：
 
 - 能量：扫描能量端点，按 tier 和配置传输。
+- 能量网络区分三种身份：物理绳边独立贡献带宽；`BlockPos + Direction` 组成逻辑 capability 端口并忽略视觉 `hitPoint`；同一 handler 的运行状态属于机器层。端点去重不得合并物理绳带宽，来源与目标角色也必须独立聚合，以支持同面多入多出和跨面并行连接。
+- 能量连通组件按专用 topology generation 缓存；只有 ENERGY 连接增删、类型或逻辑端点变化，以及端点方块、chunk 或方块属性桥接规则变化时重建。tier、抽取方向、视觉 power 和精确 `hitPoint` 不改变图结构，继续逐 tick读取而不使缓存失效。
+- 每个稳定能量组件采用 `1 → 2 → 4 tick` 自适应 cadence；连续有传输和连续无传输都可退避，结果切换或预算耗尽时恢复每 tick。执行时按距离上次执行的实际 tick 数（最多 4）累积物理绳额度，以保持平均 FE/t，同时仍受单次请求、尝试次数和维度预算保护。
+- SavedData 维护按 `LeadKind` 隔离的运行时 revision；红石信号和 ITEM/FLUID/PRESSURIZED 路由索引只受自身类型更新影响，避免 ENERGY 发光、其他类型附件或视觉变化造成跨类型缓存重建。THERMAL 组件遍历对共享位置邻接桶每组件只展开一次，避免多绳星形节点的平方扫描。
+- REDSTONE 另有只跟踪连接 id、kind 和 logical port 的 topology revision；power 翻转不会重建组件。一次传播产生的 power 变化批量写入 SavedData，只递增一次全局/REDSTONE revision；邻居通知按 logical port 合并，避免同面多绳重复通知同一个方块面。
 - 物品/流体：从 `extractAnchor` 指定源端抽取，沿连接图寻找可插入目标。
 - 物品和流体传输会用 round-robin 游标避免永远偏向同一路径。
 

@@ -74,8 +74,14 @@ public final class SuperLeadSavedData extends SavedData {
      * when the network topology hasn't changed.
      */
     private long generation;
+    /** Runtime-only revisions isolated by rope kind. */
+    private final EnumMap<LeadKind, Long> kindGenerations = new EnumMap<>(LeadKind.class);
     /** Runtime-only generation for the AE2 topology shape (not attachments/power). */
     private long aeTopologyGeneration;
+    /** Runtime-only generation for ENERGY logical endpoints (not tier/direction/power). */
+    private long energyTopologyGeneration;
+    /** Runtime-only generation for REDSTONE logical endpoints (not power). */
+    private long redstoneTopologyGeneration;
 
     public SuperLeadSavedData() {
     }
@@ -101,6 +107,15 @@ public final class SuperLeadSavedData extends SavedData {
         }
         if (byKind.containsKey(LeadKind.AE_NETWORK)) {
             aeTopologyGeneration = 1L;
+        }
+        if (byKind.containsKey(LeadKind.ENERGY)) {
+            energyTopologyGeneration = 1L;
+        }
+        if (byKind.containsKey(LeadKind.REDSTONE)) {
+            redstoneTopologyGeneration = 1L;
+        }
+        for (LeadKind kind : byKind.keySet()) {
+            kindGenerations.put(kind, 1L);
         }
         for (RopeChunkBucket bucket : buckets) {
             long chunk = bucket.chunkKey();
@@ -209,12 +224,30 @@ public final class SuperLeadSavedData extends SavedData {
         return generation;
     }
 
+    long kindGeneration(LeadKind kind) {
+        return kindGenerations.getOrDefault(kind, 0L);
+    }
+
     /**
      * Changes only when an AE connection id, logical endpoint, AE kind, or
      * dense/non-dense tier changes.
      */
     long aeTopologyGeneration() {
         return aeTopologyGeneration;
+    }
+
+    /**
+     * Changes only when an ENERGY connection id, kind, or logical endpoint changes.
+     */
+    long energyTopologyGeneration() {
+        return energyTopologyGeneration;
+    }
+
+    /**
+     * Changes only when a REDSTONE connection id, kind, or logical endpoint changes.
+     */
+    long redstoneTopologyGeneration() {
+        return redstoneTopologyGeneration;
     }
 
     UUID syncEpoch() {
@@ -340,6 +373,15 @@ public final class SuperLeadSavedData extends SavedData {
             if (!java.util.Objects.equals(aeTopologySignature(oldConnection), aeTopologySignature(newConnection))) {
                 aeTopologyGeneration++;
             }
+            if (!java.util.Objects.equals(energyTopologySignature(oldConnection),
+                    energyTopologySignature(newConnection))) {
+                energyTopologyGeneration++;
+            }
+            if (!java.util.Objects.equals(redstoneTopologySignature(oldConnection),
+                    redstoneTopologySignature(newConnection))) {
+                redstoneTopologyGeneration++;
+            }
+            bumpKindGenerations(oldConnection, newConnection);
             replaceStoredConnection(stored, oldConnection, newConnection);
             markDirtyChunks(stored.coveredChunks);
             if (markDirty) {
@@ -350,17 +392,74 @@ public final class SuperLeadSavedData extends SavedData {
         long aeGenerationBeforeReplace = aeTopologyGeneration;
         boolean aeTopologyChanged = !java.util.Objects.equals(aeTopologySignature(oldConnection),
                 aeTopologySignature(newConnection));
+        long energyGenerationBeforeReplace = energyTopologyGeneration;
+        boolean energyTopologyChanged = !java.util.Objects.equals(energyTopologySignature(oldConnection),
+            energyTopologySignature(newConnection));
+        long redstoneGenerationBeforeReplace = redstoneTopologyGeneration;
+        boolean redstoneTopologyChanged = !java.util.Objects.equals(redstoneTopologySignature(oldConnection),
+            redstoneTopologySignature(newConnection));
         remove(id);
         put(newConnection, false);
         aeTopologyGeneration = aeGenerationBeforeReplace + (aeTopologyChanged ? 1L : 0L);
+        energyTopologyGeneration = energyGenerationBeforeReplace + (energyTopologyChanged ? 1L : 0L);
+        redstoneTopologyGeneration = redstoneGenerationBeforeReplace + (redstoneTopologyChanged ? 1L : 0L);
         if (markDirty) {
             setDirty();
         }
         return true;
     }
 
+    /**
+     * Applies one REDSTONE propagation result as a single runtime revision.
+     * Power does not affect rope topology, ownership, or chunk coverage.
+     */
+    boolean updateRedstonePowers(Map<UUID, Integer> powers) {
+        if (powers.isEmpty()) {
+            return false;
+        }
+        boolean changed = false;
+        for (Map.Entry<UUID, Integer> entry : powers.entrySet()) {
+            StoredRope stored = byId.get(entry.getKey());
+            if (stored == null || stored.connection.kind() != LeadKind.REDSTONE) {
+                continue;
+            }
+            int power = Math.max(0, Math.min(15, entry.getValue().intValue()));
+            LeadConnection oldConnection = stored.connection;
+            if (oldConnection.power() == power) {
+                continue;
+            }
+            LeadConnection newConnection = oldConnection.withPower(power);
+            stored.connection = newConnection;
+            replaceOwnedConnection(stored.ownerChunk, newConnection);
+            byKind.get(LeadKind.REDSTONE).put(newConnection.id(), newConnection);
+            markDirtyChunks(stored.coveredChunks);
+            changed = true;
+        }
+        if (changed) {
+            bumpGeneration();
+            bumpKindGeneration(LeadKind.REDSTONE);
+        }
+        return changed;
+    }
+
     private void bumpGeneration() {
         generation++;
+    }
+
+    private void bumpKindGeneration(LeadKind kind) {
+        Long current = kindGenerations.get(kind);
+        kindGenerations.put(kind, Long.valueOf(current == null ? 1L : current.longValue() + 1L));
+    }
+
+    private void bumpKindGenerations(LeadConnection oldConnection, LeadConnection newConnection) {
+        LeadKind oldKind = oldConnection == null ? null : oldConnection.kind();
+        LeadKind newKind = newConnection == null ? null : newConnection.kind();
+        if (oldKind != null) {
+            bumpKindGeneration(oldKind);
+        }
+        if (newKind != null && newKind != oldKind) {
+            bumpKindGeneration(newKind);
+        }
     }
 
     private void put(LeadConnection connection, boolean markDirty) {
@@ -368,9 +467,21 @@ public final class SuperLeadSavedData extends SavedData {
         AeTopologySignature oldTopology = previous == null ? null : aeTopologySignature(previous.connection);
         AeTopologySignature newTopology = aeTopologySignature(connection);
         long aeGenerationBeforeReplace = aeTopologyGeneration;
+        EnergyTopologySignature oldEnergyTopology = previous == null ? null
+            : energyTopologySignature(previous.connection);
+        EnergyTopologySignature newEnergyTopology = energyTopologySignature(connection);
+        long energyGenerationBeforeReplace = energyTopologyGeneration;
+        RedstoneTopologySignature oldRedstoneTopology = previous == null ? null
+            : redstoneTopologySignature(previous.connection);
+        RedstoneTopologySignature newRedstoneTopology = redstoneTopologySignature(connection);
+        long redstoneGenerationBeforeReplace = redstoneTopologyGeneration;
         remove(connection.id());
         aeTopologyGeneration = aeGenerationBeforeReplace
                 + (java.util.Objects.equals(oldTopology, newTopology) ? 0L : 1L);
+        energyTopologyGeneration = energyGenerationBeforeReplace
+            + (java.util.Objects.equals(oldEnergyTopology, newEnergyTopology) ? 0L : 1L);
+        redstoneTopologyGeneration = redstoneGenerationBeforeReplace
+            + (java.util.Objects.equals(oldRedstoneTopology, newRedstoneTopology) ? 0L : 1L);
         bumpGeneration();
         long owner = ownerChunkKey(connection);
         LinkedHashSet<Long> covered = coveredChunkKeys(connection);
@@ -379,6 +490,7 @@ public final class SuperLeadSavedData extends SavedData {
         StoredRope stored = new StoredRope(connection, owner);
         stored.coveredChunks.addAll(covered);
         byId.put(connection.id(), stored);
+        bumpKindGeneration(connection.kind());
         enqueueValidation(connection.id());
         indexByKind(connection);
 
@@ -407,6 +519,13 @@ public final class SuperLeadSavedData extends SavedData {
         if (stored.connection.kind() == LeadKind.AE_NETWORK) {
             aeTopologyGeneration++;
         }
+        if (stored.connection.kind() == LeadKind.ENERGY) {
+            energyTopologyGeneration++;
+        }
+        if (stored.connection.kind() == LeadKind.REDSTONE) {
+            redstoneTopologyGeneration++;
+        }
+        bumpKindGeneration(stored.connection.kind());
         bumpGeneration();
         unindexByKind(stored.connection);
         List<LeadConnection> owned = ownedByChunk.get(stored.ownerChunk);
@@ -437,6 +556,28 @@ public final class SuperLeadSavedData extends SavedData {
     }
 
     private record AeTopologySignature(UUID id, LeadAnchor from, LeadAnchor to, boolean dense) {
+    }
+
+    private static EnergyTopologySignature energyTopologySignature(LeadConnection connection) {
+        if (connection == null || connection.kind() != LeadKind.ENERGY) {
+            return null;
+        }
+        return new EnergyTopologySignature(connection.id(), connection.from().logicalPort(),
+                connection.to().logicalPort());
+    }
+
+    private record EnergyTopologySignature(UUID id, LeadAnchor from, LeadAnchor to) {
+    }
+
+    private static RedstoneTopologySignature redstoneTopologySignature(LeadConnection connection) {
+        if (connection == null || connection.kind() != LeadKind.REDSTONE) {
+            return null;
+        }
+        return new RedstoneTopologySignature(connection.id(), connection.from().logicalPort(),
+                connection.to().logicalPort());
+    }
+
+    private record RedstoneTopologySignature(UUID id, LeadAnchor from, LeadAnchor to) {
     }
 
     private void markDirtyChunks(Set<Long> chunks) {

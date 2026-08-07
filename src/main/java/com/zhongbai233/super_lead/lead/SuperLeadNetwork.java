@@ -256,7 +256,7 @@ public final class SuperLeadNetwork {
         if (!level.isClientSide() && level instanceof ServerLevel serverLevel) {
             SuperLeadSavedData data = SuperLeadSavedData.get(serverLevel);
             int budget = periodicValidationBudget(data.connectionCount());
-            pruneInvalidCandidates(serverLevel, data, data.pollValidationBatch(budget));
+                pruneInvalidCandidates(serverLevel, data, data.pollValidationBatch(budget));
         }
 
         // Clients receive authoritative chunk-scoped rope data from the server. Do not

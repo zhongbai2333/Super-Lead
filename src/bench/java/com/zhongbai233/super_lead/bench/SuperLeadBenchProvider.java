@@ -32,6 +32,33 @@ public final class SuperLeadBenchProvider implements BenchServerProvider, BenchC
                 new ScenarioDescriptor("super_lead.server-load", "Super Lead Server Load", Set.of("super_lead", "smoke"),
                         Duration.ofSeconds(20)),
                 context -> new ServerLoadScenario());
+        registrar.register(
+            new ScenarioDescriptor("super_lead.item-same-face-fanout", "Super Lead Item Same-Face Fanout",
+                Set.of("super_lead", "server", "item", "transfer", "fanout", "performance"),
+                Duration.ofSeconds(45)),
+            context -> new ItemSameFaceFanoutServerScenario());
+        registrar.register(
+            new ScenarioDescriptor("super_lead.redstone-vanilla-control-before",
+                "Super Lead Redstone Vanilla Control Before",
+                Set.of("super_lead", "server", "redstone", "control", "performance"),
+                Duration.ofSeconds(45)),
+            context -> new RedstoneVanillaControlServerScenario());
+        registrar.register(
+            new ScenarioDescriptor("super_lead.redstone-network-load", "Super Lead Redstone Network Load",
+                Set.of("super_lead", "server", "redstone", "network", "performance"),
+                Duration.ofSeconds(45)),
+            context -> new RedstoneNetworkLoadServerScenario());
+        registrar.register(
+            new ScenarioDescriptor("super_lead.redstone-vanilla-control-after",
+                "Super Lead Redstone Vanilla Control After",
+                Set.of("super_lead", "server", "redstone", "control", "performance"),
+                Duration.ofSeconds(45)),
+            context -> new RedstoneVanillaControlServerScenario());
+        registrar.register(
+            new ScenarioDescriptor("super_lead.energy-mekanism-fanout", "Super Lead Mekanism Energy Fanout",
+                Set.of("super_lead", "server", "energy", "mekanism", "fanout", "performance"),
+                Duration.ofSeconds(45)),
+            context -> new MekanismEnergyFanoutServerScenario());
             registrar.register(
                 new ScenarioDescriptor("super_lead.paired-server-cadence", "Super Lead Paired Server Cadence Rig",
                     Set.of("super_lead", "paired", "server", "cadence"), Duration.ofSeconds(30)),

@@ -11,6 +11,11 @@
   建筑服规模的动画 cadence 场景。
   接触场景会导出逐 tick CSV，视觉场景会保留截图。
 3. **ModBench 服务端场景**（`runBenchServer`）：`super_lead.server-load` smoke。
+  - `super_lead.item-same-face-fanout`：一个原版木桶同一面连接 8 根 ITEM 绳，验证多目标公平轮转、资源守恒和服务端 tick 分布。
+  - `super_lead.redstone-network-load`：16 个独立 8 路 REDSTONE 组件周期翻转输入，持续触发真实红石脏更新并记录 tick 分布；验证全部 128 根连接都经历完整 ON/OFF 传播。
+  - `super_lead.redstone-vanilla-control-before` / `super_lead.redstone-vanilla-control-after`：与 REDSTONE 网络场景完全相同的 16×8 方块布局、240 tick 和 4 tick 翻转 cadence，但不创建绳。按 before → network → after 顺序在同一 JVM 运行，用两个 control 的均值抵消预热漂移。
+  - `super_lead.energy-mekanism-fanout`：一个真实 Mekanism Basic Energy Cube 从同一可抽取面连接 8 根 ENERGY 绳到 8 个目标方块，验证 FE 守恒、目标覆盖和稳定 cadence 性能。
+  - Mekanism 已显式加入 `benchRuntimeMod`；后续 ENERGY/FLUID/PRESSURIZED/THERMAL 场景必须在 setup 中断言 `mekanism` 已加载及目标 capability 可用，禁止无 workload 空跑。
 4. **ModBench paired 场景**（`runBenchPaired`）：独立 dedicated server + 独立 remote client，
   使用真实 loopback TCP 连接验证启动、登录、世界就绪和客户端渲染采样。
 
@@ -18,6 +23,36 @@ ModBench 当前只发布到本机 Maven 仓库，因此默认构建不会解析�
 `BenchMod` 仓库执行 `gradlew publishToMavenLocal`，再用
 `gradlew -PenableModBench=true runBenchClient` 或
 `gradlew -PenableModBench=true runBenchServer` 显式启用场景。
+
+Super Lead 的 ModBench 配置默认启用低开销 JFR。BenchMod 会为每个实际执行的
+scenario 单独录制，并写入
+`build/modBench/raw-results/default/<run-type>/artifacts/jfr/<scenario-id>.jfr`；
+跳过的场景不产生录制。每份 JFR 都独立登记进 `summary.json` 和 bundle，因此夹心
+对照可以分别查看 control-before、network 和 control-after 的 CPU/allocation/GC，
+不会再把三个阶段混进单一的 run-level `recording.jfr`。
+
+### REDSTONE 夹心对照
+
+推荐筛选顺序：
+
+```text
+super_lead.redstone-vanilla-control-before,super_lead.redstone-network-load,super_lead.redstone-vanilla-control-after
+```
+
+执行时通过 `-PmodBench.scenarios=<上述筛选值>` 传入顺序；对应 JFR 文件名分别为
+`super_lead.redstone-vanilla-control-before.jfr`、
+`super_lead.redstone-network-load.jfr` 和
+`super_lead.redstone-vanilla-control-after.jfr`。
+
+2026-08-07 本机单次结果（Windows 11、Java 25.0.1、32 logical processors）：control-before
+mean 0.622 ms，network mean 2.597 ms，control-after mean 0.284 ms。夹心基线
+$B=(0.622+0.284)/2=0.453$ ms，128 绳网络相对该世界 workload 的增量约
+$2.597-B=2.144$ ms/tick，即 50 ms tick 预算的约 4.29%。这不是 JVM profiler 的
+Super Lead self-time：它还包含绳输出触发的原版/NeoForge 邻居更新及其延迟世界工作。
+诊断运行确认真正执行 REDSTONE 传播的 tick 平均约 4.23 ms 增量，另一个约 3.99 ms
+的重相位没有再次执行 REDSTONE 服务；周期绳有效性校验在该相位平均仅约 0.012 ms。
+因此不能通过删减第二相位来宣称低于 1%，除非改变红石输出通知语义或由 profiler
+进一步证明可安全合并原版邻居工作。
 
 > 当前 `runBenchPaired` 是 passthrough MVP：已支持 dedicated server + separate client
 > 双 JVM 和真实 TCP 连接，但还没有 phase barrier、nonce handshake 或网络延迟/丢包模拟。
