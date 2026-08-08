@@ -379,6 +379,9 @@ final class LeadSignalService {
         // one rope and the source of another.
         Set<LeadAnchor> seenSources = new HashSet<>();
         Set<LeadAnchor> seenTargets = new HashSet<>();
+        // Share the mutable machine snapshot when multiple faces expose the same
+        // handler, but keep each logical face as a separate endpoint. Scheduling
+        // below gives those endpoints independent bandwidth opportunities.
         Map<EnergyHandler, EnergyMachineState> machineStates = new IdentityHashMap<>();
 
         long componentRate = energyComponentRate(component, energyConnections, elapsedTicks);
@@ -446,7 +449,7 @@ final class LeadSignalService {
 
     /**
      * Directional transfer: move energy from source endpoints to target endpoints.
-     * Sources are drained completely (subject to the per-tick rate cap).
+    * Sources are scheduled fairly (subject to the per-tick rate cap).
      * Targets only receive; they never send energy back.
      */
     private static boolean transferDirectional(ServerLevel level, List<EnergyEndpoint> sources,
@@ -492,9 +495,15 @@ final class LeadSignalService {
                 targets.set(alternative, target);
                 continue;
             }
-            int maxAmount = boundedEnergyRequest(remaining);
+            // Give every source port a fair share of the remaining component
+            // budget. Without this, a full top face can consume the entire rate
+            // cap before a side face is ever selected.
+            int remainingSources = Math.max(1, sources.size() - si);
+            long fairShare = (remaining + remainingSources - 1L) / remainingSources;
+            int maxAmount = boundedEnergyRequest(fairShare);
             int transferred = transferEnergy(level, source, target, maxAmount, budget);
             attempts++;
+            si++;
             if (transferred > 0) {
                 remaining -= transferred;
                 source.remove(transferred);
@@ -502,10 +511,6 @@ final class LeadSignalService {
                 moved = true;
             }
 
-            if (source.fillRatio() <= 0.0D || transferred == 0 || transferred < maxAmount
-                    || isEnergyCircuitOpen(level, source.anchor())) {
-                si++;
-            }
             if (target.fillRatio() >= 1.0D || transferred == 0 || transferred < maxAmount
                     || isEnergyCircuitOpen(level, target.anchor())) {
                 ti++;
@@ -587,7 +592,7 @@ final class LeadSignalService {
     }
 
     private static void addEnergyEndpoint(ServerLevel level, LeadAnchor anchor, List<EnergyEndpoint> endpoints,
-            Set<LeadAnchor> seenAnchors, EnergyHandlerCache energyHandlers,
+                Set<LeadAnchor> seenAnchors, EnergyHandlerCache energyHandlers,
             Map<EnergyHandler, EnergyMachineState> machineStates) {
         if (!markLogicalPortSeen(seenAnchors, anchor)) {
             return;

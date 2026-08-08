@@ -25,7 +25,7 @@ import net.neoforged.neoforge.capabilities.Capabilities;
 import net.neoforged.neoforge.transfer.energy.EnergyHandler;
 import net.neoforged.neoforge.transfer.transaction.Transaction;
 
-/** Real Mekanism Energy Cube workload with eight ropes sharing one source face. */
+/** Real Mekanism Energy Cube workload with ropes sharing two source faces. */
 final class MekanismEnergyFanoutServerScenario implements BenchServerScenario {
     private static final int TARGETS = 8;
     private static final int REQUESTED_INITIAL_ENERGY = 1_000_000;
@@ -38,9 +38,11 @@ final class MekanismEnergyFanoutServerScenario implements BenchServerScenario {
     private final List<UUID> connectionIds = new ArrayList<>();
     private final List<BlockPos> blocks = new ArrayList<>();
     private final List<BlockPos> targets = new ArrayList<>();
+    private final List<Integer> targetSourceGroups = new ArrayList<>();
     private ServerLevel level;
     private BlockPos source;
     private Direction sourceFace;
+    private Direction sideSourceFace;
     private long initialEnergy;
     private int measuredTicks;
 
@@ -59,7 +61,9 @@ final class MekanismEnergyFanoutServerScenario implements BenchServerScenario {
         placeCube(source, cube);
         initialEnergy = chargeCube(source, REQUESTED_INITIAL_ENERGY);
         configureCube(source, "OUTPUT");
-        sourceFace = findExtractFace(source);
+        List<Direction> sourceFaces = findExtractFaces(source, 2);
+        sourceFace = sourceFaces.get(0);
+        sideSourceFace = sourceFaces.get(1);
 
         for (int index = 0; index < TARGETS; index++) {
             int x = (index % 4) * 3 - 5;
@@ -69,13 +73,16 @@ final class MekanismEnergyFanoutServerScenario implements BenchServerScenario {
             targets.add(target);
             configureCube(target, "INPUT");
             Direction targetFace = findInsertFace(target);
+                int sourceGroup = index % 2;
             LeadConnection connection = SuperLeadNetwork.connect(level,
-                    new LeadAnchor(source, sourceFace), new LeadAnchor(target, targetFace),
+                    new LeadAnchor(source, sourceGroup == 0 ? sourceFace : sideSourceFace),
+                    new LeadAnchor(target, targetFace),
                     LeadKind.ENERGY, null, LeadConnection.MIN_LENGTH_UNITS);
             if (connection == null) {
                 throw new IllegalStateException("energy fanout refused connection " + index);
             }
             connectionIds.add(connection.id());
+            targetSourceGroups.add(sourceGroup);
             if (!SuperLeadSavedData.get(level).update(connection.id(), rope -> rope.withExtractAnchor(1), true)) {
                 throw new IllegalStateException("energy fanout failed to set extraction on " + connection.id());
             }
@@ -94,17 +101,26 @@ final class MekanismEnergyFanoutServerScenario implements BenchServerScenario {
         long sourceEnergy = unsidedHandler(source).getAmountAsLong();
         long moved = targetEnergy();
         int served = 0;
-        for (BlockPos target : targets) {
-            if (unsidedHandler(target).getAmountAsLong() > 0L) {
+        long topMoved = 0L;
+        long sideMoved = 0L;
+        for (int index = 0; index < targets.size(); index++) {
+            long targetAmount = unsidedHandler(targets.get(index)).getAmountAsLong();
+            if (targetAmount > 0L) {
                 served++;
+            }
+            if (targetSourceGroups.get(index) == 0) {
+                topMoved += targetAmount;
+            } else {
+                sideMoved += targetAmount;
             }
         }
         if (sourceEnergy + moved != initialEnergy) {
             throw new AssertionError("energy fanout conservation failed: initial=" + initialEnergy
                     + " source=" + sourceEnergy + " targets=" + moved);
         }
-        if (moved <= 0L || served != TARGETS) {
-            throw new AssertionError("energy fanout incomplete: moved=" + moved + " served=" + served);
+        if (moved <= 0L || served != TARGETS || topMoved <= 0L || sideMoved <= 0L) {
+            throw new AssertionError("energy fanout incomplete: moved=" + moved + " served=" + served
+                    + " topMoved=" + topMoved + " sideMoved=" + sideMoved);
         }
         context.metrics().record(FE_MOVED, moved);
         context.metrics().record(TARGETS_SERVED, served);
@@ -122,14 +138,19 @@ final class MekanismEnergyFanoutServerScenario implements BenchServerScenario {
         blocks.add(position);
     }
 
-    private Direction findExtractFace(BlockPos position) {
+    private List<Direction> findExtractFaces(BlockPos position, int required) {
+        List<Direction> faces = new ArrayList<>(required);
         for (Direction face : Direction.values()) {
             EnergyHandler handler = level.getCapability(Capabilities.Energy.BLOCK, position, face);
             if (handler != null && simulateExtract(handler, 1) > 0) {
-                return face;
+                faces.add(face);
+                if (faces.size() == required) {
+                    return faces;
+                }
             }
         }
-        throw new IllegalStateException("no extract-capable Energy Cube face at " + position);
+        throw new IllegalStateException("not enough extract-capable Energy Cube faces at " + position
+                + ": found=" + faces);
     }
 
     private Direction findInsertFace(BlockPos position) {

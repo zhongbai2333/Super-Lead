@@ -74,6 +74,16 @@ class LeadSignalServiceTest {
     }
 
     @Test
+    void energySnapshotIdentityMustBePerLogicalPortNotHandlerInstance() {
+        LeadAnchor top = new LeadAnchor(new BlockPos(3, 4, 5), Direction.UP);
+        LeadAnchor side = new LeadAnchor(new BlockPos(3, 4, 5), Direction.NORTH);
+
+        assertFalse(top.logicalPort().equals(side.logicalPort()));
+        assertEquals(top.logicalPort(), top.logicalPort());
+        assertEquals(side.logicalPort(), side.logicalPort());
+    }
+
+    @Test
     void directionalPortMayBeBothSourceAndTarget() {
         LeadAnchor port = new LeadAnchor(new BlockPos(4, 5, 6), Direction.NORTH,
                 new Vec3(4.2D, 5.3D, 6.0D));
