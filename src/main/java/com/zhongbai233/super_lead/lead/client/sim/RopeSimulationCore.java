@@ -339,6 +339,7 @@ abstract class RopeSimulationCore {
 
     protected int anchorAColX = Integer.MIN_VALUE, anchorAColY = 0, anchorAColZ = 0;
     protected int anchorBColX = Integer.MIN_VALUE, anchorBColY = 0, anchorBColZ = 0;
+    protected boolean anchorAKnotBlock, anchorBKnotBlock;
     protected double wallRopeNormalX, wallRopeNormalZ;
     protected boolean wallRopeNormalValid;
 
@@ -543,6 +544,10 @@ abstract class RopeSimulationCore {
         blockHashInit = false;
         lastBlockHashCheckTick = UNINIT;
         terrainNearbyLast = false;
+        anchorAColX = Integer.MIN_VALUE;
+        anchorBColX = Integer.MIN_VALUE;
+        anchorAKnotBlock = false;
+        anchorBKnotBlock = false;
         wallRopeNormalValid = false;
         precomputeReady = false;
         blockCache.reset();
@@ -689,6 +694,14 @@ abstract class RopeSimulationCore {
         blockHashInit = other.blockHashInit;
         terrainNearbyLast = other.terrainNearbyLast;
         lastWindActiveTick = other.lastWindActiveTick;
+        anchorAColX = other.anchorAColX;
+        anchorAColY = other.anchorAColY;
+        anchorAColZ = other.anchorAColZ;
+        anchorBColX = other.anchorBColX;
+        anchorBColY = other.anchorBColY;
+        anchorBColZ = other.anchorBColZ;
+        anchorAKnotBlock = other.anchorAKnotBlock;
+        anchorBKnotBlock = other.anchorBKnotBlock;
         wallRopeNormalX = other.wallRopeNormalX;
         wallRopeNormalZ = other.wallRopeNormalZ;
         wallRopeNormalValid = other.wallRopeNormalValid;
@@ -786,6 +799,14 @@ abstract class RopeSimulationCore {
         blockHashInit = other.blockHashInit;
         terrainNearbyLast = other.terrainNearbyLast;
         lastWindActiveTick = other.lastWindActiveTick;
+        anchorAColX = other.anchorAColX;
+        anchorAColY = other.anchorAColY;
+        anchorAColZ = other.anchorAColZ;
+        anchorBColX = other.anchorBColX;
+        anchorBColY = other.anchorBColY;
+        anchorBColZ = other.anchorBColZ;
+        anchorAKnotBlock = other.anchorAKnotBlock;
+        anchorBKnotBlock = other.anchorBKnotBlock;
         wallRopeNormalX = other.wallRopeNormalX;
         wallRopeNormalZ = other.wallRopeNormalZ;
         wallRopeNormalValid = other.wallRopeNormalValid;

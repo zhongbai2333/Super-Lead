@@ -16,6 +16,29 @@ class RopeSimulationTopologyTest {
     private static final Vec3 B = new Vec3(8.0D, 4.0D, 0.0D);
 
     @Test
+    void horizontalKnotRopeSkipsCollisionOnlyAtItsMatchingEnds() {
+        assertTrue(RopeSimulationTerrainConstraints.shouldSkipAnchorCollision(
+                false, true, true, true, false, true, false),
+                "a horizontal rope must ignore its first knot block without requiring a wall normal");
+        assertTrue(RopeSimulationTerrainConstraints.shouldSkipAnchorCollision(
+                false, true, true, false, true, false, true),
+                "a horizontal rope must ignore its last knot block without requiring a wall normal");
+        assertFalse(RopeSimulationTerrainConstraints.shouldSkipAnchorCollision(
+                false, true, true, false, true, true, false),
+                "the first segments must not ignore the opposite anchor column");
+    }
+
+    @Test
+    void ordinaryHorizontalAnchorBlocksKeepTheirCollision() {
+        assertFalse(RopeSimulationTerrainConstraints.shouldSkipAnchorCollision(
+                false, false, false, true, false, true, false),
+                "ordinary surface anchors still need their block collision to prevent wall clipping");
+        assertTrue(RopeSimulationTerrainConstraints.shouldSkipAnchorCollision(
+                true, false, false, true, false, true, false),
+                "the existing vertical wall-rope escape behavior must remain intact");
+    }
+
+    @Test
     void playerContactBroadPhaseRejectsDistantBoxes() {
         RopeSimulation sim = new RopeSimulation(A, B, 101L, RopeTuning.localDefaults());
 

@@ -1,6 +1,8 @@
 package com.zhongbai233.super_lead.lead.client.sim;
 
+import com.zhongbai233.super_lead.lead.LeadAnchor;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
+import it.unimi.dsi.fastutil.longs.Long2ByteOpenHashMap;
 import java.util.List;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.Level;
@@ -16,12 +18,16 @@ import net.minecraft.world.phys.shapes.VoxelShape;
  */
 final class BlockCollisionCache {
     private static final AABB[] EMPTY = new AABB[0];
+    private static final byte NOT_KNOT_BLOCK = 1;
+    private static final byte KNOT_BLOCK = 2;
     private final Long2ObjectOpenHashMap<AABB[]> map = new Long2ObjectOpenHashMap<>();
+    private final Long2ByteOpenHashMap knotBlocks = new Long2ByteOpenHashMap();
     private final BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
     private boolean readOnly;
 
     void reset() {
         map.clear();
+        knotBlocks.clear();
         readOnly = false;
     }
 
@@ -56,6 +62,7 @@ final class BlockCollisionCache {
             return EMPTY;
 
         BlockState state = level.getBlockState(cursor);
+        knotBlocks.put(key, LeadAnchor.isKnotBlock(state) ? KNOT_BLOCK : NOT_KNOT_BLOCK);
         VoxelShape shape = state.getCollisionShape(level, cursor);
         if (shape.isEmpty()) {
             map.put(key, EMPTY);
@@ -68,5 +75,16 @@ final class BlockCollisionCache {
         }
         map.put(key, boxes);
         return boxes;
+    }
+
+    boolean isKnotBlockAt(Level level, int bx, int by, int bz) {
+        cursor.set(bx, by, bz);
+        long key = cursor.asLong();
+        byte cached = knotBlocks.get(key);
+        if (cached == 0) {
+            aabbsAt(level, bx, by, bz);
+            cached = knotBlocks.get(key);
+        }
+        return cached == KNOT_BLOCK;
     }
 }

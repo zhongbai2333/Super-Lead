@@ -383,6 +383,8 @@ abstract class RopeSimulationTerrainConstraints extends RopeSimulationVisualStat
     protected void clearAnchorColumns() {
         anchorAColX = Integer.MIN_VALUE;
         anchorBColX = Integer.MIN_VALUE;
+        anchorAKnotBlock = false;
+        anchorBKnotBlock = false;
         wallRopeNormalValid = false;
     }
 
@@ -423,7 +425,7 @@ abstract class RopeSimulationTerrainConstraints extends RopeSimulationVisualStat
                 for (int cz = bz - 1; cz <= bz + 1; cz++) {
                     for (AABB box : blockCache.aabbsAt(level, cx, cy, cz)) {
                         if (isAnchorAttachmentBox(box, px, py, pz)) {
-                            setAnchorColumn(cx, cy, cz, isA);
+                            setAnchorColumn(cx, cy, cz, blockCache.isKnotBlockAt(level, cx, cy, cz), isA);
                             return;
                         }
                     }
@@ -432,15 +434,17 @@ abstract class RopeSimulationTerrainConstraints extends RopeSimulationVisualStat
         }
     }
 
-    private void setAnchorColumn(int bx, int by, int bz, boolean isA) {
+    private void setAnchorColumn(int bx, int by, int bz, boolean knotBlock, boolean isA) {
         if (isA) {
             anchorAColX = bx;
             anchorAColY = by;
             anchorAColZ = bz;
+            anchorAKnotBlock = knotBlock;
         } else {
             anchorBColX = bx;
             anchorBColY = by;
             anchorBColZ = bz;
+            anchorBKnotBlock = knotBlock;
         }
     }
 
@@ -480,27 +484,39 @@ abstract class RopeSimulationTerrainConstraints extends RopeSimulationVisualStat
     }
 
     private boolean isAnchorColumnForNode(int bx, int by, int bz, int node) {
-        if (!wallRopeNormalValid) {
-            return false;
-        }
-        if (!isAnchorColumn(bx, by, bz)) {
-            return false;
-        }
         int last = nodes - 1;
-        return node <= ANCHOR_COLLISION_SKIP_SEGMENTS
-                || node >= last - ANCHOR_COLLISION_SKIP_SEGMENTS;
+        boolean nearA = node <= ANCHOR_COLLISION_SKIP_SEGMENTS;
+        boolean nearB = node >= last - ANCHOR_COLLISION_SKIP_SEGMENTS;
+        return shouldSkipAnchorCollision(wallRopeNormalValid, anchorAKnotBlock, anchorBKnotBlock,
+                isAnchorAColumn(bx, by, bz), isAnchorBColumn(bx, by, bz), nearA, nearB);
     }
 
     private boolean isAnchorColumnForSegment(int bx, int by, int bz, int a, int b) {
-        if (!wallRopeNormalValid) {
-            return false;
-        }
-        if (!isAnchorColumn(bx, by, bz)) {
-            return false;
-        }
         int last = nodes - 1;
-        return a <= ANCHOR_COLLISION_SKIP_SEGMENTS
-                || b >= last - ANCHOR_COLLISION_SKIP_SEGMENTS;
+        boolean nearA = a <= ANCHOR_COLLISION_SKIP_SEGMENTS;
+        boolean nearB = b >= last - ANCHOR_COLLISION_SKIP_SEGMENTS;
+        return shouldSkipAnchorCollision(wallRopeNormalValid, anchorAKnotBlock, anchorBKnotBlock,
+                isAnchorAColumn(bx, by, bz), isAnchorBColumn(bx, by, bz), nearA, nearB);
+    }
+
+    private boolean isAnchorAColumn(int bx, int by, int bz) {
+        return anchorAColX != Integer.MIN_VALUE
+                && bx == anchorAColX && bz == anchorAColZ
+                && (by == anchorAColY || by == anchorAColY - 1);
+    }
+
+    private boolean isAnchorBColumn(int bx, int by, int bz) {
+        return anchorBColX != Integer.MIN_VALUE
+                && bx == anchorBColX && bz == anchorBColZ
+                && (by == anchorBColY || by == anchorBColY - 1);
+    }
+
+    static boolean shouldSkipAnchorCollision(boolean wallRope,
+            boolean anchorAKnot, boolean anchorBKnot,
+            boolean anchorAColumn, boolean anchorBColumn,
+            boolean nearA, boolean nearB) {
+        return (nearA && anchorAColumn && (wallRope || anchorAKnot))
+                || (nearB && anchorBColumn && (wallRope || anchorBKnot));
     }
 
     private static boolean strictlyContains(AABB box, double px, double py, double pz) {
