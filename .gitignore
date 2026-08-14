@@ -11,8 +11,11 @@ build
 bin
 *.class
 .eclipse
+.classpath
+.project
 .settings/
-.vscode
+.vscode/*
+!.vscode/settings.json
 
 # IntelliJ
 out/
