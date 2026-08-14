@@ -1,14 +1,24 @@
 pluginManagement {
+    def useLocalModBench = providers.gradleProperty('modBenchLocal')
+            .map { it.toBoolean() }
+            .orElse(false)
+            .get()
+    def modBenchVersion = providers.gradleProperty('modbench_version').get()
+
     repositories {
-        // ModBench is consumed from the local Maven repository per its
-        // consumer-quickstart: run `gradlew publishToMavenLocal` in ../BenchMod
-        // after changing it. The plugin requires a Java 25 daemon — provided by
-        // gradle/gradle-daemon-jvm.properties, which makes every gradlew
-        // invocation (IDE included) select a 25 JVM regardless of JAVA_HOME.
-        mavenLocal {
-            content {
-                includeGroup 'com.zhongbai233.bench'
-                includeGroup 'com.zhongbai233.minecraft-bench'
+        if (useLocalModBench) {
+            mavenLocal {
+                content {
+                    includeGroup 'com.zhongbai233.bench'
+                }
+            }
+        } else {
+            maven {
+                name = 'JitPack'
+                url = 'https://jitpack.io'
+                content {
+                    includeGroup 'com.github.zhongbai2333.BenchMod'
+                }
             }
         }
         if (providers.gradleProperty('useMavenLocal').map { it.toBoolean() }.orElse(false).get()) {
@@ -18,7 +28,17 @@ pluginManagement {
         maven { url = 'https://maven.neoforged.net/releases' }
     }
     plugins {
-        id 'com.zhongbai233.minecraft-bench' version providers.gradleProperty('modbench_version').get()
+        id 'com.zhongbai233.minecraft-bench' version modBenchVersion
+    }
+    resolutionStrategy {
+        eachPlugin {
+            if (requested.id.id == 'com.zhongbai233.minecraft-bench') {
+                def group = useLocalModBench
+                        ? 'com.zhongbai233.bench'
+                        : 'com.github.zhongbai2333.BenchMod'
+                useModule("${group}:bench-gradle-plugin:${modBenchVersion}")
+            }
+        }
     }
 }
 

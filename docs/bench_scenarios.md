@@ -19,10 +19,11 @@
 4. **ModBench paired 场景**（`runBenchPaired`）：独立 dedicated server + 独立 remote client，
   使用真实 loopback TCP 连接验证启动、登录、世界就绪和客户端渲染采样。
 
-ModBench 当前只发布到本机 Maven 仓库，因此默认构建不会解析该插件。先在相邻的
-`BenchMod` 仓库执行 `gradlew publishToMavenLocal`，再用
-`gradlew -PenableModBench=true runBenchClient` 或
-`gradlew -PenableModBench=true runBenchServer` 显式启用场景。
+Super Lead 默认从 JitPack 使用固定的 BenchMod `0.1.3-beta` tag；普通构建和 IDE
+同步都会应用插件。直接运行 `gradlew runBenchClient` 或 `gradlew runBenchServer`
+即可执行场景。只有联调 BenchMod 未发布源码时，才需要先在相邻 `BenchMod` 仓库
+执行 `gradlew publishToMavenLocal`，再给 Super Lead 命令添加
+`-PmodBenchLocal=true`。
 
 Super Lead 的 ModBench 配置默认启用低开销 JFR。BenchMod 会为每个实际执行的
 scenario 单独录制，并写入
@@ -70,12 +71,14 @@ SuperLead 的 `build.gradle` 已配置：
 最近一次通过结果：服务端创建 53 条绳，remote client 记录 21,973 个渲染采样和
 3,261 次物理发布；两端 report 与 paired summary 均为 `PASSED`。
 
-执行前确保相邻 BenchMod 已发布到本机 Maven，然后运行：
+使用默认 JitPack 版本运行：
 
 ```text
-gradlew publishToMavenLocal
-gradlew -PenableModBench=true prepareBenchRemoteClientOptions runBenchPaired
+gradlew prepareBenchRemoteClientOptions runBenchPaired
 ```
+
+若要联调相邻 BenchMod 源码，先在 BenchMod 执行 `gradlew publishToMavenLocal`，
+再给上面的 Super Lead 命令添加 `-PmodBenchLocal=true`。
 
 结果位于 `build/modBench/paired/default/summary.json`，两端报告分别位于
 `build/modBench/raw-results/default/paired-server/summary.json` 和

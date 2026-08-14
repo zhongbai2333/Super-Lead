@@ -43,16 +43,17 @@ Right-click a block face → set first anchor. Right-click another block → cre
 New ropes: after setting the first anchor, click the same anchor again to spend 1 lead and extend the pending length by 1× (up to 4×). Existing ropes: sneak + right-click an anchor to extend. Extended ropes cost proportionally more to upgrade.
 
 ### Cutting
-Cutting a rope drops leads equal to its length multiplier (2× rope drops 2 leads, 4× drops 4).
+Sneak-right-click a rope with shears to cut it. Right-clicking a fence knot with
+shears cuts all ropes attached to that knot. Cutting refunds the rope and part
+of its upgrade cost; the current beta has a known duplicate-refund issue documented
+in the [Chinese gameplay guide](docs/gameplay_guide_zh.md#剪断返还与拆迁).
 
 ### Attachments
 Hold an attachable item (lantern, sign, block) in your main hand and String in your offhand. Right-click a rope to hang it. Signs are editable in-world. Toggle block/item display modes.
 
-### Cutting
-Shears on a rope → cut and drop. Shears on a fence knot → cut all ropes on that knot.
-
 ### Ziplines
-Attach a Chain to start ziplining along any rope.
+Bind a zipline-enabled physics preset to a normal or redstone rope, then
+right-click the rope with a chain. Press Shift to dismount.
 
 ---
 
@@ -79,9 +80,9 @@ Client-side Verlet simulation with gravity, damping, block collision, rope-to-ro
 
 ## Requirements
 
-- Minecraft 1.21.1
-- NeoForge 21.1.x
-- Java 21
+- Minecraft 26.1.2
+- NeoForge 26.1.2.76 (compatible with NeoForge 26.x)
+- Java 25
 
 Optional: [Mekanism](https://www.curseforge.com/minecraft/mc-mods/mekanism), [Applied Energistics 2](https://www.curseforge.com/minecraft/mc-mods/applied-energistics-2)
 
@@ -90,4 +91,3 @@ Optional: [Mekanism](https://www.curseforge.com/minecraft/mc-mods/mekanism), [Ap
 ## License
 
 Apache 2.0
-

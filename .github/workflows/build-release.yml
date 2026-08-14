@@ -13,6 +13,8 @@ on:
       - "gradlew"
       - "gradlew.bat"
       - ".github/workflows/build-release.yml"
+  pull_request:
+    branches: [ "main", "dev" ]
   workflow_dispatch:
 
 env:
@@ -29,10 +31,11 @@ jobs:
   build:
     name: Build mod jar
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Compute build metadata
         id: meta
@@ -56,13 +59,16 @@ jobs:
           echo "artifact_name=${artifact_name}" >> "$GITHUB_OUTPUT"
 
       - name: Set up Java 25
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '25'
 
+      - name: Validate Gradle wrapper
+        uses: gradle/actions/wrapper-validation@v6
+
       - name: Set up Gradle cache
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@v6
 
       - name: Ensure Gradle wrapper is executable
         shell: bash
@@ -72,8 +78,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ./gradlew build --stacktrace \
-            -PenableModBench=false \
+          ./gradlew build compileBenchJava --stacktrace \
             -Pmod_version="${{ steps.meta.outputs.mod_version }}"
 
       - name: Bundle artifact
@@ -95,7 +100,7 @@ jobs:
           echo "jar_path=${jar_path}" >> "$GITHUB_OUTPUT"
 
       - name: Upload build artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: mod-build
           path: dist

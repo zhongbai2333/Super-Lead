@@ -16,6 +16,10 @@ public class PresetBinderItem extends Item {
     }
 
     @Override
+    // Minecraft 26.1 still invokes this stack-aware Item hook even though it is
+    // deprecated; moving the dynamic bound/unbound text to a static component
+    // would lose access to the complete ItemStack state.
+    @SuppressWarnings("deprecation")
     public void appendHoverText(ItemStack stack, TooltipContext context, TooltipDisplay display,
             Consumer<Component> tooltip, TooltipFlag flag) {
         PresetBinderData data = stack.get(SuperLeadDataComponents.PRESET_BINDER.get());

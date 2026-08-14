@@ -33,4 +33,9 @@ src/generated/resources/
 # Local Maven publishing output
 repo/
 
+# Optional integration jars are developer-local. The Gradle Wrapper jar remains
+# tracked because it lives under gradle/wrapper rather than gradle/libs.
+/libs/*.jar
+/gradle/libs/*.jar
+
 logs/

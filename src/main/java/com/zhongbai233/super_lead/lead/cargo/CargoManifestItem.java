@@ -39,6 +39,10 @@ public class CargoManifestItem extends Item {
     }
 
     @Override
+    // Minecraft 26.1 still invokes this stack-aware Item hook even though it is
+    // deprecated; the tooltip combines multiple data components and cannot be
+    // represented by one static TooltipProvider component without duplicating data.
+    @SuppressWarnings("deprecation")
     public void appendHoverText(ItemStack stack, TooltipContext context, TooltipDisplay display,
             Consumer<Component> tooltip, TooltipFlag flag) {
         tooltip.accept(Component.translatable("tooltip.super_lead.cargo_manifest.mode",
