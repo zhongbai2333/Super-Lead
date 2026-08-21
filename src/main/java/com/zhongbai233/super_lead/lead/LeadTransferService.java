@@ -101,15 +101,7 @@ final class LeadTransferService {
         state.musicPlayerCooldown.values().removeIf(until -> level.getGameTime() >= until);
         state.musicPlayerFalseSince.values().removeIf(
                 since -> level.getGameTime() - since > MUSIC_PLAYER_DISC_DEBOUNCE_TICKS * 4);
-        state.musicPlayerWasPlaying.removeIf(pos -> {
-            if (level.getBlockEntity(pos) instanceof TileEntityMusicPlayer te) {
-                return !hasDiscInside(te);
-            }
-            if (level.getBlockEntity(pos) instanceof ModernTurntableBlockEntity mte) {
-                return !mte.hasDisc();
-            }
-            return true;
-        });
+        state.musicPlayerWasPlaying.removeIf(pos -> shouldForgetMusicPlayer(level, pos));
         tickTransfer(level, LeadKind.ITEM, Capabilities.Item.BLOCK, state.itemRrCursor,
                 rope -> Math.min(64, 1 << Math.min(Config.itemTierMax(), rope.tier())));
     }
@@ -486,6 +478,27 @@ final class LeadTransferService {
         }
         var res = inv.getResource(0);
         return res != null && !res.isEmpty();
+    }
+
+    /**
+     * Removes stale playback history without loading an endpoint chunk just to
+     * inspect it. An unloaded endpoint is unknown rather than stale; it will be
+     * checked again after the chunk is naturally loaded.
+     */
+    private static boolean shouldForgetMusicPlayer(ServerLevel level, BlockPos pos) {
+        var chunk = level.getChunkSource().getChunkNow(pos.getX() >> 4, pos.getZ() >> 4);
+        if (chunk == null) {
+            return false;
+        }
+
+        var blockEntity = chunk.getBlockEntity(pos);
+        if (blockEntity instanceof TileEntityMusicPlayer te) {
+            return !hasDiscInside(te);
+        }
+        if (blockEntity instanceof ModernTurntableBlockEntity mte) {
+            return !mte.hasDisc();
+        }
+        return true;
     }
 
     private static boolean isMusicPlayerBlocked(ServerLevel level, BlockPos pos) {
