@@ -97,6 +97,29 @@ class LeadTransferServiceTest {
         assertEquals(Set.of(shared), expanded);
     }
 
+    @Test
+    void transferSourcesAreGroupedBySourceChunkAndPosition() {
+        LeadConnection first = connection("00000000-0000-0000-0000-000000000205", 4)
+                .withExtractAnchor(1);
+        LeadConnection second = connection("00000000-0000-0000-0000-000000000206", 8)
+                .withExtractAnchor(2);
+        LeadConnection third = connection("00000000-0000-0000-0000-000000000207", 32)
+                .withExtractAnchor(2);
+        LeadConnection undirected = connection("00000000-0000-0000-0000-000000000208", 48);
+        Map<Long, Map<BlockPos, List<LeadConnection>>> byChunk = new HashMap<>();
+
+        LeadTransferService.indexTransferSource(byChunk, first);
+        LeadTransferService.indexTransferSource(byChunk, second);
+        LeadTransferService.indexTransferSource(byChunk, third);
+        LeadTransferService.indexTransferSource(byChunk, undirected);
+
+        long originChunk = SuperLeadSavedData.chunkKey(0, 0);
+        long distantChunk = SuperLeadSavedData.chunkKey(2, 0);
+        assertEquals(Set.of(originChunk, distantChunk), byChunk.keySet());
+        assertEquals(Set.of(first.from().pos(), second.to().pos()), byChunk.get(originChunk).keySet());
+        assertEquals(List.of(third), byChunk.get(distantChunk).get(third.to().pos()));
+    }
+
     private static LeadConnection connection(String id, int x) {
         return new LeadConnection(UUID.fromString(id),
                 new LeadAnchor(new BlockPos(0, 64, 0), Direction.UP),

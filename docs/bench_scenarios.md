@@ -12,6 +12,7 @@
   接触场景会导出逐 tick CSV，视觉场景会保留截图。
 3. **ModBench 服务端场景**（`runBenchServer`）：`super_lead.server-load` smoke。
   - `super_lead.item-same-face-fanout`：一个原版木桶同一面连接 8 根 ITEM 绳，验证多目标公平轮转、资源守恒和服务端 tick 分布。
+  - `super_lead.item-unloaded-source-index`：向 SavedData 直接写入分布在 64 个远端未加载源区块的 4096 根 ITEM 绳（每区块 64 个不同源点），持续采样 600 tick。该场景不放置或访问容器，用于在 JFR 中单独观察源索引构建、按区块过滤和 `getChunkNow` 成本。
   - `super_lead.redstone-network-load`：16 个独立 8 路 REDSTONE 组件周期翻转输入，持续触发真实红石脏更新并记录 tick 分布；验证全部 128 根连接都经历完整 ON/OFF 传播。
   - `super_lead.redstone-vanilla-control-before` / `super_lead.redstone-vanilla-control-after`：与 REDSTONE 网络场景完全相同的 16×8 方块布局、240 tick 和 4 tick 翻转 cadence，但不创建绳。按 before → network → after 顺序在同一 JVM 运行，用两个 control 的均值抵消预热漂移。
   - `super_lead.energy-mekanism-fanout`：一个真实 Mekanism Basic Energy Cube 从同一可抽取面连接 8 根 ENERGY 绳到 8 个目标方块，验证 FE 守恒、目标覆盖和稳定 cadence 性能。
@@ -31,6 +32,20 @@ scenario 单独录制，并写入
 跳过的场景不产生录制。每份 JFR 都独立登记进 `summary.json` 和 bundle，因此夹心
 对照可以分别查看 control-before、network 和 control-after 的 CPU/allocation/GC，
 不会再把三个阶段混进单一的 run-level `recording.jfr`。
+
+### ITEM 未加载源索引 JFR
+
+运行隔离场景：
+
+```text
+./gradlew runBenchServer -PmodBench.scenarios=super_lead.item-unloaded-source-index
+```
+
+场景会断言 4096 根连接在整个 600 tick 测量窗口中仍然存在，并且 64 个源区块始终
+没有被加载。JFR 中可沿 `LeadTransferService.tickTransfer` 查看
+`isChunkAvailableNow/getChunkNow` 的采样；因为没有真实容器或第三方 capability，结果不包含
+容器模组的 handler 查询及读写耗时。录制文件为
+`build/modBench/raw-results/default/server/artifacts/jfr/super_lead.item-unloaded-source-index.jfr`。
 
 ### REDSTONE 夹心对照
 

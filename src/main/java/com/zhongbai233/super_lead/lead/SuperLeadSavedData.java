@@ -511,8 +511,9 @@ public final class SuperLeadSavedData extends SavedData {
 
     private void remove(UUID id) {
         StoredRope stored = byId.remove(id);
-        validationQueued.remove(id);
-        validationQueue.remove(id);
+        // Keep the queue token as a lazy tombstone. pollValidationBatch drops it
+        // when the id stays absent, while an immediate same-id replacement reuses
+        // the token without an O(queue size) ArrayDeque.remove scan.
         if (stored == null) {
             return;
         }

@@ -38,6 +38,12 @@ public final class SuperLeadBenchProvider implements BenchServerProvider, BenchC
                 Duration.ofSeconds(45)),
             context -> new ItemSameFaceFanoutServerScenario());
         registrar.register(
+            new ScenarioDescriptor("super_lead.item-unloaded-source-index",
+                "Super Lead Item Unloaded Source Index",
+                Set.of("super_lead", "server", "item", "transfer", "index", "jfr", "performance"),
+                Duration.ofSeconds(50)),
+            context -> new ItemUnloadedSourceIndexServerScenario());
+        registrar.register(
             new ScenarioDescriptor("super_lead.redstone-vanilla-control-before",
                 "Super Lead Redstone Vanilla Control Before",
                 Set.of("super_lead", "server", "redstone", "control", "performance"),

@@ -10,6 +10,7 @@ import com.github.tartaricacid.netmusic.tileentity.TileEntityMusicPlayer;
 import com.github.tartaricacid.netmusic.item.ItemMusicCD;
 import com.zhongbai233.net_music_can_play_bili.blockentity.ModernTurntableBlockEntity;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -59,7 +60,9 @@ final class LeadTransferService {
      */
     private static final Map<ServerLevel, Map<LeadKind, Long>> CACHED_GENERATION = new HashMap<>();
     private static final Map<ServerLevel, Map<LeadKind, Map<BlockPos, List<LeadConnection>>>> CACHED_ROPES_AT = new HashMap<>();
-    private static final Map<ServerLevel, Map<LeadKind, Map<BlockPos, List<LeadConnection>>>> CACHED_STARTS_BY_SOURCE = new HashMap<>();
+    /** Source chunk -> source position -> directed ropes, isolated by level and kind. */
+    private static final Map<ServerLevel, Map<LeadKind,
+            Map<Long, Map<BlockPos, List<LeadConnection>>>>> CACHED_STARTS_BY_CHUNK = new HashMap<>();
 
     private LeadTransferService() {
     }
@@ -78,18 +81,33 @@ final class LeadTransferService {
         return perKind == null ? null : perKind.get(kind);
     }
 
-    private static Map<BlockPos, List<LeadConnection>> cachedStartsBySource(ServerLevel level, LeadKind kind) {
-        Map<LeadKind, Map<BlockPos, List<LeadConnection>>> perKind = CACHED_STARTS_BY_SOURCE.get(level);
+    private static Map<Long, Map<BlockPos, List<LeadConnection>>> cachedStartsByChunk(
+            ServerLevel level, LeadKind kind) {
+        Map<LeadKind, Map<Long, Map<BlockPos, List<LeadConnection>>>> perKind = CACHED_STARTS_BY_CHUNK.get(level);
         return perKind == null ? null : perKind.get(kind);
     }
 
     private static void cacheGenerationAndIndexes(ServerLevel level, LeadKind kind, long gen,
             Map<BlockPos, List<LeadConnection>> ropesAt,
-            Map<BlockPos, List<LeadConnection>> startsBySource) {
+            Map<Long, Map<BlockPos, List<LeadConnection>>> startsByChunk) {
         CACHED_GENERATION.computeIfAbsent(level, k -> new java.util.EnumMap<>(LeadKind.class)).put(kind, gen);
         CACHED_ROPES_AT.computeIfAbsent(level, k -> new java.util.EnumMap<>(LeadKind.class)).put(kind, ropesAt);
-        CACHED_STARTS_BY_SOURCE.computeIfAbsent(level, k -> new java.util.EnumMap<>(LeadKind.class)).put(kind,
-                startsBySource);
+        CACHED_STARTS_BY_CHUNK.computeIfAbsent(level, k -> new java.util.EnumMap<>(LeadKind.class)).put(kind,
+                startsByChunk);
+    }
+
+    static void indexTransferSource(
+            Map<Long, Map<BlockPos, List<LeadConnection>>> startsByChunk,
+            LeadConnection connection) {
+        LeadAnchor source = connection.extractSource();
+        if (source == null) {
+            return;
+        }
+        BlockPos sourcePos = source.pos().immutable();
+        long chunkKey = SuperLeadSavedData.chunkKey(sourcePos.getX() >> 4, sourcePos.getZ() >> 4);
+        startsByChunk.computeIfAbsent(chunkKey, ignored -> new HashMap<>())
+                .computeIfAbsent(sourcePos, ignored -> new ArrayList<>(2))
+                .add(connection);
     }
 
     static void tickItem(ServerLevel level) {
@@ -129,7 +147,7 @@ final class LeadTransferService {
     static void invalidateCaches() {
         CACHED_GENERATION.clear();
         CACHED_ROPES_AT.clear();
-        CACHED_STARTS_BY_SOURCE.clear();
+        CACHED_STARTS_BY_CHUNK.clear();
         RUNTIME_STATES.clear();
         AE_SCHEDULERS.clear();
     }
@@ -140,7 +158,7 @@ final class LeadTransferService {
     static void invalidateCachesFor(ServerLevel level) {
         CACHED_GENERATION.remove(level);
         CACHED_ROPES_AT.remove(level);
-        CACHED_STARTS_BY_SOURCE.remove(level);
+        CACHED_STARTS_BY_CHUNK.remove(level);
     }
 
     static void discardLevelState(ServerLevel level) {
@@ -286,24 +304,24 @@ final class LeadTransferService {
         Map<BlockPos, Integer> rrCursor = runtimeState(level).pressurizedRrCursor;
         SuperLeadSavedData data = SuperLeadSavedData.get(level);
 
-        List<LeadConnection> pressurizedConnections = data.connectionsOfKindFast(LeadKind.PRESSURIZED);
+        Collection<LeadConnection> pressurizedConnections = data.connectionsOfKindView(LeadKind.PRESSURIZED);
         if (pressurizedConnections.isEmpty()) {
             return;
         }
 
         MekanismChemicalBridge.HandlerCache chemicalHandlers = new MekanismChemicalBridge.HandlerCache();
         Map<BlockPos, List<LeadConnection>> ropesAt;
-        Map<BlockPos, List<LeadConnection>> startsBySource;
+        Map<Long, Map<BlockPos, List<LeadConnection>>> startsByChunk;
         LeadKind kind = LeadKind.PRESSURIZED;
         long currentGen = data.kindGeneration(kind);
         Long cachedGen = cachedGeneration(level, kind);
         if (cachedGen != null && cachedGen.longValue() == currentGen) {
             ropesAt = cachedRopesAt(level, kind);
-            startsBySource = cachedStartsBySource(level, kind);
+            startsByChunk = cachedStartsByChunk(level, kind);
         } else {
             int size = pressurizedConnections.size();
             ropesAt = new HashMap<>(size * 2);
-            startsBySource = new HashMap<>(Math.max(16, size / 4));
+            startsByChunk = new HashMap<>(Math.max(16, size / 8));
             for (LeadConnection c : pressurizedConnections) {
                 BlockPos a = c.from().pos().immutable();
                 BlockPos b = c.to().pos().immutable();
@@ -312,52 +330,54 @@ final class LeadTransferService {
                     ropesAt.computeIfAbsent(b, k -> new ArrayList<>(2)).add(c);
                 }
 
-                LeadAnchor src = c.extractSource();
-                if (src != null) {
-                    startsBySource.computeIfAbsent(src.pos().immutable(), k -> new ArrayList<>(2)).add(c);
-                }
+                indexTransferSource(startsByChunk, c);
             }
-            cacheGenerationAndIndexes(level, kind, currentGen, ropesAt, startsBySource);
+            cacheGenerationAndIndexes(level, kind, currentGen, ropesAt, startsByChunk);
         }
 
-        for (Map.Entry<BlockPos, List<LeadConnection>> entry : startsBySource.entrySet()) {
-            BlockPos sourcePos = entry.getKey();
-            List<LeadConnection> ropes = entry.getValue();
-            if (ropes.isEmpty()) {
+        for (Map.Entry<Long, Map<BlockPos, List<LeadConnection>>> chunkEntry : startsByChunk.entrySet()) {
+            if (!isChunkAvailableNow(level, chunkEntry.getKey())) {
                 continue;
             }
-
-            int n = ropes.size();
-            int start = rrCursor.getOrDefault(sourcePos, 0) % n;
-            TransferSearchContext search = new TransferSearchContext();
-
-            for (int step = 0; step < n; step++) {
-                int idx = (start + step) % n;
-                LeadConnection rope = ropes.get(idx);
-                LeadAnchor sourceAnchor = rope.extractSource();
-                LeadAnchor firstFar = rope.extractTarget();
-                if (sourceAnchor == null || firstFar == null
-                        || !chemicalHandlers.has(level, sourceAnchor)) {
+            for (Map.Entry<BlockPos, List<LeadConnection>> entry : chunkEntry.getValue().entrySet()) {
+                BlockPos sourcePos = entry.getKey();
+                List<LeadConnection> ropes = entry.getValue();
+                if (ropes.isEmpty()) {
                     continue;
                 }
 
-                long batch = pressurizedBatch(rope);
-                search.reset(rope, rope.extractAnchor() == 2);
+                int n = ropes.size();
+                int start = rrCursor.getOrDefault(sourcePos, 0) % n;
+                TransferSearchContext search = new TransferSearchContext();
 
-                if (walkAndTransferPressurized(level, sourceAnchor, batch, firstFar, ropesAt,
-                        rrCursor, chemicalHandlers, search.visited, search.path, search.rrChoices, 1)) {
-                    long now = level.getGameTime();
-                    for (int i = 0; i < search.path.size(); i++) {
-                        PathStep s = search.path.get(i);
-                        long startTick = now + (long) i * ITEM_PULSE_DURATION_TICKS;
-                        SuperLeadPayloads.sendItemPulse(level,
-                                new ItemPulse(s.rope.id(), s.reverse, startTick, ITEM_PULSE_DURATION_TICKS));
+                for (int step = 0; step < n; step++) {
+                    int idx = (start + step) % n;
+                    LeadConnection rope = ropes.get(idx);
+                    LeadAnchor sourceAnchor = rope.extractSource();
+                    LeadAnchor firstFar = rope.extractTarget();
+                    if (sourceAnchor == null || firstFar == null
+                            || !chemicalHandlers.has(level, sourceAnchor)) {
+                        continue;
                     }
-                    rrCursor.put(sourcePos, (idx + 1) % n);
-                    for (RrChoice rc : search.rrChoices) {
-                        rrCursor.put(rc.knot, (rc.idx + 1) % rc.n);
+
+                    long batch = pressurizedBatch(rope);
+                    search.reset(rope, rope.extractAnchor() == 2);
+
+                    if (walkAndTransferPressurized(level, sourceAnchor, batch, firstFar, ropesAt,
+                            rrCursor, chemicalHandlers, search.visited, search.path, search.rrChoices, 1)) {
+                        long now = level.getGameTime();
+                        for (int i = 0; i < search.path.size(); i++) {
+                            PathStep s = search.path.get(i);
+                            long startTick = now + (long) i * ITEM_PULSE_DURATION_TICKS;
+                            SuperLeadPayloads.sendItemPulse(level,
+                                    new ItemPulse(s.rope.id(), s.reverse, startTick, ITEM_PULSE_DURATION_TICKS));
+                        }
+                        rrCursor.put(sourcePos, (idx + 1) % n);
+                        for (RrChoice rc : search.rrChoices) {
+                            rrCursor.put(rc.knot, (rc.idx + 1) % rc.n);
+                        }
+                        break;
                     }
-                    break;
                 }
             }
         }
@@ -450,7 +470,9 @@ final class LeadTransferService {
 
     private static void addThermalEndpoint(ServerLevel level, LeadAnchor anchor, List<LeadAnchor> endpoints,
             Set<LeadAnchor> seenAnchors, MekanismHeatBridge.HandlerCache heatHandlers) {
-        if (seenAnchors.add(anchor.logicalPort()) && heatHandlers.has(level, anchor)) {
+        if (isChunkAvailableNow(level, anchor.pos())
+                && seenAnchors.add(anchor.logicalPort())
+                && heatHandlers.has(level, anchor)) {
             endpoints.add(anchor);
         }
     }
@@ -643,7 +665,7 @@ final class LeadTransferService {
             java.util.function.ToIntFunction<LeadConnection> batchOf,
             EndpointResolver<R> resolver) {
         SuperLeadSavedData data = SuperLeadSavedData.get(level);
-        List<LeadConnection> transferConnections = data.connectionsOfKindFast(kind);
+        Collection<LeadConnection> transferConnections = data.connectionsOfKindView(kind);
         if (transferConnections.isEmpty()) {
             return;
         }
@@ -653,16 +675,16 @@ final class LeadTransferService {
         // Rebuild only when the SavedData generation has changed.
         ResourceHandlerCache<R> handlers = new ResourceHandlerCache<>();
         Map<BlockPos, List<LeadConnection>> ropesAt;
-        Map<BlockPos, List<LeadConnection>> startsBySource;
+        Map<Long, Map<BlockPos, List<LeadConnection>>> startsByChunk;
         long currentGen = data.kindGeneration(kind);
         Long cachedGen = cachedGeneration(level, kind);
         if (cachedGen != null && cachedGen.longValue() == currentGen) {
             ropesAt = cachedRopesAt(level, kind);
-            startsBySource = cachedStartsBySource(level, kind);
+            startsByChunk = cachedStartsByChunk(level, kind);
         } else {
             int size = transferConnections.size();
             ropesAt = new HashMap<>(size * 2);
-            startsBySource = new HashMap<>(Math.max(16, size / 4));
+            startsByChunk = new HashMap<>(Math.max(16, size / 8));
             for (LeadConnection c : transferConnections) {
                 BlockPos a = c.from().pos().immutable();
                 BlockPos b = c.to().pos().immutable();
@@ -671,65 +693,62 @@ final class LeadTransferService {
                     ropesAt.computeIfAbsent(b, k -> new ArrayList<>(2)).add(c);
                 }
 
-                if (c.extractAnchor() == 0) {
-                    continue;
-                }
-                LeadAnchor src = c.extractSource();
-                if (src == null) {
-                    continue;
-                }
-                startsBySource.computeIfAbsent(src.pos().immutable(), k -> new ArrayList<>(2)).add(c);
+                indexTransferSource(startsByChunk, c);
             }
-            cacheGenerationAndIndexes(level, kind, currentGen, ropesAt, startsBySource);
+            cacheGenerationAndIndexes(level, kind, currentGen, ropesAt, startsByChunk);
         }
 
-        for (Map.Entry<BlockPos, List<LeadConnection>> entry : startsBySource.entrySet()) {
-            BlockPos sourcePos = entry.getKey();
-            List<LeadConnection> ropes = entry.getValue();
-            if (ropes.isEmpty()) {
+        for (Map.Entry<Long, Map<BlockPos, List<LeadConnection>>> chunkEntry : startsByChunk.entrySet()) {
+            if (!isChunkAvailableNow(level, chunkEntry.getKey())) {
                 continue;
             }
-
-            int n = ropes.size();
-            int start = rrCursor.getOrDefault(sourcePos, 0) % n;
-            TransferSearchContext search = new TransferSearchContext();
-
-            for (int step = 0; step < n; step++) {
-                int idx = (start + step) % n;
-                LeadConnection rope = ropes.get(idx);
-                LeadAnchor sourceAnchor = rope.extractSource();
-                LeadAnchor firstFar = rope.extractTarget();
-                if (sourceAnchor == null || firstFar == null) {
+            for (Map.Entry<BlockPos, List<LeadConnection>> entry : chunkEntry.getValue().entrySet()) {
+                BlockPos sourcePos = entry.getKey();
+                List<LeadConnection> ropes = entry.getValue();
+                if (ropes.isEmpty()) {
                     continue;
                 }
 
-                ResourceHandler<R> sourceHandler = handlers.get(level, sourceAnchor, resolver);
-                if (sourceHandler == null) {
-                    continue;
-                }
+                int n = ropes.size();
+                int start = rrCursor.getOrDefault(sourcePos, 0) % n;
+                TransferSearchContext search = new TransferSearchContext();
 
-                if (kind == LeadKind.ITEM && isMusicPlayerBlocked(level, sourceAnchor.pos())) {
-                    continue;
-                }
-
-                int batch = Math.max(1, batchOf.applyAsInt(rope));
-
-                search.reset(rope, rope.extractAnchor() == 2);
-
-                if (walkAndTransfer(level, cap, resolver, handlers, sourceHandler, batch, firstFar, ropesAt, rrCursor,
-                        search.visited, search.path, search.rrChoices, 1)) {
-                    long now = level.getGameTime();
-                    for (int i = 0; i < search.path.size(); i++) {
-                        PathStep s = search.path.get(i);
-                        long startTick = now + (long) i * ITEM_PULSE_DURATION_TICKS;
-                        SuperLeadPayloads.sendItemPulse(level,
-                                new ItemPulse(s.rope.id(), s.reverse, startTick, ITEM_PULSE_DURATION_TICKS));
+                for (int step = 0; step < n; step++) {
+                    int idx = (start + step) % n;
+                    LeadConnection rope = ropes.get(idx);
+                    LeadAnchor sourceAnchor = rope.extractSource();
+                    LeadAnchor firstFar = rope.extractTarget();
+                    if (sourceAnchor == null || firstFar == null) {
+                        continue;
                     }
-                    rrCursor.put(sourcePos, (idx + 1) % n);
-                    for (RrChoice rc : search.rrChoices) {
-                        rrCursor.put(rc.knot, (rc.idx + 1) % rc.n);
+
+                    ResourceHandler<R> sourceHandler = handlers.get(level, sourceAnchor, resolver);
+                    if (sourceHandler == null) {
+                        continue;
                     }
-                    break;
+
+                    if (kind == LeadKind.ITEM && isMusicPlayerBlocked(level, sourceAnchor.pos())) {
+                        continue;
+                    }
+
+                    int batch = Math.max(1, batchOf.applyAsInt(rope));
+                    search.reset(rope, rope.extractAnchor() == 2);
+
+                    if (walkAndTransfer(level, cap, resolver, handlers, sourceHandler, batch, firstFar, ropesAt,
+                            rrCursor, search.visited, search.path, search.rrChoices, 1)) {
+                        long now = level.getGameTime();
+                        for (int i = 0; i < search.path.size(); i++) {
+                            PathStep s = search.path.get(i);
+                            long startTick = now + (long) i * ITEM_PULSE_DURATION_TICKS;
+                            SuperLeadPayloads.sendItemPulse(level,
+                                    new ItemPulse(s.rope.id(), s.reverse, startTick, ITEM_PULSE_DURATION_TICKS));
+                        }
+                        rrCursor.put(sourcePos, (idx + 1) % n);
+                        for (RrChoice rc : search.rrChoices) {
+                            rrCursor.put(rc.knot, (rc.idx + 1) % rc.n);
+                        }
+                        break;
+                    }
                 }
             }
         }
@@ -776,6 +795,9 @@ final class LeadTransferService {
             List<RrChoice> rrChoices,
             int depth) {
         if (depth > MAX_TRANSFER_SEARCH_DEPTH) {
+            return false;
+        }
+        if (!isChunkAvailableNow(level, current.pos())) {
             return false;
         }
         ResourceHandler<R> h = handlers.get(level, current, resolver);
@@ -831,6 +853,9 @@ final class LeadTransferService {
             List<RrChoice> rrChoices,
             int depth) {
         if (depth > MAX_TRANSFER_SEARCH_DEPTH) {
+            return false;
+        }
+        if (!isChunkAvailableNow(level, current.pos())) {
             return false;
         }
         if (chemicalHandlers.has(level, current)) {
@@ -889,6 +914,15 @@ final class LeadTransferService {
             h = level.getCapability(cap, anchor.pos(), null);
         }
         return h;
+    }
+
+    private static boolean isChunkAvailableNow(ServerLevel level, BlockPos pos) {
+        return isChunkAvailableNow(level,
+                SuperLeadSavedData.chunkKey(pos.getX() >> 4, pos.getZ() >> 4));
+    }
+
+    private static boolean isChunkAvailableNow(ServerLevel level, long chunkKey) {
+        return level.getChunkSource().getChunkNow((int) (chunkKey >> 32), (int) chunkKey) != null;
     }
 
     private static ResourceHandler<FluidResource> fluidHandler(ServerLevel level, LeadAnchor anchor) {
