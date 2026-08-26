@@ -1,5 +1,6 @@
 {
     "java.compile.nullAnalysis.mode": "automatic",
     "java.configuration.updateBuildConfiguration": "automatic",
-    "java.import.gradle.enabled": true
+    "java.import.gradle.enabled": true,
+    "java.settings.url": ".vscode/java-compiler.prefs"
 }
