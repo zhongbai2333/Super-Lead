@@ -66,10 +66,16 @@ public final class SuperLeadBenchProvider implements BenchServerProvider, BenchC
                 Set.of("super_lead", "server", "energy", "mekanism", "fanout", "performance"),
                 Duration.ofSeconds(45)),
             context -> new MekanismEnergyFanoutServerScenario());
-            registrar.register(
-                new ScenarioDescriptor("super_lead.paired-server-cadence", "Super Lead Paired Server Cadence Rig",
-                    Set.of("super_lead", "paired", "server", "cadence"), Duration.ofSeconds(30)),
-                context -> new ServerCadenceRigScenario());
+        registrar.register(
+            new ScenarioDescriptor("super_lead.thermal-mekanism-conduction",
+                "Super Lead Mekanism Thermal Conduction",
+                Set.of("super_lead", "server", "thermal", "mekanism", "conservation", "regression"),
+                Duration.ofSeconds(30)),
+            context -> new MekanismThermalConductionServerScenario());
+        registrar.register(
+            new ScenarioDescriptor("super_lead.paired-server-cadence", "Super Lead Paired Server Cadence Rig",
+                Set.of("super_lead", "paired", "server", "cadence"), Duration.ofSeconds(30)),
+            context -> new ServerCadenceRigScenario());
     }
 
     @Override

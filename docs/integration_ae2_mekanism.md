@@ -73,9 +73,12 @@ MoreMachine 的 `26.1` 分支目前没有稳定可解析的 JitPack 坐标；Jit
 - `LeadKind.THERMAL` 使用铜块升级。
 - 强化合金升级热量均衡速度。
 - 不保存 `extractAnchor`，没有主从端点，也不渲染端点膨胀或流动脉冲。
-- 服务端按同一热导绳网络组件收集端点热能力，并调用 `MekanismHeatBridge.balance` 在端点之间做热量均衡。
+- 服务端缓存热导绳拓扑；热量只能沿端点之间实际存在的绳路径传递。每根绳每 tick 提供自己的容量，串联路径取瓶颈，共享绳段的剩余额度不能被多对端点重复使用。
+- 绳子不是方块实体，仍不保存内部热量，也不模拟 Mekanism 方块热导管自身的环境散热；它是连接两个真实热能力端点的无储热导热路径。
+- `MekanismHeatBridge` 与 Mekanism 26.1 的 `ITileHeatHandler.simulateAdjacent` 一样，先按两端热容求平衡温度，再除以双方逆导热系数之和；不会瞬间跳到平衡温度。
+- capability 只从绳子实际连接的方块面获取，严格服从 Mekanism 的 side config。两端热量变化在同一事务内核对，任一端拒绝插入或抽取时整体回滚。
 
-这样更接近热导管道的“网络内温度趋于均衡”语义，也避免把不适用的抽取/插入 UI 套到热量系统上。
+这样保留热导管道“温度逐步趋于均衡”的语义，同时避免组件速率池、无侧面只读 handler 和部分提交造成的超速、绕过配置或热量不守恒。
 
 ### 挂件白名单过滤
 
@@ -131,4 +134,4 @@ AE2 通道平衡默认保守：按官方 cable 节点行为做，不绕过 AE2 �
 3. 已新增 `integration/mekanism` 桥接层，并在 tick 入口用 `ModList` 判断 Mekanism 是否加载。
 4. 已落地 PRESSURIZED chemical capability 传输 tick 与 THERMAL heat balance tick。
 5. AE2 已接入材料、官方 grid node 连接维护、频道容量和视觉/提示层。
-6. 后续分别增加 gametest 或最小 dev-world 测试步骤。
+6. 已增加真实 Mekanism Energy Cube 与 Thermodynamic Conductor 的 ModBench 服务端回归场景。

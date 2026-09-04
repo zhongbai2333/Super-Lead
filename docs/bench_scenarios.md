@@ -18,6 +18,7 @@
   - `super_lead.redstone-network-load`：16 个独立 8 路 REDSTONE 组件周期翻转输入，持续触发真实红石脏更新并记录 tick 分布；验证全部 128 根连接都经历完整 ON/OFF 传播。
   - `super_lead.redstone-vanilla-control-before` / `super_lead.redstone-vanilla-control-after`：与 REDSTONE 网络场景完全相同的 16×8 方块布局、240 tick 和 4 tick 翻转 cadence，但不创建绳。按 before → network → after 顺序在同一 JVM 运行，用两个 control 的均值抵消预热漂移。
   - `super_lead.energy-mekanism-fanout`：一个真实 Mekanism Basic Energy Cube 从同一可抽取面连接 8 根 ENERGY 绳到 8 个目标方块，验证 FE 守恒、目标覆盖和稳定 cadence 性能。
+  - `super_lead.thermal-mekanism-conduction`：两个真实 Mekanism Basic Thermodynamic Conductor，验证逆导热公式、事务内热量守恒，以及连接面设为 `NONE` 后不会通过无侧面只读 capability 继续传热；场景生成独立 JFR。
   - Mekanism 已显式加入 `benchRuntimeMod`；后续 ENERGY/FLUID/PRESSURIZED/THERMAL 场景必须在 setup 中断言 `mekanism` 已加载及目标 capability 可用，禁止无 workload 空跑。
 4. **ModBench paired 场景**（`runBenchPaired`）：独立 dedicated server + 独立 remote client，
   使用真实 loopback TCP 连接验证启动、登录、世界就绪和客户端渲染采样。

@@ -261,6 +261,9 @@ modBench {
 // localRuntimeOnly configures normal userdev runs; ModBench launches from its
 // own runtime-mod bucket and therefore needs the dependency explicitly.
 dependencies {
+    // Bench scenarios compile against Mekanism APIs but the dependency remains
+    // optional and is never packaged into the production Super Lead jar.
+    benchCompileOnly "com.github.QiuYe-123:Mekanism:${mekanism_version}"
     benchRuntimeMod "com.github.QiuYe-123:Mekanism:${mekanism_version}"
     benchRuntimeMod fileTree(dir: 'libs', include: ['Mekanism-*.jar', 'mekanism-*.jar'])
 }
