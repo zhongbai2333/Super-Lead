@@ -10,6 +10,7 @@ import com.zhongbai233.bench.api.neoforge.server.BenchServerProvider;
 import com.zhongbai233.bench.api.neoforge.server.BenchServerRegistrar;
 import com.zhongbai233.bench.api.neoforge.server.BenchServerScenario;
 import com.zhongbai233.bench.api.neoforge.server.BenchStepResult;
+import com.zhongbai233.super_lead.lead.client.chunk.MeshSectionBudgetClientScenario;
 import java.time.Duration;
 import java.util.Set;
 import net.neoforged.fml.ModList;
@@ -144,6 +145,21 @@ public final class SuperLeadBenchProvider implements BenchServerProvider, BenchC
                 Set.of("super_lead", "client", "render", "chunk_mesh", "regression"),
                 Duration.ofSeconds(90)),
             context -> new RopeSharedSectionIsolationClientScenario());
+        registerMeshSectionBudgetScenario(registrar, 2);
+        registerMeshSectionBudgetScenario(registrar, 4);
+        registerMeshSectionBudgetScenario(registrar, 8);
+        registerMeshSectionBudgetScenario(registrar, 12);
+    }
+
+    private static void registerMeshSectionBudgetScenario(BenchClientRegistrar registrar, int budget) {
+        String suffix = String.format("%02d", budget);
+        registrar.register(
+            new ScenarioDescriptor(
+                "super_lead.rope-mesh-churn-budget-" + suffix,
+                "Super Lead Rope Mesh Churn Budget " + budget,
+                Set.of("super_lead", "client", "render", "chunk_mesh", "performance", "jfr"),
+                Duration.ofSeconds(150)),
+            context -> new MeshSectionBudgetClientScenario(budget));
     }
 
     private static final class ServerLoadScenario implements BenchServerScenario {

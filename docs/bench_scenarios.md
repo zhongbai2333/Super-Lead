@@ -8,7 +8,9 @@
 2. **ModBench 客户端场景**（`runBenchClient`，完整驱动栈：调度器 / 异步 /
   mesh / 渲染）：已上线空吊静止、长跨度、全绳种矩阵、多挂件、物品工作、
   十字堆叠、堆叠创建顺序、玩家碰撞、松紧调整、三层堆叠，以及 53 连接
-  建筑服规模的动画 cadence 场景。
+  建筑服规模的动画 cadence 场景。`rope-mesh-churn-budget-{02,04,08,12}`
+  使用 1536 根常驻静态绳和 12 个同时变化的 section，对比不同提交预算下的
+  registry 更新时间、mesh 接受延迟、frame interval 与独立 JFR。
   接触场景会导出逐 tick CSV，视觉场景会保留截图。
 3. **ModBench 服务端场景**（`runBenchServer`）：`super_lead.server-load` smoke。
   - `super_lead.item-same-face-fanout`：一个原版木桶同一面连接 8 根 ITEM 绳，验证多目标公平轮转、资源守恒和服务端 tick 分布。
@@ -46,6 +48,38 @@ scenario 单独录制，并写入
 `isChunkAvailableNow/getChunkNow` 的采样；因为没有真实容器或第三方 capability，结果不包含
 容器模组的 handler 查询及读写耗时。录制文件为
 `build/modBench/raw-results/default/server/artifacts/jfr/super_lead.item-unloaded-source-index.jfr`。
+
+### Mesh churn section 预算矩阵
+
+四档场景使用完全相同的固定坐标夹具：24 个 section、每 section 64 根绳，共 1536 根；
+测量阶段重复 6 轮，每轮从其中 12 个 section 各移除并恢复一根绳。只改变每 tick 可提交
+的紧急 dirty section 数量：
+
+```text
+./gradlew runBenchClient -PmodBench.scenarios=super_lead.rope-mesh-churn-budget-02,super_lead.rope-mesh-churn-budget-04,super_lead.rope-mesh-churn-budget-08,super_lead.rope-mesh-churn-budget-12
+```
+
+重点比较 `client.frame.interval` 的 p95/p99/max 与超 16.67 ms 帧数，同时查看：
+
+- `super_lead.mesh_churn.registry_mutation`：增量增删连接的主线程耗时；
+- `super_lead.mesh_churn.drain_ticks`：dirty 队列排空 tick；
+- `super_lead.mesh_churn.accept_ticks`：全部目标 section 的新 generation 被观察到所需 tick；
+- `peak_dirty_queue/peak_dirty_flush`：队列和单 tick 实际提交峰值。
+
+2026-09-04 本机固定坐标结果（Apple M4、Java 25.0.2、无遮挡 flat world、1536 根绳）：
+
+| section/tick | 排空/接受 tick | frame p95 | frame p99 | frame max | >16.67 ms |
+|---:|---:|---:|---:|---:|---:|
+| 2 | 6 | 4.146 ms | 5.393 ms | 18.204 ms | 1 |
+| 4 | 3 | 4.731 ms | 6.205 ms | 13.974 ms | 0 |
+| 8 | 2 | 3.560 ms | 4.808 ms | 7.723 ms | 0 |
+| 12 | 1 | 4.574 ms | 6.085 ms | 15.851 ms | 0 |
+
+增量 registry mutation 的各档均值约 0.82–0.96 ms、最大值约 1.19 ms。1536 绳矩阵中
+预算 8 的最大帧最低且只需要 2 tick；576 绳校准的多轮重复中，预算 12 持续出现
+20.9–22.5 ms 最大帧，而预算 8 为 11.2–17.2 ms。预算 4/2 将 handoff 延迟增加到
+3/6 tick，尾帧没有稳定胜过 8。因此当前默认紧急预算选择 8，新 mesh 预算仍为 2。
+该数值是此夹具和机器上的经验结果；大型整合包升级渲染 Mod 后应重跑矩阵。
 
 ### REDSTONE 夹心对照
 

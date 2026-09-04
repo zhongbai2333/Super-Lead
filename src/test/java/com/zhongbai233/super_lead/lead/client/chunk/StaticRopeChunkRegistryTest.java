@@ -19,34 +19,6 @@ import org.junit.jupiter.api.Test;
 
 class StaticRopeChunkRegistryTest {
     @Test
-    void unchangedPublishedSourceCanReuseItsImmutableBake() {
-        UUID id = UUID.randomUUID();
-        RopeStaticGeometryResult geometry = new RopeStaticGeometryResult(
-                bakedSnapshot(id), Set.of(1L));
-
-        assertTrue(StaticRopeChunkRegistry.canReusePublishedSource(
-                id, false, Set.of(), Map.of(id, geometry)));
-    }
-
-    @Test
-    void changedOrFullyInvalidatedSourceMustBeRebuilt() {
-        UUID id = UUID.randomUUID();
-        RopeStaticGeometryResult geometry = new RopeStaticGeometryResult(
-                bakedSnapshot(id), Set.of(1L));
-
-        assertFalse(StaticRopeChunkRegistry.canReusePublishedSource(
-                id, false, Set.of(id), Map.of(id, geometry)));
-        assertFalse(StaticRopeChunkRegistry.canReusePublishedSource(
-                id, true, Set.of(), Map.of(id, geometry)));
-    }
-
-    @Test
-    void missingPublishedGeometryCannotBeReused() {
-        assertFalse(StaticRopeChunkRegistry.canReusePublishedSource(
-                UUID.randomUUID(), false, Set.of(), Map.of()));
-    }
-
-    @Test
     void configuredTransparentEditingRopeNeverEntersChunkMesh() {
         assertTrue(StaticRopeChunkRegistry.skipStaticMeshForTransparency(true, false));
     }
@@ -72,29 +44,17 @@ class StaticRopeChunkRegistryTest {
     }
 
     @Test
-    void pureClaimExpansionCanBeDebouncedIntoOneRebuild() {
-        UUID existing = UUID.randomUUID();
-        UUID added = UUID.randomUUID();
+    void incrementalRemovalOnlyDropsTargetConnectionsFromTouchedSection() {
+        UUID targetA = UUID.randomUUID();
+        UUID bystander = UUID.randomUUID();
+        UUID targetB = UUID.randomUUID();
+        RopeSectionSnapshot keep = bakedSnapshot(bystander);
 
-        assertTrue(StaticRopeChunkRegistry.shouldDeferClaimExpansion(
-                Set.of(existing), Set.of(existing),
-                Set.of(existing, added), Set.of(existing, added)));
-    }
+        List<RopeSectionSnapshot> remaining = StaticRopeChunkRegistry.withoutConnections(
+                List.of(bakedSnapshot(targetA), keep, bakedSnapshot(targetB)),
+                Set.of(targetA, targetB));
 
-    @Test
-    void claimRemovalIsNeverDeferred() {
-        UUID removed = UUID.randomUUID();
-
-        assertFalse(StaticRopeChunkRegistry.shouldDeferClaimExpansion(
-                Set.of(removed), Set.of(removed), Set.of(), Set.of()));
-    }
-
-    @Test
-    void sourceDowngradeIsNeverDeferred() {
-        UUID existing = UUID.randomUUID();
-
-        assertFalse(StaticRopeChunkRegistry.shouldDeferClaimExpansion(
-                Set.of(existing), Set.of(existing), Set.of(existing), Set.of()));
+        assertEquals(List.of(keep), remaining);
     }
 
     @Test
